@@ -1,0 +1,13 @@
+[package]
+name = "config_center"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+axum = { version = "0.8" }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid"] }
+uuid = { version = "1", features = ["v4"] }
+shared_kernel = { path = "../shared_kernel" }

@@ -38,18 +38,68 @@ async function request<T>(
 }
 
 // Auth
+export interface AuthUser {
+  id: string
+  username: string
+  display_name: string
+  status: string
+  roles: string[]
+}
+
+export interface LoginResponse {
+  access_token: string
+  refresh_token: string
+  expires_in: number
+  user: AuthUser
+}
+
 export const authApi = {
   login: (username: string, password: string) =>
-    request<{ token: string; user_id: string; username: string; display_name: string }>(
+    request<LoginResponse>(
       '/api/auth/login',
       { method: 'POST', body: JSON.stringify({ username, password }) },
     ),
-  register: (data: { username: string; display_name: string; password: string }) =>
-    request<{ message: string }>('/api/auth/register', {
+  refresh: (refresh_token: string) =>
+    request<LoginResponse>('/api/auth/refresh', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ refresh_token }),
+    }),
+  me: () => request<AuthUser>('/api/me'),
+  changeMyPassword: (old_password: string, new_password: string) =>
+    request<{ message: string }>('/api/me/password', {
+      method: 'PUT',
+      body: JSON.stringify({ old_password, new_password }),
     }),
   logout: () => request<{ message: string }>('/api/auth/logout', { method: 'POST' }),
+}
+
+export interface AdminUser {
+  id: string
+  username: string
+  display_name: string
+  status: 'active' | 'disabled'
+  failed_attempts: number
+  locked_until?: string
+  roles: string[]
+  created_at: string
+}
+
+export const adminUsersApi = {
+  list: () => request<AdminUser[]>('/api/admin/users'),
+  create: (data: { username: string; display_name: string; password: string; roles?: string[] }) =>
+    request<AdminUser>('/api/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+  resetPassword: (id: string, new_password: string) =>
+    request<{ message: string }>(`/api/admin/users/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ new_password }),
+    }),
+  updateStatus: (id: string, status: 'active' | 'disabled') =>
+    request<{ message: string }>(`/api/admin/users/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+  unlock: (id: string) =>
+    request<{ message: string }>(`/api/admin/users/${id}/unlock`, { method: 'POST' }),
 }
 
 // Servers

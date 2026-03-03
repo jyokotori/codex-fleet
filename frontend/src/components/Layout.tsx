@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Server, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon } from 'lucide-react'
+import { LayoutDashboard, Server, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon, Users } from 'lucide-react'
 import { authApi } from '../lib/api'
 import { clearAuth, getAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
@@ -7,17 +7,27 @@ import { useTheme } from '../hooks/useTheme'
 
 export default function Layout() {
   const navigate = useNavigate()
-  const user = getAuth()
+  const auth = getAuth()
+  const user = auth?.user
+  const isAdmin = user?.roles?.includes('admin') ?? false
   const { t, locale, setLocale } = useI18n()
   const { resolved, setTheme } = useTheme()
 
-  const navItems = [
+  const navItems: Array<{
+    to: string
+    label: string
+    icon: typeof LayoutDashboard
+    end?: boolean
+  }> = [
     { to: '/', label: t.nav.dashboard, icon: LayoutDashboard, end: true },
     { to: '/agents', label: t.nav.agents, icon: Bot },
     { to: '/servers', label: t.nav.servers, icon: Server },
     { to: '/configs', label: t.nav.configs, icon: Settings, end: false },
     { to: '/notifications', label: t.nav.notifications, icon: Bell },
   ]
+  if (isAdmin) {
+    navItems.push({ to: '/admin/users', label: t.nav.users, icon: Users })
+  }
 
   async function handleLogout() {
     try { await authApi.logout() } catch {}

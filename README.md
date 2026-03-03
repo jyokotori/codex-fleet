@@ -20,7 +20,7 @@ docker compose up -d
 
 Open **http://localhost:3000**
 
-Default login: **`codex` / `codex`**
+Default admin login: **`codex` / `codex`**
 
 > `.env` is gitignored. The bundled PostgreSQL container starts automatically when `COMPOSE_PROFILES=bundled-db` (the default).
 > To use an external database, set `COMPOSE_PROFILES=` (empty) and update `DATABASE_URL` in `.env`.
@@ -55,6 +55,37 @@ Store reusable configs in one place and attach them to any agent:
 
 ### Notifications
 Set up webhooks to get notified when tasks complete or fail.
+
+### User & Access Management
+- JWT access token + refresh token
+- Role-based access control (RBAC) with fine-grained permissions
+- Admin-only user management: create user, reset password, enable/disable, unlock
+- User self-service: change own password
+
+---
+
+## Current vs Planned
+
+### Current
+- IAM phase is active: admin menu and user lifecycle APIs are available
+- Config center, runtime agent, and notifications are split into dedicated crates
+- Existing server/agent/task/notification flows remain compatible at API level
+
+### Planned
+- Deeper DDD extraction inside each crate (`api -> application -> domain -> infrastructure`)
+- Event-driven notification pipeline and external integrations
+- More granular authorization policies and operational auditing dashboards
+
+---
+
+## Architecture Evolution
+
+The backend follows this evolution order:
+
+1. IAM
+2. Config Center
+3. Servers + Agent Runtime
+4. Notification Center
 
 ---
 

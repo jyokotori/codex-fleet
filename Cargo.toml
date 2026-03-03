@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/backend"]
+members = [
+  "crates/backend",
+  "crates/shared_kernel",
+  "crates/iam",
+  "crates/config_center",
+  "crates/runtime_agent",
+  "crates/notification_center",
+]
 resolver = "2"
 
 [workspace.package]

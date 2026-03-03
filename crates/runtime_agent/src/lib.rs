@@ -1,0 +1,51 @@
+mod api;
+mod application;
+mod domain;
+mod infrastructure;
+mod ssh;
+mod ws;
+
+use axum::{
+    routing::{delete, get, post, put},
+    Router,
+};
+use shared_kernel::AppContext;
+
+pub fn router() -> Router<AppContext> {
+    Router::new()
+        .route("/api/servers", get(api::servers::list_servers))
+        .route("/api/servers", post(api::servers::create_server))
+        .route("/api/servers/{id}", put(api::servers::update_server))
+        .route("/api/servers/{id}", delete(api::servers::delete_server))
+        .route(
+            "/api/servers/{id}/test",
+            post(api::servers::test_server_connection),
+        )
+        .route("/api/agents", get(api::agents::list_agents))
+        .route("/api/agents", post(api::agents::create_agent))
+        .route("/api/agents/{id}", put(api::agents::update_agent))
+        .route("/api/agents/{id}", delete(api::agents::delete_agent))
+        .route("/api/agents/{id}/start", post(api::agents::start_agent))
+        .route("/api/agents/{id}/stop", post(api::agents::stop_agent))
+        .route("/api/agents/{id}/resume", post(api::agents::resume_agent))
+        .route(
+            "/api/agents/{id}/terminal-command",
+            get(api::agents::terminal_command),
+        )
+        .route("/api/agents/{id}/tasks", post(api::tasks::create_task))
+        .route("/api/agents/{id}/tasks", get(api::tasks::list_tasks))
+        .route("/api/tasks/{id}", get(api::tasks::get_task))
+}
+
+pub fn ws_router() -> Router<AppContext> {
+    Router::new()
+        .route("/ws/agents/{id}/logs", get(ws::logs::ws_logs_handler))
+        .route(
+            "/ws/agents/{id}/terminal",
+            get(ws::terminal::ws_terminal_handler),
+        )
+        .route(
+            "/ws/agents/{id}/provision",
+            get(ws::provision::ws_provision_handler),
+        )
+}

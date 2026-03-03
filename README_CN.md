@@ -20,7 +20,7 @@ docker compose up -d
 
 访问 **http://localhost:3000**
 
-默认账号：**`codex` / `codex`**
+默认管理员账号：**`codex` / `codex`**
 
 > `.env` 已加入 `.gitignore`。默认配置（`COMPOSE_PROFILES=bundled-db`）会自动启动内置 PostgreSQL 容器。
 > 如需使用外部数据库，将 `.env` 中的 `COMPOSE_PROFILES` 留空，并修改 `DATABASE_URL`。
@@ -55,6 +55,37 @@ docker compose up -d
 
 ### 通知
 配置 Webhook，任务完成或失败时自动推送通知。
+
+### 用户与权限管理
+- JWT 访问令牌 + Refresh Token
+- 基于角色的权限控制（RBAC）+ 细粒度权限码
+- 管理员专属用户管理：新增用户、重置密码、启用/禁用、解锁
+- 普通用户自助能力：修改自己的密码
+
+---
+
+## 当前能力 vs 近期计划
+
+### 当前能力（Current）
+- IAM 一期已接入：管理员菜单与用户管理接口可用
+- 配置中心、运行时 Agent、通知能力已拆分为独立 crate
+- 服务器/Agent/任务/通知现有 API 行为保持兼容
+
+### 近期计划（Planned）
+- 持续提炼各 crate 的 DDD 分层（`api -> application -> domain -> infrastructure`）
+- 通知改造为事件驱动并扩展第三方需求管理系统集成
+- 继续完善细粒度鉴权策略与可视化审计能力
+
+---
+
+## 架构演进顺序
+
+后端按以下顺序演进：
+
+1. IAM
+2. 配置中心
+3. 服务器 + Agent 运行时
+4. 通知中心
 
 ---
 

@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { isAuthenticated } from './lib/auth'
+import { isAdmin, isAuthenticated } from './lib/auth'
 import Login from './pages/Login'
-import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import Servers from './pages/Servers'
 import Agents from './pages/Agents'
@@ -12,6 +11,7 @@ import AgentsMd from './pages/configs/AgentsMd'
 import DockerConfigs from './pages/configs/DockerConfigs'
 import WIPSection from './pages/configs/WIPSection'
 import Notifications from './pages/Notifications'
+import Users from './pages/admin/Users'
 import Layout from './components/Layout'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -21,11 +21,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace />
+  }
+  if (!isAdmin()) {
+    return <Navigate to="/" replace />
+  }
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
       <Route
         path="/"
         element={
@@ -48,6 +57,14 @@ export default function App() {
           <Route path="mcp" element={<WIPSection />} />
         </Route>
         <Route path="notifications" element={<Notifications />} />
+        <Route
+          path="admin/users"
+          element={(
+            <AdminRoute>
+              <Users />
+            </AdminRoute>
+          )}
+        />
       </Route>
     </Routes>
   )

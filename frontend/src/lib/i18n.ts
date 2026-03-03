@@ -54,6 +54,7 @@ export const translations = {
       agents: 'Agents',
       configs: 'Configs',
       notifications: 'Notifications',
+      users: 'Users',
     },
 
     // Dashboard
@@ -243,6 +244,23 @@ export const translations = {
       saving: 'Saving...',
     },
 
+    users: {
+      title: 'User Management',
+      subtitle: 'Admin-only user lifecycle and access control',
+      userList: 'Users',
+      createUser: 'Create User',
+      creating: 'Creating...',
+      roles: 'Roles',
+      resetPassword: 'Reset Password',
+      resetPasswordPrompt: 'Enter the new password',
+      enable: 'Enable',
+      disable: 'Disable',
+      unlock: 'Unlock',
+      locked: 'Locked',
+      lockedYes: 'Yes',
+      lockedNo: 'No',
+    },
+
     // Status badges
     status: {
       online: 'online',
@@ -318,6 +336,7 @@ export const translations = {
       agents: 'Agent',
       configs: '配置',
       notifications: '通知',
+      users: '用户',
     },
 
     dashboard: {
@@ -499,6 +518,23 @@ export const translations = {
       events: '触发事件',
       create: '创建',
       saving: '保存中...',
+    },
+
+    users: {
+      title: '用户管理',
+      subtitle: '管理员专用：用户生命周期与访问控制',
+      userList: '用户列表',
+      createUser: '新建用户',
+      creating: '创建中...',
+      roles: '角色',
+      resetPassword: '重置密码',
+      resetPasswordPrompt: '请输入新密码',
+      enable: '启用',
+      disable: '禁用',
+      unlock: '解锁',
+      locked: '锁定',
+      lockedYes: '是',
+      lockedNo: '否',
     },
 
     status: {

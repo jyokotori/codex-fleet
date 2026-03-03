@@ -12,20 +12,16 @@ axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "migrate", "chrono", "uuid"] }
-async-ssh2-tokio = "0.8"
+argon2 = "0.5"
 rust-embed = { version = "8", features = ["mime_guess"] }
-aes-gcm = "0.10"
-uuid = { version = "1", features = ["v4"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-futures-util = "0.3"
-reqwest = { version = "0.12", features = ["json"] }
-rand = "0.8"
-base64 = "0.22"
 anyhow = "1"
-thiserror = "1"
-tokio-tungstenite = "0.26"
 mime_guess = "2"
+uuid = { version = "1", features = ["v4"] }
+
+shared_kernel = { path = "../shared_kernel" }
+iam = { path = "../iam" }
+config_center = { path = "../config_center" }
+runtime_agent = { path = "../runtime_agent" }
+notification_center = { path = "../notification_center" }

@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Zap, Languages } from 'lucide-react'
 import { authApi } from '../lib/api'
 import { saveAuth } from '../lib/auth'
@@ -88,10 +88,6 @@ export default function Login() {
             </button>
           </form>
 
-          <p className="mt-4 text-center text-sm text-gray-500">
-            {t.auth.noAccount}{' '}
-            <Link to="/register" className="text-sky-500 hover:underline">{t.auth.register}</Link>
-          </p>
         </div>
 
         <p className="text-center text-xs text-gray-400 dark:text-gray-600 mt-4">{t.auth.defaultHint}</p>
