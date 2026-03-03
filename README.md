@@ -8,6 +8,17 @@ A web dashboard for managing multiple AI coding agents (Codex etc.) running acro
 
 ---
 
+## TODO List
+
+1. Support skill/MCP configuration from multiple sources.
+2. Improve the notification module (standalone notifications + third-party integrations).
+3. Add a requirement menu and dispatch requirements to agents (standalone or integrated with Jira).
+4. Build a simple web IDE with `codex: app server`.
+
+> Note: Rust is used because Codex is built with Rust, and this project is also for learning it. Development speed depends on how fast my token refreshes (lol).
+
+---
+
 ## Quick Start
 
 ```bash
@@ -61,20 +72,6 @@ Set up webhooks to get notified when tasks complete or fail.
 - Role-based access control (RBAC) with fine-grained permissions
 - Admin-only user management: create user, reset password, enable/disable, unlock
 - User self-service: change own password
-
----
-
-## Current vs Planned
-
-### Current
-- IAM phase is active: admin menu and user lifecycle APIs are available
-- Config center, runtime agent, and notifications are split into dedicated crates
-- Existing server/agent/task/notification flows remain compatible at API level
-
-### Planned
-- Deeper DDD extraction inside each crate (`api -> application -> domain -> infrastructure`)
-- Event-driven notification pipeline and external integrations
-- More granular authorization policies and operational auditing dashboards
 
 ---
 
