@@ -17,7 +17,7 @@ impl Config {
             master_key: env::var("CODEX_MASTER_KEY")
                 .unwrap_or_else(|_| "dev-master-key-change-in-production!".into()),
             database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "sqlite:///tmp/codex-fleet.db".into()),
+                .unwrap_or_else(|_| "postgres://codexfleet:codexfleet@localhost:5432/codexfleet".into()),
         }
     }
 }

@@ -20,7 +20,7 @@ pub async fn ws_provision_handler(
 async fn handle_provision_socket(mut socket: WebSocket, state: AppState, agent_id: String) {
     // Send full historical log first, then poll for incremental updates
     let initial = sqlx::query!(
-        "SELECT provision_log, status FROM agents WHERE id = ?",
+        "SELECT provision_log, status FROM agents WHERE id = $1",
         agent_id
     )
     .fetch_optional(&state.db)
@@ -69,7 +69,7 @@ async fn handle_provision_socket(mut socket: WebSocket, state: AppState, agent_i
         tokio::select! {
             _ = ticker.tick() => {
                 let row = sqlx::query!(
-                    "SELECT provision_log, status FROM agents WHERE id = ?",
+                    "SELECT provision_log, status FROM agents WHERE id = $1",
                     agent_id
                 )
                 .fetch_optional(&state.db)

@@ -4,14 +4,15 @@ CREATE TABLE codex_configs (
     name TEXT NOT NULL,
     config_toml TEXT NOT NULL DEFAULT '',
     auth_json TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 2. Rebuild agents table with new fields
-PRAGMA foreign_keys=OFF;
+-- Drop old agents table and recreate with new schema
+DROP TABLE IF EXISTS agents CASCADE;
 
-CREATE TABLE agents_new (
+CREATE TABLE agents (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     server_id TEXT NOT NULL DEFAULT '__local__',
@@ -29,18 +30,5 @@ CREATE TABLE agents_new (
     tmux_session TEXT NOT NULL DEFAULT 'main',
     workdir TEXT NOT NULL DEFAULT '/workspace',
     status TEXT NOT NULL DEFAULT 'stopped',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-INSERT INTO agents_new (id, name, server_id, git_repo, git_branch, git_auth_type,
-    git_username, git_password_encrypted, cli_type, docker_image,
-    docker_container_name, tmux_session, workdir, status, created_at)
-SELECT id, name, server_id, git_repo, git_branch, git_auth_type,
-    git_username, git_password_encrypted, cli_type, docker_image,
-    docker_container_name, tmux_session, workdir, status, created_at
-FROM agents;
-
-DROP TABLE agents;
-ALTER TABLE agents_new RENAME TO agents;
-
-PRAGMA foreign_keys=ON;

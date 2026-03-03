@@ -69,7 +69,7 @@ pub async fn create_codex_config(
     let auth_json = req.auth_json.unwrap_or_default();
 
     sqlx::query!(
-        "INSERT INTO codex_configs (id, name, config_toml, auth_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO codex_configs (id, name, config_toml, auth_json, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
         id, req.name, config_toml, auth_json, now, now
     )
     .execute(&state.db)
@@ -91,7 +91,7 @@ pub async fn update_codex_config(
     Json(req): Json<UpdateCodexConfigRequest>,
 ) -> Result<Json<CodexConfig>> {
     let existing = sqlx::query!(
-        "SELECT id, name, config_toml, auth_json, created_at FROM codex_configs WHERE id = ?",
+        "SELECT id, name, config_toml, auth_json, created_at FROM codex_configs WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -104,7 +104,7 @@ pub async fn update_codex_config(
     let now = Utc::now();
 
     sqlx::query!(
-        "UPDATE codex_configs SET name=?, config_toml=?, auth_json=?, updated_at=? WHERE id=?",
+        "UPDATE codex_configs SET name=$1, config_toml=$2, auth_json=$3, updated_at=$4 WHERE id=$5",
         name, config_toml, auth_json, now, id
     )
     .execute(&state.db)
@@ -124,7 +124,7 @@ pub async fn delete_codex_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let result = sqlx::query!("DELETE FROM codex_configs WHERE id = ?", id)
+    let result = sqlx::query!("DELETE FROM codex_configs WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 

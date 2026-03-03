@@ -1,41 +1,41 @@
 {
-  "db_name": "SQLite",
+  "db_name": "PostgreSQL",
   "query": "SELECT id, name, config_toml, auth_json, created_at, updated_at FROM codex_configs ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
-        "name": "id",
         "ordinal": 0,
+        "name": "id",
         "type_info": "Text"
       },
       {
-        "name": "name",
         "ordinal": 1,
+        "name": "name",
         "type_info": "Text"
       },
       {
-        "name": "config_toml",
         "ordinal": 2,
+        "name": "config_toml",
         "type_info": "Text"
       },
       {
-        "name": "auth_json",
         "ordinal": 3,
+        "name": "auth_json",
         "type_info": "Text"
       },
       {
-        "name": "created_at",
         "ordinal": 4,
-        "type_info": "Datetime"
+        "name": "created_at",
+        "type_info": "Timestamptz"
       },
       {
-        "name": "updated_at",
         "ordinal": 5,
-        "type_info": "Datetime"
+        "name": "updated_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Left": []
     },
     "nullable": [
       false,

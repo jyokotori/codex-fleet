@@ -1,21 +1,6 @@
-PRAGMA foreign_keys=OFF;
+ALTER TABLE company_configs
+    ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'config_file',
+    ADD COLUMN IF NOT EXISTS file_type TEXT;
 
-CREATE TABLE company_configs_v2 (
-    id TEXT NOT NULL PRIMARY KEY,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'config_file',
-    cli_type TEXT NOT NULL DEFAULT 'codex',
-    file_type TEXT,
-    content TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT INTO company_configs_v2 (id, name, category, cli_type, content, created_at, updated_at)
-  SELECT id, name, 'config_file', cli_type, content, created_at, updated_at FROM company_configs;
-
-DROP TABLE company_configs;
-
-ALTER TABLE company_configs_v2 RENAME TO company_configs;
-
-PRAGMA foreign_keys=ON;
+-- Backfill existing rows so category is never empty
+UPDATE company_configs SET category = 'config_file' WHERE category IS NULL OR category = '';

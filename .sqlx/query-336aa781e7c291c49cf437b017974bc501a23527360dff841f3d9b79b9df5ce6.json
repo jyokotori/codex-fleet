@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notification_configs SET name=$1, config_json=$2, enabled=$3, events_json=$4 WHERE id=$5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "336aa781e7c291c49cf437b017974bc501a23527360dff841f3d9b79b9df5ce6"
+}

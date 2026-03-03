@@ -24,9 +24,9 @@ RUN cargo build --release -p backend
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y ca-certificates openssh-client docker.io && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/backend /usr/local/bin/backend
-RUN mkdir -p /data
 EXPOSE 3000
-ENV DATABASE_URL=sqlite:///data/codex-fleet.db
-ENV CODEX_MASTER_KEY=change-me-in-production
 ENV PORT=3000
+ENV CODEX_MASTER_KEY=change-me-in-production
+ENV DATABASE_URL=postgres://codexfleet:codexfleet@postgres:5432/codexfleet
+ENV RUST_LOG=backend=info,tower_http=info
 CMD ["/usr/local/bin/backend"]

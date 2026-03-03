@@ -11,7 +11,7 @@ path = "src/main.rs"
 axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "migrate", "chrono", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "migrate", "chrono", "uuid"] }
 async-ssh2-tokio = "0.8"
 rust-embed = { version = "8", features = ["mime_guess"] }
 aes-gcm = "0.10"

@@ -84,7 +84,7 @@ pub async fn create_task(
     let now = Utc::now();
 
     sqlx::query!(
-        "INSERT INTO tasks (id, agent_id, description, status, tmux_window, created_at, started_at) VALUES (?, ?, ?, 'running', ?, ?, ?)",
+        "INSERT INTO tasks (id, agent_id, description, status, tmux_window, created_at, started_at) VALUES ($1, $2, $3, 'running', $4, $5, $6)",
         id, agent_id, req.description, tmux_window, now, now
     )
     .execute(&state.db)
@@ -106,13 +106,13 @@ pub async fn list_tasks(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Vec<Task>>> {
-    let _ = sqlx::query!("SELECT id FROM agents WHERE id = ?", agent_id)
+    let _ = sqlx::query!("SELECT id FROM agents WHERE id = $1", agent_id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
 
     let rows = sqlx::query!(
-        "SELECT id, agent_id, description, status, tmux_window, created_at, started_at, completed_at FROM tasks WHERE agent_id = ? ORDER BY created_at DESC",
+        "SELECT id, agent_id, description, status, tmux_window, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC",
         agent_id
     )
     .fetch_all(&state.db)
@@ -140,7 +140,7 @@ pub async fn get_task(
     Path(task_id): Path<String>,
 ) -> Result<Json<Task>> {
     let row = sqlx::query!(
-        "SELECT id, agent_id, description, status, tmux_window, created_at, started_at, completed_at FROM tasks WHERE id = ?",
+        "SELECT id, agent_id, description, status, tmux_window, created_at, started_at, completed_at FROM tasks WHERE id = $1",
         task_id
     )
     .fetch_optional(&state.db)

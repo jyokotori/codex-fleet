@@ -87,7 +87,7 @@ pub async fn create_config(
     let now = Utc::now();
 
     sqlx::query!(
-        "INSERT INTO company_configs (id, name, category, cli_type, file_type, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO company_configs (id, name, category, cli_type, file_type, content, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         id, req.name, category, req.cli_type, req.file_type, req.content, now, now
     )
     .execute(&state.db)
@@ -111,7 +111,7 @@ pub async fn update_config(
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<Json<CompanyConfig>> {
     let existing = sqlx::query!(
-        "SELECT id, name, category, cli_type, file_type, content, created_at, updated_at FROM company_configs WHERE id = ?",
+        "SELECT id, name, category, cli_type, file_type, content, created_at, updated_at FROM company_configs WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -125,7 +125,7 @@ pub async fn update_config(
     let now = Utc::now();
 
     sqlx::query!(
-        "UPDATE company_configs SET name=?, cli_type=?, file_type=?, content=?, updated_at=? WHERE id=?",
+        "UPDATE company_configs SET name=$1, cli_type=$2, file_type=$3, content=$4, updated_at=$5 WHERE id=$6",
         name, cli_type, file_type, content, now, id
     )
     .execute(&state.db)
@@ -147,7 +147,7 @@ pub async fn delete_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let result = sqlx::query!("DELETE FROM company_configs WHERE id = ?", id)
+    let result = sqlx::query!("DELETE FROM company_configs WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 

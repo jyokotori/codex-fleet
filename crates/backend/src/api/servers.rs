@@ -154,7 +154,7 @@ pub async fn create_server(
 
     sqlx::query(
         "INSERT INTO servers (id, name, ip, port, username, auth_type, os_type, status) \
-         VALUES (?, ?, ?, ?, ?, 'passwordless', ?, 'online')",
+         VALUES ($1, $2, $3, $4, $5, 'passwordless', $6, 'online')",
     )
     .bind(&id)
     .bind(&req.name)
@@ -184,7 +184,7 @@ pub async fn update_server(
     Json(req): Json<UpdateServerRequest>,
 ) -> Result<Json<Server>> {
     let existing = sqlx::query!(
-        "SELECT id, name, ip, port, username, auth_type, os_type, status, created_at FROM servers WHERE id = ?",
+        "SELECT id, name, ip, port, username, auth_type, os_type, status, created_at FROM servers WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -197,7 +197,7 @@ pub async fn update_server(
     let username = req.username.unwrap_or(existing.username);
     let os_type = req.os_type.unwrap_or(existing.os_type);
 
-    sqlx::query("UPDATE servers SET name=?, ip=?, port=?, username=?, os_type=? WHERE id=?")
+    sqlx::query("UPDATE servers SET name=$1, ip=$2, port=$3, username=$4, os_type=$5 WHERE id=$6")
         .bind(&name)
         .bind(&ip)
         .bind(port)
@@ -224,7 +224,7 @@ pub async fn delete_server(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let result = sqlx::query!("DELETE FROM servers WHERE id = ?", id)
+    let result = sqlx::query!("DELETE FROM servers WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 
@@ -243,7 +243,7 @@ pub async fn test_server_connection(
     struct ServerRow { ip: String, port: i64, username: String }
 
     let server = sqlx::query_as::<_, ServerRow>(
-        "SELECT ip, port, username FROM servers WHERE id = ?"
+        "SELECT ip, port, username FROM servers WHERE id = $1"
     )
     .bind(&id)
     .fetch_optional(&state.db)
@@ -261,7 +261,7 @@ pub async fn test_server_connection(
     match result {
         Ok(client) => {
             let output = client.execute("echo 'connection-ok' && uname -a").await.unwrap_or_default();
-            sqlx::query!("UPDATE servers SET status = 'online' WHERE id = ?", id)
+            sqlx::query!("UPDATE servers SET status = 'online' WHERE id = $1", id)
                 .execute(&state.db)
                 .await?;
             Ok(Json(serde_json::json!({
@@ -271,7 +271,7 @@ pub async fn test_server_connection(
             })))
         }
         Err(e) => {
-            sqlx::query!("UPDATE servers SET status = 'offline' WHERE id = ?", id)
+            sqlx::query!("UPDATE servers SET status = 'offline' WHERE id = $1", id)
                 .execute(&state.db)
                 .await?;
             Err(AppError::Ssh(e.to_string()))

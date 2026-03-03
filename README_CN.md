@@ -13,6 +13,7 @@
 ```bash
 git clone git@github.com:jyokotori/codex-fleet.git
 cd codex-fleet
+cp .env.example .env   # 生产环境请修改 CODEX_MASTER_KEY
 
 docker compose up -d
 ```
@@ -21,10 +22,8 @@ docker compose up -d
 
 默认账号：**`codex` / `codex`**
 
-> 生产环境请设置真实密钥：
-> ```bash
-> CODEX_MASTER_KEY=your-secret docker compose up -d
-> ```
+> `.env` 已加入 `.gitignore`。默认配置（`COMPOSE_PROFILES=bundled-db`）会自动启动内置 PostgreSQL 容器。
+> 如需使用外部数据库，将 `.env` 中的 `COMPOSE_PROFILES` 留空，并修改 `DATABASE_URL`。
 
 ---
 
@@ -61,18 +60,21 @@ docker compose up -d
 
 ## 从源码构建
 
-**前置条件：** Rust 1.88+、Node 20+、`sqlx-cli`
+**前置条件：** Rust 1.88+、Node 20+、Docker、`sqlx-cli`
 
 ```bash
-cargo install sqlx-cli --no-default-features --features sqlite
+# 安装带 PostgreSQL 支持的 sqlx-cli
+cargo install sqlx-cli --no-default-features --features native-tls,postgres
 
-mkdir -p data
-DATABASE_URL="sqlite://./data/codex-fleet.db" sqlx database create
-DATABASE_URL="sqlite://./data/codex-fleet.db" sqlx migrate run --source crates/backend/migrations
+# 启动临时 postgres 并生成 sqlx 离线缓存
+./scripts/prepare-sqlx.sh
 
+# 构建前端
 cd frontend && npm install && npm run build && cd ..
 
-DATABASE_URL="sqlite://./data/codex-fleet.db" cargo run -p backend
+# 启动（需要 postgres 在运行）
+export DATABASE_URL=postgres://codexfleet:codexfleet@localhost:5432/codexfleet
+cargo run -p backend
 ```
 
 访问 **http://localhost:3000**

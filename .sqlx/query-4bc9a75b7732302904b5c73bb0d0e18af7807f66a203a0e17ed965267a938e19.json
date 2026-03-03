@@ -1,51 +1,51 @@
 {
-  "db_name": "SQLite",
+  "db_name": "PostgreSQL",
   "query": "SELECT id, name, category, cli_type, file_type, content, created_at, updated_at FROM company_configs ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
-        "name": "id",
         "ordinal": 0,
+        "name": "id",
         "type_info": "Text"
       },
       {
-        "name": "name",
         "ordinal": 1,
+        "name": "name",
         "type_info": "Text"
       },
       {
-        "name": "category",
         "ordinal": 2,
+        "name": "category",
         "type_info": "Text"
       },
       {
-        "name": "cli_type",
         "ordinal": 3,
+        "name": "cli_type",
         "type_info": "Text"
       },
       {
-        "name": "file_type",
         "ordinal": 4,
+        "name": "file_type",
         "type_info": "Text"
       },
       {
-        "name": "content",
         "ordinal": 5,
+        "name": "content",
         "type_info": "Text"
       },
       {
-        "name": "created_at",
         "ordinal": 6,
-        "type_info": "Datetime"
+        "name": "created_at",
+        "type_info": "Timestamptz"
       },
       {
-        "name": "updated_at",
         "ordinal": 7,
-        "type_info": "Datetime"
+        "name": "updated_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Left": []
     },
     "nullable": [
       false,

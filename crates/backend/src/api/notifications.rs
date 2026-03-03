@@ -43,7 +43,7 @@ pub async fn list_notifications(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<NotificationConfig>>> {
     let rows = sqlx::query!(
-        "SELECT id, name, type, config_json, enabled, events_json, created_at FROM notification_configs ORDER BY created_at DESC"
+        r#"SELECT id, name, "type", config_json, enabled, events_json, created_at FROM notification_configs ORDER BY created_at DESC"#
     )
     .fetch_all(&state.db)
     .await?;
@@ -55,7 +55,7 @@ pub async fn list_notifications(
             name: r.name,
             r#type: r.r#type,
             config_json: r.config_json,
-            enabled: r.enabled != 0,
+            enabled: r.enabled,
             events_json: r.events_json,
             created_at: r.created_at.to_string(),
         })
@@ -73,14 +73,14 @@ pub async fn create_notification(
         .map_err(|e| AppError::BadRequest(format!("Invalid config_json: {}", e)))?;
 
     let id = Uuid::new_v4().to_string();
-    let enabled = req.enabled.unwrap_or(true) as i64;
+    let enabled = req.enabled.unwrap_or(true);
     let events_json = req
         .events_json
         .unwrap_or_else(|| r#"["task_completed","task_failed"]"#.into());
     let now = Utc::now();
 
     sqlx::query!(
-        "INSERT INTO notification_configs (id, name, type, config_json, enabled, events_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        r#"INSERT INTO notification_configs (id, name, "type", config_json, enabled, events_json, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
         id, req.name, req.r#type, req.config_json, enabled, events_json, now
     )
     .execute(&state.db)
@@ -91,7 +91,7 @@ pub async fn create_notification(
         name: req.name,
         r#type: req.r#type,
         config_json: req.config_json,
-        enabled: enabled != 0,
+        enabled,
         events_json,
         created_at: now.to_string(),
     }))
@@ -103,7 +103,7 @@ pub async fn update_notification(
     Json(req): Json<UpdateNotificationRequest>,
 ) -> Result<Json<NotificationConfig>> {
     let existing = sqlx::query!(
-        "SELECT id, name, type, config_json, enabled, events_json, created_at FROM notification_configs WHERE id = ?",
+        r#"SELECT id, name, "type", config_json, enabled, events_json, created_at FROM notification_configs WHERE id = $1"#,
         id
     )
     .fetch_optional(&state.db)
@@ -112,11 +112,11 @@ pub async fn update_notification(
 
     let name = req.name.unwrap_or(existing.name);
     let config_json = req.config_json.unwrap_or(existing.config_json);
-    let enabled = req.enabled.map(|b| b as i64).unwrap_or(existing.enabled);
+    let enabled = req.enabled.unwrap_or(existing.enabled);
     let events_json = req.events_json.unwrap_or(existing.events_json);
 
     sqlx::query!(
-        "UPDATE notification_configs SET name=?, config_json=?, enabled=?, events_json=? WHERE id=?",
+        "UPDATE notification_configs SET name=$1, config_json=$2, enabled=$3, events_json=$4 WHERE id=$5",
         name, config_json, enabled, events_json, id
     )
     .execute(&state.db)
@@ -127,7 +127,7 @@ pub async fn update_notification(
         name,
         r#type: existing.r#type,
         config_json,
-        enabled: enabled != 0,
+        enabled,
         events_json,
         created_at: existing.created_at.to_string(),
     }))
@@ -137,7 +137,7 @@ pub async fn delete_notification(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let result = sqlx::query!("DELETE FROM notification_configs WHERE id = ?", id)
+    let result = sqlx::query!("DELETE FROM notification_configs WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 
@@ -155,7 +155,7 @@ pub async fn send_notification(
     payload: serde_json::Value,
 ) -> anyhow::Result<()> {
     let configs = sqlx::query!(
-        "SELECT config_json, events_json FROM notification_configs WHERE enabled = 1"
+        "SELECT config_json, events_json FROM notification_configs WHERE enabled = true"
     )
     .fetch_all(&state.db)
     .await?;

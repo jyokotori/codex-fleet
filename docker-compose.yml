@@ -1,16 +1,33 @@
-version: '3.8'
-
 services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    profiles: ["bundled-db"]
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-codexfleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-codexfleet}
+      POSTGRES_DB: ${POSTGRES_DB:-codexfleet}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-codexfleet} -d ${POSTGRES_DB:-codexfleet}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   app:
     build: .
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     volumes:
-      - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - PORT=3000
-      - DATABASE_URL=sqlite:///data/codex-fleet.db
-      - CODEX_MASTER_KEY=${CODEX_MASTER_KEY:-change-me-in-production}
-      - RUST_LOG=backend=info,tower_http=info
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
+
+volumes:
+  postgres_data:

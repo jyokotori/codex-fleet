@@ -12,7 +12,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -24,7 +24,7 @@ use config::Config;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: SqlitePool,
+    pub db: PgPool,
     pub config: Config,
 }
 
@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "backend=debug,tower_http=debug".parse().unwrap()),
+                .unwrap_or_else(|_| "backend=info,tower_http=info".parse().unwrap()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

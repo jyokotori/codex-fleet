@@ -6,6 +6,6 @@ CREATE TABLE docker_configs (
     env_vars TEXT NOT NULL DEFAULT '[]',
     volume_mappings TEXT NOT NULL DEFAULT '[]',
     init_script TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

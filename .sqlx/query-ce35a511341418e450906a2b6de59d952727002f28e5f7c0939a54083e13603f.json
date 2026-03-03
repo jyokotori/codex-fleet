@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE company_configs SET name=$1, cli_type=$2, file_type=$3, content=$4, updated_at=$5 WHERE id=$6",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ce35a511341418e450906a2b6de59d952727002f28e5f7c0939a54083e13603f"
+}

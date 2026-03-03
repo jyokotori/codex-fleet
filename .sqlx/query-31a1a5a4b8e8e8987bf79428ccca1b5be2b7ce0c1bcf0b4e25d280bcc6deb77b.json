@@ -1,51 +1,51 @@
 {
-  "db_name": "SQLite",
+  "db_name": "PostgreSQL",
   "query": "SELECT id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at FROM docker_configs ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
-        "name": "id",
         "ordinal": 0,
+        "name": "id",
         "type_info": "Text"
       },
       {
-        "name": "name",
         "ordinal": 1,
+        "name": "name",
         "type_info": "Text"
       },
       {
-        "name": "port_mappings",
         "ordinal": 2,
+        "name": "port_mappings",
         "type_info": "Text"
       },
       {
-        "name": "env_vars",
         "ordinal": 3,
+        "name": "env_vars",
         "type_info": "Text"
       },
       {
-        "name": "volume_mappings",
         "ordinal": 4,
+        "name": "volume_mappings",
         "type_info": "Text"
       },
       {
-        "name": "init_script",
         "ordinal": 5,
+        "name": "init_script",
         "type_info": "Text"
       },
       {
-        "name": "created_at",
         "ordinal": 6,
-        "type_info": "Datetime"
+        "name": "created_at",
+        "type_info": "Timestamptz"
       },
       {
-        "name": "updated_at",
         "ordinal": 7,
-        "type_info": "Datetime"
+        "name": "updated_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Left": []
     },
     "nullable": [
       false,

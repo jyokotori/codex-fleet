@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ip",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "port",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "auth_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "password_encrypted",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "ssh_key_content",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "9f7dcf820d50832242fba8c1bdf2371fad21fd858a41e8ee6777222bd78989b3"
+}

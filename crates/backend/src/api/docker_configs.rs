@@ -84,7 +84,7 @@ pub async fn create_docker_config(
     let volume_mappings_str = volume_mappings.to_string();
 
     sqlx::query!(
-        "INSERT INTO docker_configs (id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO docker_configs (id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         id, req.name, port_mappings_str, env_vars_str, volume_mappings_str, init_script, now, now
     )
     .execute(&state.db)
@@ -108,7 +108,7 @@ pub async fn update_docker_config(
     Json(req): Json<UpdateDockerConfigRequest>,
 ) -> Result<Json<DockerConfig>> {
     let existing = sqlx::query!(
-        "SELECT id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at FROM docker_configs WHERE id = ?",
+        "SELECT id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at FROM docker_configs WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -133,7 +133,7 @@ pub async fn update_docker_config(
     let volume_mappings_str = volume_mappings.to_string();
 
     sqlx::query!(
-        "UPDATE docker_configs SET name=?, port_mappings=?, env_vars=?, volume_mappings=?, init_script=?, updated_at=? WHERE id=?",
+        "UPDATE docker_configs SET name=$1, port_mappings=$2, env_vars=$3, volume_mappings=$4, init_script=$5, updated_at=$6 WHERE id=$7",
         name, port_mappings_str, env_vars_str, volume_mappings_str, init_script, now, id
     )
     .execute(&state.db)
@@ -155,7 +155,7 @@ pub async fn delete_docker_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let result = sqlx::query!("DELETE FROM docker_configs WHERE id = ?", id)
+    let result = sqlx::query!("DELETE FROM docker_configs WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 

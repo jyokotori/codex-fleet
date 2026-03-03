@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT port_mappings, env_vars, volume_mappings FROM docker_configs WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "port_mappings",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "env_vars",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "volume_mappings",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "05e684158f488c77ed96d120b67942fe1217459aab3fcd50de8e9ec01d70aaf6"
+}

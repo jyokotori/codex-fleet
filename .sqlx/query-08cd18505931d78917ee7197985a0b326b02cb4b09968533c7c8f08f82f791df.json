@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at FROM docker_configs WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "port_mappings",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "env_vars",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "volume_mappings",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "init_script",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "08cd18505931d78917ee7197985a0b326b02cb4b09968533c7c8f08f82f791df"
+}

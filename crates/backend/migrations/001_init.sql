@@ -1,16 +1,18 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS users (
     id TEXT NOT NULL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     display_name TEXT NOT NULL,
     password_encrypted TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT NOT NULL PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
-    expires_at DATETIME NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS company_configs (
@@ -18,21 +20,21 @@ CREATE TABLE IF NOT EXISTS company_configs (
     name TEXT NOT NULL,
     cli_type TEXT NOT NULL CHECK(cli_type IN ('claude','codex')),
     content TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS servers (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     ip TEXT NOT NULL,
-    port INTEGER NOT NULL DEFAULT 22,
+    port BIGINT NOT NULL DEFAULT 22,
     username TEXT NOT NULL,
     auth_type TEXT NOT NULL CHECK(auth_type IN ('passwordless','password','key')),
     password_encrypted TEXT,
     ssh_key_content TEXT,
     status TEXT NOT NULL DEFAULT 'unknown',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -51,7 +53,7 @@ CREATE TABLE IF NOT EXISTS agents (
     tmux_session TEXT NOT NULL DEFAULT 'main',
     workdir TEXT NOT NULL DEFAULT '/workspace',
     status TEXT NOT NULL DEFAULT 'stopped',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -59,9 +61,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     agent_id TEXT NOT NULL REFERENCES agents(id),
     description TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    started_at DATETIME,
-    completed_at DATETIME
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS notification_configs (
@@ -69,7 +71,7 @@ CREATE TABLE IF NOT EXISTS notification_configs (
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     config_json TEXT NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 1,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     events_json TEXT NOT NULL DEFAULT '["task_completed","task_failed"]',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

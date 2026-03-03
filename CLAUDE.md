@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tech Stack
 
-- **Backend**: Rust + Axum 0.8 + tokio, SQLite via sqlx, async-ssh2-tokio for SSH, rust-embed for SPA
+- **Backend**: Rust + Axum 0.8 + tokio, PostgreSQL via sqlx, async-ssh2-tokio for SSH, rust-embed for SPA
 - **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS + xterm.js (via @xterm/xterm)
 - **Deploy**: Single Docker container (multi-stage build)
 
@@ -29,15 +29,23 @@ npm run build      # outputs to crates/backend/frontend-dist/
 
 ### Backend
 ```bash
-# Requires DATABASE_URL for sqlx compile-time query checks
-export DATABASE_URL=sqlite:///tmp/codex-fleet-dev.db
+# Requires a running PostgreSQL instance and DATABASE_URL for sqlx compile-time checks
+export DATABASE_URL=postgres://codexfleet:codexfleet@localhost:5432/codexfleet
 cargo build
 cargo run          # serves on :3000
 ```
 
-### Docker
+### Docker (recommended for local dev)
 ```bash
-docker compose up --build   # builds and starts at :3000
+cp .env.example .env          # first time only — edit CODEX_MASTER_KEY
+docker compose up --build     # starts postgres + app at :3000
+docker compose logs -f app    # tail logs
+```
+
+### External PostgreSQL
+```bash
+# Edit .env: set COMPOSE_PROFILES= (empty) and DATABASE_URL to your external DB
+docker compose up -d          # only app starts
 ```
 
 ## Key Directories
@@ -59,21 +67,31 @@ frontend/src/
 
 ## SQLx Offline Mode
 
-The `.sqlx/` directory contains pre-generated query metadata for offline compilation.
+The `.sqlx/` directory contains pre-generated query metadata for offline compilation (needed for Docker builds).
 If you change SQL queries, regenerate with:
 ```bash
-export DATABASE_URL=sqlite:///tmp/codex-fleet-dev.db
-cargo sqlx migrate run
+# Start a temporary postgres container
+docker run -d --name pg-temp \
+  -e POSTGRES_PASSWORD=codexfleet -e POSTGRES_USER=codexfleet \
+  -e POSTGRES_DB=codexfleet -p 5432:5432 pgvector/pgvector:pg17
+
+export DATABASE_URL=postgres://codexfleet:codexfleet@localhost:5432/codexfleet
+sqlx database create
+sqlx migrate run --source crates/backend/migrations
 cargo sqlx prepare --workspace
+
+docker rm -f pg-temp
 ```
+Commit the regenerated `.sqlx/` files.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3000` | HTTP listen port |
-| `DATABASE_URL` | `sqlite:///data/codex-fleet.db` | SQLite path |
-| `CODEX_MASTER_KEY` | `dev-master-key-change-in-prod` | AES-256 encryption key |
+| `DATABASE_URL` | `postgres://codexfleet:codexfleet@localhost:5432/codexfleet` | PostgreSQL URL |
+| `CODEX_MASTER_KEY` | `change-me-in-production` | AES-256 encryption key |
+| `RUST_LOG` | `backend=info,tower_http=info` | Log level filter |
 
 ## Default Credentials
 

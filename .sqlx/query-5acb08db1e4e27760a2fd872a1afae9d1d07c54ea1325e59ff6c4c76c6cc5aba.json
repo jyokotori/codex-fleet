@@ -1,56 +1,56 @@
 {
-  "db_name": "SQLite",
+  "db_name": "PostgreSQL",
   "query": "SELECT id, name, ip, port, username, auth_type, os_type, status, created_at FROM servers ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
-        "name": "id",
         "ordinal": 0,
+        "name": "id",
         "type_info": "Text"
       },
       {
-        "name": "name",
         "ordinal": 1,
+        "name": "name",
         "type_info": "Text"
       },
       {
-        "name": "ip",
         "ordinal": 2,
+        "name": "ip",
         "type_info": "Text"
       },
       {
-        "name": "port",
         "ordinal": 3,
-        "type_info": "Integer"
+        "name": "port",
+        "type_info": "Int8"
       },
       {
-        "name": "username",
         "ordinal": 4,
+        "name": "username",
         "type_info": "Text"
       },
       {
-        "name": "auth_type",
         "ordinal": 5,
+        "name": "auth_type",
         "type_info": "Text"
       },
       {
-        "name": "os_type",
         "ordinal": 6,
+        "name": "os_type",
         "type_info": "Text"
       },
       {
-        "name": "status",
         "ordinal": 7,
+        "name": "status",
         "type_info": "Text"
       },
       {
-        "name": "created_at",
         "ordinal": 8,
-        "type_info": "Datetime"
+        "name": "created_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Left": []
     },
     "nullable": [
       false,

@@ -1,111 +1,111 @@
 {
-  "db_name": "SQLite",
+  "db_name": "PostgreSQL",
   "query": "SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, container_id,\n           tmux_session, workdir, use_docker, status, provision_log, created_at\n           FROM agents ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
-        "name": "id",
         "ordinal": 0,
+        "name": "id",
         "type_info": "Text"
       },
       {
-        "name": "name",
         "ordinal": 1,
+        "name": "name",
         "type_info": "Text"
       },
       {
-        "name": "server_id",
         "ordinal": 2,
+        "name": "server_id",
         "type_info": "Text"
       },
       {
-        "name": "git_repo",
         "ordinal": 3,
+        "name": "git_repo",
         "type_info": "Text"
       },
       {
-        "name": "git_branch",
         "ordinal": 4,
+        "name": "git_branch",
         "type_info": "Text"
       },
       {
-        "name": "git_auth_type",
         "ordinal": 5,
+        "name": "git_auth_type",
         "type_info": "Text"
       },
       {
-        "name": "git_username",
         "ordinal": 6,
+        "name": "git_username",
         "type_info": "Text"
       },
       {
-        "name": "cli_type",
         "ordinal": 7,
+        "name": "cli_type",
         "type_info": "Text"
       },
       {
-        "name": "codex_config_id",
         "ordinal": 8,
+        "name": "codex_config_id",
         "type_info": "Text"
       },
       {
-        "name": "agents_md_id",
         "ordinal": 9,
+        "name": "agents_md_id",
         "type_info": "Text"
       },
       {
-        "name": "docker_config_id",
         "ordinal": 10,
+        "name": "docker_config_id",
         "type_info": "Text"
       },
       {
-        "name": "docker_image",
         "ordinal": 11,
+        "name": "docker_image",
         "type_info": "Text"
       },
       {
-        "name": "docker_container_name",
         "ordinal": 12,
+        "name": "docker_container_name",
         "type_info": "Text"
       },
       {
-        "name": "container_id",
         "ordinal": 13,
+        "name": "container_id",
         "type_info": "Text"
       },
       {
-        "name": "tmux_session",
         "ordinal": 14,
+        "name": "tmux_session",
         "type_info": "Text"
       },
       {
-        "name": "workdir",
         "ordinal": 15,
+        "name": "workdir",
         "type_info": "Text"
       },
       {
-        "name": "use_docker",
         "ordinal": 16,
-        "type_info": "Integer"
+        "name": "use_docker",
+        "type_info": "Bool"
       },
       {
-        "name": "status",
         "ordinal": 17,
+        "name": "status",
         "type_info": "Text"
       },
       {
-        "name": "provision_log",
         "ordinal": 18,
+        "name": "provision_log",
         "type_info": "Text"
       },
       {
-        "name": "created_at",
         "ordinal": 19,
-        "type_info": "Datetime"
+        "name": "created_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Left": []
     },
     "nullable": [
       false,

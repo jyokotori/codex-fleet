@@ -100,9 +100,9 @@ pub struct UpdateAgentRequest {
     pub docker_config_id: Option<String>,
 }
 
-async fn append_provision_log(db: &sqlx::SqlitePool, agent_id: &str, msg: &str) {
+async fn append_provision_log(db: &sqlx::PgPool, agent_id: &str, msg: &str) {
     let _ = sqlx::query!(
-        "UPDATE agents SET provision_log = provision_log || ? WHERE id = ?",
+        "UPDATE agents SET provision_log = provision_log || $1 WHERE id = $2",
         msg,
         agent_id
     )
@@ -140,7 +140,7 @@ pub async fn list_agents(State(state): State<AppState>) -> Result<Json<Vec<Agent
             container_id: r.container_id,
             tmux_session: r.tmux_session,
             workdir: r.workdir,
-            use_docker: r.use_docker != 0,
+            use_docker: r.use_docker,
             status: r.status,
             provision_log: r.provision_log,
             created_at: r.created_at.to_string(),
@@ -173,7 +173,7 @@ pub async fn create_agent(
     }
 
     let server = sqlx::query!(
-        "SELECT id, ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = ?",
+        "SELECT id, ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
         req.server_id
     )
     .fetch_optional(&state.db)
@@ -204,18 +204,17 @@ pub async fn create_agent(
         .transpose()
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let use_docker_int: i64 = if use_docker { 1 } else { 0 };
     let container_name_db = docker_container_name.as_deref().unwrap_or("");
 
     sqlx::query!(
         r#"INSERT INTO agents (id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, tmux_session, workdir, use_docker, status, provision_log, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', '', ?)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'provisioning', '', $18)"#,
         id, req.name, req.server_id, git_repo, git_branch, git_auth_type, req.git_username,
         git_password_encrypted, req.cli_type, req.codex_config_id, req.agents_md_id,
         req.docker_config_id, docker_image, container_name_db, tmux_session, workdir,
-        use_docker_int, now
+        use_docker, now
     )
     .execute(&state.db)
     .await?;
@@ -258,7 +257,7 @@ pub async fn create_agent(
                 let msg = format!("\n[Error] SSH connect failed: {}\n", e);
                 append_provision_log(&db, &agent_id, &msg).await;
                 let _ = sqlx::query!(
-                    "UPDATE agents SET status = 'error' WHERE id = ?",
+                    "UPDATE agents SET status = 'error' WHERE id = $1",
                     agent_id
                 )
                 .execute(&db)
@@ -291,7 +290,7 @@ pub async fn create_agent(
                 let msg = format!("\n[Error] Provisioning failed: {}\n", e);
                 append_provision_log(&db, &agent_id, &msg).await;
                 let _ = sqlx::query!(
-                    "UPDATE agents SET status = 'error' WHERE id = ?",
+                    "UPDATE agents SET status = 'error' WHERE id = $1",
                     agent_id
                 )
                 .execute(&db)
@@ -328,7 +327,7 @@ pub async fn create_agent(
 #[allow(clippy::too_many_arguments)]
 async fn provision_agent(
     executor: &Executor,
-    db: &sqlx::SqlitePool,
+    db: &sqlx::PgPool,
     agent_id: &str,
     cli_type: &str,
     codex_config_id: Option<&str>,
@@ -366,7 +365,7 @@ async fn provision_agent(
 
     if let Some(config_id) = codex_config_id {
         if let Ok(row) = sqlx::query!(
-            "SELECT config_toml, auth_json FROM codex_configs WHERE id = ?",
+            "SELECT config_toml, auth_json FROM codex_configs WHERE id = $1",
             config_id
         )
         .fetch_one(db)
@@ -408,7 +407,7 @@ async fn provision_agent(
     }
 
     if let Some(md_id) = agents_md_id {
-        if let Ok(row) = sqlx::query!("SELECT content FROM company_configs WHERE id = ?", md_id)
+        if let Ok(row) = sqlx::query!("SELECT content FROM company_configs WHERE id = $1", md_id)
             .fetch_one(db)
             .await
         {
@@ -443,7 +442,7 @@ async fn provision_agent(
 
         if let Some(dc_id) = docker_config_id {
             if let Ok(dc) = sqlx::query!(
-                "SELECT port_mappings, env_vars, volume_mappings FROM docker_configs WHERE id = ?",
+                "SELECT port_mappings, env_vars, volume_mappings FROM docker_configs WHERE id = $1",
                 dc_id
             )
             .fetch_one(db)
@@ -499,7 +498,7 @@ async fn provision_agent(
                 let cid = container_id_raw.trim().to_string();
                 append_provision_log(db, agent_id, &log(&format!("  Container ID: {}", &cid[..cid.len().min(12)]))).await;
                 let _ = sqlx::query!(
-                    "UPDATE agents SET container_id = ? WHERE id = ?",
+                    "UPDATE agents SET container_id = $1 WHERE id = $2",
                     cid,
                     agent_id
                 )
@@ -514,7 +513,7 @@ async fn provision_agent(
         // Step 4: Run init_script
         append_provision_log(db, agent_id, &log("[Step 4] Run init_script")).await;
         if let Some(dc_id) = docker_config_id {
-            if let Ok(dc) = sqlx::query!("SELECT init_script FROM docker_configs WHERE id = ?", dc_id)
+            if let Ok(dc) = sqlx::query!("SELECT init_script FROM docker_configs WHERE id = $1", dc_id)
                 .fetch_one(db)
                 .await
             {
@@ -622,7 +621,7 @@ async fn provision_agent(
     // Done
     append_provision_log(db, agent_id, &log("[Done] Provisioning complete")).await;
     let _ = sqlx::query!(
-        "UPDATE agents SET status = 'stopped' WHERE id = ?",
+        "UPDATE agents SET status = 'stopped' WHERE id = $1",
         agent_id
     )
     .execute(db)
@@ -641,7 +640,7 @@ pub async fn update_agent(
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
            tmux_session, workdir, use_docker, status, provision_log, created_at
-           FROM agents WHERE id = ?"#,
+           FROM agents WHERE id = $1"#,
         id
     )
     .fetch_optional(&state.db)
@@ -657,7 +656,7 @@ pub async fn update_agent(
     let codex_config_id = req.codex_config_id.or(existing.codex_config_id.clone());
     let agents_md_id = req.agents_md_id.or(existing.agents_md_id.clone());
     let docker_config_id = req.docker_config_id.or(existing.docker_config_id.clone());
-    let use_docker = existing.use_docker != 0;
+    let use_docker = existing.use_docker;
 
     let git_repo_changed = req.git_repo.is_some() && new_git_repo != existing.git_repo;
     if git_repo_changed && req.force_reclone != Some(true) {
@@ -671,7 +670,7 @@ pub async fn update_agent(
     }
 
     sqlx::query!(
-        "UPDATE agents SET name=?, git_repo=?, git_branch=?, codex_config_id=?, agents_md_id=?, docker_config_id=? WHERE id=?",
+        "UPDATE agents SET name=$1, git_repo=$2, git_branch=$3, codex_config_id=$4, agents_md_id=$5, docker_config_id=$6 WHERE id=$7",
         name, new_git_repo, git_branch, codex_config_id, agents_md_id, docker_config_id, id
     )
     .execute(&state.db)
@@ -690,7 +689,7 @@ pub async fn update_agent(
         let server_id = existing.server_id.clone();
 
         let server = sqlx::query!(
-            "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = ?",
+            "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
             server_id
         )
         .fetch_optional(&state.db)
@@ -729,7 +728,7 @@ pub async fn update_agent(
             if config_changed {
                 if let Some(cid) = new_codex_config_id {
                     if let Ok(row) = sqlx::query!(
-                        "SELECT config_toml, auth_json FROM codex_configs WHERE id = ?",
+                        "SELECT config_toml, auth_json FROM codex_configs WHERE id = $1",
                         cid
                     )
                     .fetch_one(&db)
@@ -763,7 +762,7 @@ pub async fn update_agent(
 
                 if let Some(md_id) = new_agents_md_id {
                     if let Ok(row) = sqlx::query!(
-                        "SELECT content FROM company_configs WHERE id = ?",
+                        "SELECT content FROM company_configs WHERE id = $1",
                         md_id
                     )
                     .fetch_one(&db)
@@ -816,7 +815,7 @@ pub async fn update_agent(
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
            tmux_session, workdir, use_docker, status, provision_log, created_at
-           FROM agents WHERE id = ?"#,
+           FROM agents WHERE id = $1"#,
         id
     )
     .fetch_one(&state.db)
@@ -839,7 +838,7 @@ pub async fn update_agent(
         container_id: updated.container_id,
         tmux_session: updated.tmux_session,
         workdir: updated.workdir,
-        use_docker: updated.use_docker != 0,
+        use_docker: updated.use_docker,
         status: updated.status,
         provision_log: updated.provision_log,
         created_at: updated.created_at.to_string(),
@@ -868,7 +867,7 @@ pub async fn delete_agent(
         .execute(&format!("rm -rf $HOME/.codex-fleet/{}/", id))
         .await;
 
-    sqlx::query!("DELETE FROM agents WHERE id = ?", id)
+    sqlx::query!("DELETE FROM agents WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 
@@ -905,7 +904,7 @@ pub async fn start_agent(
             .map_err(|e| AppError::Internal(e.to_string()))?;
     }
 
-    sqlx::query!("UPDATE agents SET status = 'running' WHERE id = ?", id)
+    sqlx::query!("UPDATE agents SET status = 'running' WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 
@@ -931,7 +930,7 @@ pub async fn stop_agent(
             .await;
     }
 
-    sqlx::query!("UPDATE agents SET status = 'stopped' WHERE id = ?", id)
+    sqlx::query!("UPDATE agents SET status = 'stopped' WHERE id = $1", id)
         .execute(&state.db)
         .await?;
 
@@ -983,7 +982,7 @@ pub async fn terminal_command(
     Path(id): Path<String>,
 ) -> Result<Json<TerminalCommandResponse>> {
     let agent = sqlx::query!(
-        "SELECT server_id, docker_container_name, tmux_session, use_docker FROM agents WHERE id = ?",
+        "SELECT server_id, docker_container_name, tmux_session, use_docker FROM agents WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -991,7 +990,7 @@ pub async fn terminal_command(
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
 
     let session = agent.tmux_session;
-    let use_docker = agent.use_docker != 0;
+    let use_docker = agent.use_docker;
 
     let (local_cmd, ssh_attach_cmd) = if use_docker {
         let container = agent.docker_container_name.unwrap_or_default();
@@ -1007,7 +1006,7 @@ pub async fn terminal_command(
     };
 
     let ssh_cmd = if let Ok(server) = sqlx::query!(
-        "SELECT ip, port, username FROM servers WHERE id = ?",
+        "SELECT ip, port, username FROM servers WHERE id = $1",
         agent.server_id
     )
     .fetch_one(&state.db)
@@ -1038,7 +1037,7 @@ pub async fn get_executor(
     agent_id: &str,
 ) -> Result<(Executor, AgentRow)> {
     let agent = sqlx::query!(
-        "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = ?",
+        "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = $1",
         agent_id
     )
     .fetch_optional(&state.db)
@@ -1050,11 +1049,11 @@ pub async fn get_executor(
         docker_container_name: agent.docker_container_name,
         cli_type: agent.cli_type,
         workdir: agent.workdir,
-        use_docker: agent.use_docker != 0,
+        use_docker: agent.use_docker,
     };
 
     let server = sqlx::query!(
-        "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = ?",
+        "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
         agent.server_id
     )
     .fetch_optional(&state.db)

@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE codex_configs SET name=$1, config_toml=$2, auth_json=$3, updated_at=$4 WHERE id=$5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "159230e3c127ec311b9171d59f1e7382c3ad99d396c1498c21986d3d15709bb5"
+}

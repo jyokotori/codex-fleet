@@ -34,7 +34,7 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>> {
     let user = sqlx::query!(
-        "SELECT id, username, display_name, password_encrypted FROM users WHERE username = ?",
+        "SELECT id, username, display_name, password_encrypted FROM users WHERE username = $1",
         req.username
     )
     .fetch_optional(&state.db)
@@ -55,7 +55,7 @@ pub async fn login(
 
     let user_id = user.id.clone();
     sqlx::query!(
-        "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)",
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)",
         token,
         user_id,
         expires_at
@@ -88,7 +88,7 @@ pub async fn register(
         ));
     }
 
-    let existing = sqlx::query!("SELECT id FROM users WHERE username = ?", req.username)
+    let existing = sqlx::query!("SELECT id FROM users WHERE username = $1", req.username)
         .fetch_optional(&state.db)
         .await?;
 
@@ -103,7 +103,7 @@ pub async fn register(
 
     let id = Uuid::new_v4().to_string();
     sqlx::query!(
-        "INSERT INTO users (id, username, display_name, password_encrypted) VALUES (?, ?, ?, ?)",
+        "INSERT INTO users (id, username, display_name, password_encrypted) VALUES ($1, $2, $3, $4)",
         id,
         req.username,
         req.display_name,
@@ -120,7 +120,7 @@ pub async fn logout(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
     let token = extract_token(&headers).ok_or(AppError::Unauthorized)?;
-    sqlx::query!("DELETE FROM sessions WHERE id = ?", token)
+    sqlx::query!("DELETE FROM sessions WHERE id = $1", token)
         .execute(&state.db)
         .await?;
     Ok(Json(serde_json::json!({"message": "Logged out"})))
@@ -144,7 +144,7 @@ pub async fn auth_middleware(
 
     let now = Utc::now();
     let session = sqlx::query!(
-        "SELECT user_id FROM sessions WHERE id = ? AND expires_at > ?",
+        "SELECT user_id FROM sessions WHERE id = $1 AND expires_at > $2",
         token,
         now
     )

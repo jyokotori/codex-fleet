@@ -13,6 +13,7 @@ A web dashboard for managing multiple AI coding agents (Codex etc.) running acro
 ```bash
 git clone git@github.com:jyokotori/codex-fleet.git
 cd codex-fleet
+cp .env.example .env   # edit CODEX_MASTER_KEY before going to production
 
 docker compose up -d
 ```
@@ -21,10 +22,8 @@ Open **http://localhost:3000**
 
 Default login: **`codex` / `codex`**
 
-> In production, set a real secret key:
-> ```bash
-> CODEX_MASTER_KEY=your-secret docker compose up -d
-> ```
+> `.env` is gitignored. The bundled PostgreSQL container starts automatically when `COMPOSE_PROFILES=bundled-db` (the default).
+> To use an external database, set `COMPOSE_PROFILES=` (empty) and update `DATABASE_URL` in `.env`.
 
 ---
 
@@ -61,18 +60,21 @@ Set up webhooks to get notified when tasks complete or fail.
 
 ## Build from source
 
-**Prerequisites:** Rust 1.88+, Node 20+, `sqlx-cli`
+**Prerequisites:** Rust 1.88+, Node 20+, Docker, `sqlx-cli`
 
 ```bash
-cargo install sqlx-cli --no-default-features --features sqlite
+# Install sqlx-cli with PostgreSQL support
+cargo install sqlx-cli --no-default-features --features native-tls,postgres
 
-mkdir -p data
-DATABASE_URL="sqlite://./data/codex-fleet.db" sqlx database create
-DATABASE_URL="sqlite://./data/codex-fleet.db" sqlx migrate run --source crates/backend/migrations
+# Start a local postgres and generate the sqlx offline cache
+./scripts/prepare-sqlx.sh
 
+# Build frontend
 cd frontend && npm install && npm run build && cd ..
 
-DATABASE_URL="sqlite://./data/codex-fleet.db" cargo run -p backend
+# Run (requires a running postgres)
+export DATABASE_URL=postgres://codexfleet:codexfleet@localhost:5432/codexfleet
+cargo run -p backend
 ```
 
 Open **http://localhost:3000**
