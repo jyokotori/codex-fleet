@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO notification_configs (id, name, type, config_json, enabled, events_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "eddd10d0d6e72d8f29dd1fc18a3830fd03bf9309d460a2c6949160a76752d416"
+}

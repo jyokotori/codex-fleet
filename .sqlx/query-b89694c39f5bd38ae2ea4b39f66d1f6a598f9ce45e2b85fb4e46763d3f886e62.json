@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO agents (id, name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, tmux_session, workdir, use_docker, status, provision_log, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', '', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 18
+    },
+    "nullable": []
+  },
+  "hash": "b89694c39f5bd38ae2ea4b39f66d1f6a598f9ce45e2b85fb4e46763d3f886e62"
+}

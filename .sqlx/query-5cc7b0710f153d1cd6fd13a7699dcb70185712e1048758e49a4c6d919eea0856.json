@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO codex_configs (id, name, config_toml, auth_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "5cc7b0710f153d1cd6fd13a7699dcb70185712e1048758e49a4c6d919eea0856"
+}

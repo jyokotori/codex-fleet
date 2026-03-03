@@ -1,0 +1,134 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, container_id,\n           tmux_session, workdir, use_docker, status, provision_log, created_at\n           FROM agents WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "server_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "git_repo",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "git_branch",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "git_auth_type",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "git_username",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "cli_type",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "codex_config_id",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "agents_md_id",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "docker_config_id",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "docker_image",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "docker_container_name",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "container_id",
+        "ordinal": 13,
+        "type_info": "Text"
+      },
+      {
+        "name": "tmux_session",
+        "ordinal": 14,
+        "type_info": "Text"
+      },
+      {
+        "name": "workdir",
+        "ordinal": 15,
+        "type_info": "Text"
+      },
+      {
+        "name": "use_docker",
+        "ordinal": 16,
+        "type_info": "Integer"
+      },
+      {
+        "name": "status",
+        "ordinal": 17,
+        "type_info": "Text"
+      },
+      {
+        "name": "provision_log",
+        "ordinal": 18,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 19,
+        "type_info": "Datetime"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fe8ffb25b48266929c5f32f0665644258a72172f822e65cc577cb82e23e84872"
+}

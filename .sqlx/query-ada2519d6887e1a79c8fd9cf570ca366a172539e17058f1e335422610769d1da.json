@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO tasks (id, agent_id, description, status, tmux_window, created_at, started_at) VALUES (?, ?, ?, 'running', ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "ada2519d6887e1a79c8fd9cf570ca366a172539e17058f1e335422610769d1da"
+}

@@ -1,0 +1,14 @@
+# https://developers.openai.com/codex/config-basic
+model_provider = "azure"
+model = "gpt-5.3-codex"
+
+model_reasoning_effort = "medium"
+personality = "pragmatic"
+
+web_search="disabled"
+
+[model_providers.azure]
+name = "Azure OpenAI"
+env_key = "AZURE_OPENAI_API_KEY"
+base_url = "https://your_resource.azure.com/openai"
+query_params = { api-version = "2025-04-01-preview" }

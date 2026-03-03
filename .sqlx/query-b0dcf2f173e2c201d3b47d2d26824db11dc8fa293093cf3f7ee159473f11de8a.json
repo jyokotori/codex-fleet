@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM codex_configs WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b0dcf2f173e2c201d3b47d2d26824db11dc8fa293093cf3f7ee159473f11de8a"
+}

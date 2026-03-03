@@ -1,0 +1,299 @@
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Terminal as TerminalIcon, Copy, Send } from 'lucide-react'
+import { agentsApi, serversApi, tasksApi, type Task } from '../lib/api'
+import { useI18n } from '../hooks/useI18n'
+import LogStream from '../components/LogStream'
+import Terminal from '../components/Terminal'
+import ProvisionLog from '../components/ProvisionLog'
+
+type TabType = 'logs' | 'terminal' | 'tasks'
+
+export default function AgentDetail() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const qc = useQueryClient()
+  const { t } = useI18n()
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    const tab = searchParams.get('tab')
+    return (tab === 'terminal' || tab === 'tasks' || tab === 'logs') ? tab : 'logs'
+  })
+  const [activeWindow, setActiveWindow] = useState<string | undefined>(() => searchParams.get('window') ?? undefined)
+  const [showTaskModal, setShowTaskModal] = useState(false)
+  const [taskInput, setTaskInput] = useState('')
+  const [copyToast, setCopyToast] = useState(false)
+
+  const { data: agent, isLoading, refetch: refetchAgent } = useQuery({
+    queryKey: ['agents', id],
+    queryFn: () => agentsApi.list().then(agents => agents.find(a => a.id === id)),
+    enabled: !!id,
+    refetchInterval: 5000,
+  })
+
+  const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['tasks', id],
+    queryFn: () => tasksApi.list(id!),
+    enabled: !!id,
+    refetchInterval: 3000,
+  })
+
+  const startMutation = useMutation({ mutationFn: () => agentsApi.start(id!), onSuccess: () => qc.invalidateQueries({ queryKey: ['agents', id] }) })
+  const stopMutation = useMutation({ mutationFn: () => agentsApi.stop(id!), onSuccess: () => qc.invalidateQueries({ queryKey: ['agents', id] }) })
+  const resumeMutation = useMutation({ mutationFn: () => agentsApi.resume(id!) })
+  const deleteMutation = useMutation({ mutationFn: () => agentsApi.delete(id!), onSuccess: () => navigate('/agents') })
+
+  const createTaskMutation = useMutation({
+    mutationFn: (description: string) => tasksApi.create(id!, description),
+    onSuccess: (task) => {
+      qc.invalidateQueries({ queryKey: ['tasks', id] })
+      setTaskInput('')
+      setShowTaskModal(false)
+      // Auto-switch to terminal tab with the task's tmux window
+      if (task.tmux_window) {
+        setActiveWindow(task.tmux_window)
+      }
+      setActiveTab('terminal')
+    },
+  })
+
+  async function handleCopyTerminalCommand() {
+    try {
+      const { local_cmd, ssh_cmd } = await agentsApi.getTerminalCommand(id!)
+      const cmd = ssh_cmd ?? local_cmd
+      await navigator.clipboard.writeText(cmd)
+      setCopyToast(true)
+      setTimeout(() => setCopyToast(false), 2000)
+    } catch (e) {
+      console.error('Failed to copy terminal command', e)
+    }
+  }
+
+  function handleProvisionDone(status: string) {
+    // Refresh agent data when provisioning completes
+    refetchAgent()
+    if (status === 'stopped') {
+      setActiveTab('logs')
+    }
+  }
+
+  if (isLoading) return <div className="p-8 text-gray-500">{t.common.loading}</div>
+  if (!agent) return <div className="p-8 text-gray-500">Agent not found</div>
+
+  const isProvisioning = agent.status === 'provisioning'
+  const server = servers.find(s => s.id === agent.server_id)
+  const statusMap: Record<string, string> = { running: 'badge-green', stopped: 'badge-gray', error: 'badge-red', provisioning: 'badge-yellow' }
+  const statusLabel = t.status[agent.status as keyof typeof t.status] ?? agent.status
+
+  const tabLabels: Record<TabType, string> = {
+    logs: t.agentDetail.logs,
+    terminal: t.agentDetail.terminal,
+    tasks: t.agentDetail.tasks,
+  }
+
+  const canDispatchTask = agent.status === 'stopped' || agent.status === 'running'
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="border-b border-gray-100 dark:border-gray-800 px-8 py-5">
+        <div className="flex items-center gap-4 mb-4">
+          <button onClick={() => navigate('/agents')} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="flex items-center gap-3 flex-1">
+            <div className="w-9 h-9 rounded-lg bg-purple-600/20 flex items-center justify-center">
+              <Bot size={18} className="text-purple-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="font-bold text-gray-900 dark:text-white">{agent.name}</h1>
+                <span className={statusMap[agent.status] ?? 'badge-gray'}>{statusLabel}</span>
+                <span className="badge badge-blue">{agent.cli_type}</span>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-gray-500 mt-0.5">
+                <span className="flex items-center gap-1"><Server size={11} />{server?.name ?? agent.server_id}</span>
+                <span className="flex items-center gap-1"><GitBranch size={11} />{agent.git_branch}</span>
+                <span>{agent.docker_container_name}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Copy terminal command */}
+            <div className="relative">
+              <button
+                onClick={handleCopyTerminalCommand}
+                className="btn-secondary btn-sm flex items-center gap-1"
+                title="Copy terminal attach command"
+              >
+                <Copy size={13} />
+                {copyToast ? 'Copied!' : 'Copy cmd'}
+              </button>
+            </div>
+
+            {/* Open terminal (placeholder) */}
+            <button
+              className="btn-secondary btn-sm flex items-center gap-1"
+              title="Open in local terminal"
+              onClick={handleCopyTerminalCommand}
+            >
+              <TerminalIcon size={13} />
+            </button>
+
+            {/* Dispatch task */}
+            {canDispatchTask && (
+              <button
+                onClick={() => setShowTaskModal(true)}
+                className="btn-primary btn-sm flex items-center gap-1"
+              >
+                <Send size={13} />
+                Dispatch Task
+              </button>
+            )}
+
+            {agent.status === 'stopped' && (
+              <button onClick={() => startMutation.mutate()} className="btn-secondary btn-sm flex items-center gap-1" disabled={startMutation.isPending}>
+                <Play size={13} />{t.agents.start}
+              </button>
+            )}
+            {agent.status === 'running' && (
+              <>
+                <button onClick={() => stopMutation.mutate()} className="btn-secondary btn-sm flex items-center gap-1" disabled={stopMutation.isPending}>
+                  <Square size={13} />{t.agents.stop}
+                </button>
+                <button onClick={() => resumeMutation.mutate()} className="btn-secondary btn-sm flex items-center gap-1" disabled={resumeMutation.isPending}>
+                  <RotateCcw size={13} />{t.agents.resume}
+                </button>
+              </>
+            )}
+            <button onClick={() => { if (confirm(t.agents.deleteConfirm(agent.name))) deleteMutation.mutate() }} className="btn-danger btn-sm">
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Provisioning view */}
+      {isProvisioning ? (
+        <div className="flex-1 overflow-auto p-8">
+          <ProvisionLog agentId={id!} onDone={handleProvisionDone} />
+        </div>
+      ) : (
+        <>
+          {/* Tabs */}
+          <div className="border-b border-gray-100 dark:border-gray-800 px-8">
+            <div className="flex gap-1">
+              {(['logs', 'terminal', 'tasks'] as TabType[]).map(tab => (
+                <button key={tab} onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === tab ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                >
+                  {tabLabels[tab]}
+                  {tab === 'tasks' && tasks.length > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">{tasks.length}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-auto p-8">
+            {activeTab === 'logs' && <LogStream agentId={id!} className="h-full" />}
+            {activeTab === 'terminal' && <Terminal agentId={id!} tmuxWindow={activeWindow} className="h-full" />}
+            {activeTab === 'tasks' && (
+              <div className="space-y-3">
+                {tasks.length === 0 ? (
+                  <div className="text-center py-12 card">
+                    <p className="text-gray-500">{t.agentDetail.noTasks}</p>
+                    {canDispatchTask && <p className="text-gray-400 dark:text-gray-600 text-sm mt-1">{t.agentDetail.noTasksHint}</p>}
+                  </div>
+                ) : tasks.map(task => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    t={t}
+                    onOpenTerminal={task.tmux_window ? () => {
+                      setActiveWindow(task.tmux_window)
+                      setActiveTab('terminal')
+                    } : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Dispatch task modal */}
+      {showTaskModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl w-full max-w-lg dark:bg-gray-900 dark:border-gray-700">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">Dispatch Task</h3>
+              <button onClick={() => setShowTaskModal(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+            </div>
+            <div className="p-6">
+              <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">Task Description</label>
+              <textarea
+                className="input w-full"
+                rows={5}
+                value={taskInput}
+                onChange={e => setTaskInput(e.target.value)}
+                placeholder={t.agentDetail.taskPlaceholder(agent.cli_type)}
+                autoFocus
+              />
+              {createTaskMutation.error && (
+                <div className="text-red-500 text-sm mt-2">{String(createTaskMutation.error.message)}</div>
+              )}
+              <div className="flex gap-3 justify-end pt-4">
+                <button onClick={() => setShowTaskModal(false)} className="btn-secondary">{t.common.cancel}</button>
+                <button
+                  onClick={() => { if (taskInput.trim()) createTaskMutation.mutate(taskInput.trim()) }}
+                  className="btn-primary flex items-center gap-2"
+                  disabled={createTaskMutation.isPending || !taskInput.trim()}
+                >
+                  <Send size={14} />{t.common.send}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TaskCard({ task, t, onOpenTerminal }: {
+  task: Task
+  t: ReturnType<typeof useI18n>['t']
+  onOpenTerminal?: () => void
+}) {
+  const statusMap: Record<string, string> = {
+    pending: 'badge-gray', running: 'badge-yellow', completed: 'badge-green',
+    failed: 'badge-red', cancelled: 'badge-gray',
+  }
+  return (
+    <div className="card">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-gray-700 dark:text-gray-200 break-words">{task.description}</p>
+          <p className="text-xs text-gray-500 mt-1">{new Date(task.created_at).toLocaleString()}</p>
+          {task.tmux_window && (
+            <p className="text-xs text-gray-400 mt-0.5 font-mono">window: {task.tmux_window}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className={statusMap[task.status] ?? 'badge-gray'}>{t.status[task.status as keyof typeof t.status] ?? task.status}</span>
+          {onOpenTerminal && (
+            <button onClick={onOpenTerminal} className="btn-secondary btn-sm flex items-center gap-1" title="Open in terminal">
+              <TerminalIcon size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

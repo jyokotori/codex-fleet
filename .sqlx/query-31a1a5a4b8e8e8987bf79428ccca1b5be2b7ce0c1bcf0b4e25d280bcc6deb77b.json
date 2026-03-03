@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at FROM docker_configs ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "port_mappings",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "env_vars",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "volume_mappings",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "init_script",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 7,
+        "type_info": "Datetime"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "31a1a5a4b8e8e8987bf79428ccca1b5be2b7ce0c1bcf0b4e25d280bcc6deb77b"
+}

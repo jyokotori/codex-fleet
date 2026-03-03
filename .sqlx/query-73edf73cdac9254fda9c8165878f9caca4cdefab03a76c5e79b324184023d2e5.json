@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO docker_configs (id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "73edf73cdac9254fda9c8165878f9caca4cdefab03a76c5e79b324184023d2e5"
+}

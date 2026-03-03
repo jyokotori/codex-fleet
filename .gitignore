@@ -1,0 +1,29 @@
+# Rust
+/target/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Build output embedded into backend
+crates/backend/frontend-dist/
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+data/*
+!data/.gitkeep
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

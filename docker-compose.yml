@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=3000
+      - DATABASE_URL=sqlite:///data/codex-fleet.db
+      - CODEX_MASTER_KEY=${CODEX_MASTER_KEY:-change-me-in-production}
+      - RUST_LOG=backend=info,tower_http=info
+    restart: unless-stopped

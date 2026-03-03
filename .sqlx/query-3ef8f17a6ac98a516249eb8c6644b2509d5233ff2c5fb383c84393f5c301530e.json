@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "server_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "tmux_session",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "docker_container_name",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "cli_type",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "workdir",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "use_docker",
+        "ordinal": 6,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3ef8f17a6ac98a516249eb8c6644b2509d5233ff2c5fb383c84393f5c301530e"
+}

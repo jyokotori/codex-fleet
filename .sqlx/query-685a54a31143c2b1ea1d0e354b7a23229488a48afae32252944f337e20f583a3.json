@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "ip",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "port",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "username",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "auth_type",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "password_encrypted",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "ssh_key_content",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "685a54a31143c2b1ea1d0e354b7a23229488a48afae32252944f337e20f583a3"
+}

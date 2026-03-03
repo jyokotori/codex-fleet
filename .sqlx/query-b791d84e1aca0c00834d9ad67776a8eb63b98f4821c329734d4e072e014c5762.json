@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT config_toml, auth_json FROM codex_configs WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "config_toml",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "auth_json",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b791d84e1aca0c00834d9ad67776a8eb63b98f4821c329734d4e072e014c5762"
+}
