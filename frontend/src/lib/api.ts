@@ -4,6 +4,31 @@ function getToken(): string | null {
   return localStorage.getItem('token')
 }
 
+// Prevent multiple concurrent refresh attempts
+let refreshPromise: Promise<boolean> | null = null
+
+async function tryRefreshToken(): Promise<boolean> {
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) return false
+
+  try {
+    const res = await fetch(BASE_URL + '/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+    if (!res.ok) return false
+
+    const data = await res.json()
+    localStorage.setItem('token', data.access_token)
+    localStorage.setItem('refresh_token', data.refresh_token)
+    if (data.user) localStorage.setItem('user', JSON.stringify(data.user))
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -17,7 +42,20 @@ async function request<T>(
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const res = await fetch(BASE_URL + path, { ...options, headers })
+  let res = await fetch(BASE_URL + path, { ...options, headers })
+
+  // On 401, try refresh token before giving up
+  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    if (!refreshPromise) {
+      refreshPromise = tryRefreshToken().finally(() => { refreshPromise = null })
+    }
+    const refreshed = await refreshPromise
+    if (refreshed) {
+      // Retry with new token
+      const newHeaders = { ...headers, Authorization: `Bearer ${getToken()}` }
+      res = await fetch(BASE_URL + path, { ...options, headers: newHeaders })
+    }
+  }
 
   if (!res.ok) {
     let errMsg = `HTTP ${res.status}`
@@ -27,6 +65,15 @@ async function request<T>(
       errMsg = body.error || body.message || errMsg
       requires_confirm = body.requires_confirm === true
     } catch {}
+
+    // Refresh failed or still 401 → redirect to login
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('refresh_token')
+      localStorage.removeItem('user')
+      window.location.href = '/login'
+    }
+
     const err = new Error(errMsg) as Error & { status: number; requires_confirm: boolean }
     err.status = res.status
     err.requires_confirm = requires_confirm
@@ -324,6 +371,75 @@ export const tasksApi = {
       body: JSON.stringify({ description }),
     }),
   get: (taskId: string) => request<Task>(`/api/tasks/${taskId}`),
+}
+
+// Requirements
+export interface Project {
+  id: string
+  name: string
+  description: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkItem {
+  id: string
+  project_id: string
+  parent_id?: string
+  type: string
+  title: string
+  description: string
+  status: string
+  priority: string
+  assigned_agent_id?: string
+  assigned_user_id?: string
+  execution_id?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SimpleUser {
+  id: string
+  username: string
+  display_name: string
+}
+
+export const usersApi = {
+  list: () => request<SimpleUser[]>('/api/users'),
+}
+
+export const projectsApi = {
+  list: () => request<Project[]>('/api/projects'),
+  create: (data: { name: string; description?: string }) =>
+    request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
+  get: (id: string) => request<Project>(`/api/projects/${id}`),
+  update: (id: string, data: { name?: string; description?: string; status?: string }) =>
+    request<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<{ message: string }>(`/api/projects/${id}`, { method: 'DELETE' }),
+  listWorkItems: (projectId: string, params?: { status?: string; type?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.status) qs.set('status', params.status)
+    if (params?.type) qs.set('type', params.type)
+    const query = qs.toString() ? `?${qs.toString()}` : ''
+    return request<WorkItem[]>(`/api/projects/${projectId}/work-items${query}`)
+  },
+  createWorkItem: (projectId: string, data: {
+    parent_id?: string; type: string; title: string; description?: string; priority?: string; assigned_user_id?: string
+  }) =>
+    request<WorkItem>(`/api/projects/${projectId}/work-items`, { method: 'POST', body: JSON.stringify(data) }),
+}
+
+export const workItemsApi = {
+  get: (id: string) => request<WorkItem>(`/api/work-items/${id}`),
+  update: (id: string, data: {
+    title?: string; description?: string; priority?: string; status?: string;
+    assigned_agent_id?: string; assigned_user_id?: string; execution_id?: string
+  }) =>
+    request<WorkItem>(`/api/work-items/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<{ message: string }>(`/api/work-items/${id}`, { method: 'DELETE' }),
 }
 
 // Notifications

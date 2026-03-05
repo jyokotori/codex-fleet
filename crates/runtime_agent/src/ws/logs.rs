@@ -30,6 +30,7 @@ async fn handle_logs_socket(mut socket: WebSocket, state: AppContext, agent_id: 
     };
     let container_name = agent_info.docker_container_name.unwrap_or_default();
     let tmux_session = agent_info.tmux_session;
+    let use_docker = agent_info.use_docker;
 
     let mut ticker = interval(Duration::from_millis(500));
     let mut last_content = String::new();
@@ -37,10 +38,17 @@ async fn handle_logs_socket(mut socket: WebSocket, state: AppContext, agent_id: 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let cmd = format!(
-                    "docker exec {} tmux capture-pane -p -J -e -t {} 2>/dev/null || echo ''",
-                    container_name, tmux_session
-                );
+                let cmd = if use_docker {
+                    format!(
+                        "docker exec {} tmux capture-pane -p -J -e -t {} 2>/dev/null || echo ''",
+                        container_name, tmux_session
+                    )
+                } else {
+                    format!(
+                        "tmux capture-pane -p -J -e -t {} 2>/dev/null || echo ''",
+                        tmux_session
+                    )
+                };
 
                 match executor.execute(&cmd).await {
                     Ok(content) => {

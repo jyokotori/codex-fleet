@@ -90,6 +90,9 @@ Rules:
   - `GET/POST /api/agents/{id}/tasks`
   - `GET /api/tasks/{id}`
   - `GET /ws/agents/{id}/logs|terminal|provision`
+  - `GET/POST/PUT/DELETE /api/projects...`
+  - `GET/POST /api/projects/{id}/work-items`
+  - `GET/PUT/DELETE /api/work-items/{id}`
 - `notification_center`
   - `GET/POST/PUT/DELETE /api/notifications...`
 

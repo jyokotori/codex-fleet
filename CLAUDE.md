@@ -1,0 +1,1 @@
+Please use the current AGENTS.md in this directory as the authoritative reference, update AGENTS.md accordingly, and discontinue maintaining this file (CLAUDE.md).

@@ -11,6 +11,8 @@ import AgentsMd from './pages/configs/AgentsMd'
 import DockerConfigs from './pages/configs/DockerConfigs'
 import WIPSection from './pages/configs/WIPSection'
 import Notifications from './pages/Notifications'
+import Requirements from './pages/Requirements'
+import RequirementDetail from './pages/RequirementDetail'
 import Users from './pages/admin/Users'
 import Layout from './components/Layout'
 
@@ -57,6 +59,8 @@ export default function App() {
           <Route path="mcp" element={<WIPSection />} />
         </Route>
         <Route path="notifications" element={<Notifications />} />
+        <Route path="requirements" element={<Requirements />} />
+        <Route path="requirements/:projectId" element={<RequirementDetail />} />
         <Route
           path="admin/users"
           element={(

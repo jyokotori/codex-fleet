@@ -13,9 +13,17 @@ use shared_kernel::AppConfig;
 
 pub async fn create_pool(config: &AppConfig) -> anyhow::Result<PgPool> {
     let connect_opts = PgConnectOptions::from_str(&config.database_url)?;
+    info!(
+        "Connecting to postgres://{}@{}:{}/{}",
+        connect_opts.get_username(),
+        connect_opts.get_host(),
+        connect_opts.get_port(),
+        connect_opts.get_database().unwrap_or("?"),
+    );
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
+        .acquire_timeout(std::time::Duration::from_secs(10))
         .connect_with(connect_opts)
         .await?;
 

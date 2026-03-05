@@ -19,6 +19,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 mime_guess = "2"
 uuid = { version = "1", features = ["v4"] }
+urlencoding = "2"
+dotenvy = "0.15"
 
 shared_kernel = { path = "../shared_kernel" }
 iam = { path = "../iam" }

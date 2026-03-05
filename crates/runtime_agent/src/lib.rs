@@ -35,6 +35,16 @@ pub fn router() -> Router<AppContext> {
         .route("/api/agents/{id}/tasks", post(api::tasks::create_task))
         .route("/api/agents/{id}/tasks", get(api::tasks::list_tasks))
         .route("/api/tasks/{id}", get(api::tasks::get_task))
+        .route("/api/projects", get(api::requirements::list_projects))
+        .route("/api/projects", post(api::requirements::create_project))
+        .route("/api/projects/{id}", get(api::requirements::get_project))
+        .route("/api/projects/{id}", put(api::requirements::update_project))
+        .route("/api/projects/{id}", delete(api::requirements::delete_project))
+        .route("/api/projects/{id}/work-items", get(api::requirements::list_work_items))
+        .route("/api/projects/{id}/work-items", post(api::requirements::create_work_item))
+        .route("/api/work-items/{id}", get(api::requirements::get_work_item))
+        .route("/api/work-items/{id}", put(api::requirements::update_work_item))
+        .route("/api/work-items/{id}", delete(api::requirements::delete_work_item))
 }
 
 pub fn ws_router() -> Router<AppContext> {

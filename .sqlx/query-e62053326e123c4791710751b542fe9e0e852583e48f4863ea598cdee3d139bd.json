@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, username, display_name, password_encrypted FROM users WHERE username = $1",
+  "query": "SELECT id, name, description, status, created_at, updated_at FROM projects WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -10,18 +10,28 @@
       },
       {
         "ordinal": 1,
-        "name": "username",
+        "name": "name",
         "type_info": "Text"
       },
       {
         "ordinal": 2,
-        "name": "display_name",
+        "name": "description",
         "type_info": "Text"
       },
       {
         "ordinal": 3,
-        "name": "password_encrypted",
+        "name": "status",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -33,8 +43,10 @@
       false,
       false,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "82828585cc003bd03274ab8baf45138ab2af8aa27b6d50991967f45928bcbd9c"
+  "hash": "e62053326e123c4791710751b542fe9e0e852583e48f4863ea598cdee3d139bd"
 }

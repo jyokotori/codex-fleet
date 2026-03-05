@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, container_id,\n           tmux_session, workdir, use_docker, status, provision_log, created_at\n           FROM agents ORDER BY created_at DESC",
+  "query": "SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, container_id,\n           tmux_session, workdir, use_docker, status, provision_log, provision_steps, created_at\n           FROM agents WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -100,12 +100,19 @@
       },
       {
         "ordinal": 19,
+        "name": "provision_steps",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 20,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text"
+      ]
     },
     "nullable": [
       false,
@@ -127,8 +134,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "0b28820e140a160f7faf73b87c10910743c8e7ac6ec0e16884b8a9ceaba12d20"
+  "hash": "3dd4efbad8940a64d5b00f974da3abc10b14b666e527db095605bd56962ac6a1"
 }

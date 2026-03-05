@@ -10,7 +10,7 @@ PG_PASSWORD=codexfleet
 PG_DB=codexfleet
 PG_PORT=5433  # use 5433 to avoid collision with any local postgres on 5432
 
-export DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${PG_DB}"
+export DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${PG_DB}?sslmode=disable"
 
 cleanup() {
     echo "→ Removing temporary postgres container..."

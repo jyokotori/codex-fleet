@@ -27,6 +27,3 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
-
-# Local assistant notes
-CLAUDE.md

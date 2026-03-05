@@ -3,6 +3,8 @@ mod embed;
 
 use axum::{middleware, routing::get, Router};
 use shared_kernel::{AppConfig, AppContext};
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
 use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -11,12 +13,17 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok(); // load .env if present (ignored in production)
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "backend=info,tower_http=info".parse().unwrap()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_timer(tracing_subscriber::fmt::time::SystemTime)
+                .with_target(true),
+        )
         .init();
 
     let config = AppConfig::from_env();
@@ -25,6 +32,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppContext {
         db,
         config: config.clone(),
+        provision_channels: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let cors = CorsLayer::new()

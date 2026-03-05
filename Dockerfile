@@ -3,7 +3,6 @@ FROM node:20-alpine AS frontend
 WORKDIR /app/frontend
 RUN npm install -g pnpm
 COPY frontend/package.json frontend/pnpm-lock.yaml* ./
-# Fallback to npm if no pnpm lock file
 RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else npm install; fi
 COPY frontend/ .
 RUN if [ -f pnpm-lock.yaml ]; then pnpm build; else npm run build; fi
@@ -16,17 +15,15 @@ COPY Cargo.toml Cargo.lock* ./
 COPY crates/ crates/
 COPY .sqlx/ .sqlx/
 COPY --from=frontend /app/crates/backend/frontend-dist crates/backend/frontend-dist/
-# Build with release profile (sqlx offline mode — no DB needed at compile time)
 ENV SQLX_OFFLINE=true
-RUN cargo build --release -p backend
+RUN cargo build --release -p backend && cp target/release/backend /tmp/backend
 
 # Stage 3: Runtime
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y ca-certificates openssh-client docker.io && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/backend /usr/local/bin/backend
+COPY --from=builder /tmp/backend /usr/local/bin/backend
 EXPOSE 3000
 ENV PORT=3000
 ENV CODEX_MASTER_KEY=change-me-in-production
-ENV DATABASE_URL=postgres://codexfleet:codexfleet@postgres:5432/codexfleet
 ENV RUST_LOG=backend=info,tower_http=info
 CMD ["/usr/local/bin/backend"]

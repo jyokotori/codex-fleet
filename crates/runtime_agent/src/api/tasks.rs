@@ -41,6 +41,8 @@ pub async fn create_task(
 
     let container_name = agent_info.docker_container_name.unwrap_or_default();
     let tmux_session = agent_info.tmux_session;
+    let workdir = agent_info.workdir;
+    let use_docker = agent_info.use_docker;
 
     let id = Uuid::new_v4().to_string();
     let tmux_window = format!("task-{}", &id[..8]);
@@ -52,29 +54,51 @@ pub async fn create_task(
         "opencode" => format!("opencode '{}'", req.description.replace('\'', "'\\''")),
         _ => return Err(AppError::BadRequest("Unknown cli_type".into())),
     };
+    let cli_cmd_escaped = cli_cmd.replace('\'', "'\\''");
 
     // Ensure session exists
-    let ensure_session = format!(
-        "docker exec {} tmux new-session -d -s {} 2>/dev/null || true",
-        container_name, tmux_session
-    );
+    let ensure_session = if use_docker {
+        format!(
+            "docker exec {} tmux new-session -d -s {} -c /workspace 2>/dev/null || true",
+            container_name, tmux_session
+        )
+    } else {
+        format!(
+            "tmux new-session -d -s {} -c \"{}\" 2>/dev/null || true",
+            tmux_session, workdir
+        )
+    };
     let _ = executor.execute(&ensure_session).await;
 
     // Create a new window for this task
-    let new_window_cmd = format!(
-        "docker exec {} tmux new-window -t {} -n {}",
-        container_name, tmux_session, tmux_window
-    );
+    let new_window_cmd = if use_docker {
+        format!(
+            "docker exec {} tmux new-window -t {} -n {} -c /workspace",
+            container_name, tmux_session, tmux_window
+        )
+    } else {
+        format!(
+            "tmux new-window -t {} -n {} -c \"{}\"",
+            tmux_session, tmux_window, workdir
+        )
+    };
     executor
         .execute(&new_window_cmd)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to create tmux window: {}", e)))?;
 
     // Send command to that window
-    let send_cmd = format!(
-        "docker exec {} tmux send-keys -t '{}:{}' '{}' Enter",
-        container_name, tmux_session, tmux_window, cli_cmd
-    );
+    let send_cmd = if use_docker {
+        format!(
+            "docker exec {} tmux send-keys -t '{}:{}' '{}' Enter",
+            container_name, tmux_session, tmux_window, cli_cmd_escaped
+        )
+    } else {
+        format!(
+            "tmux send-keys -t '{}:{}' '{}' Enter",
+            tmux_session, tmux_window, cli_cmd_escaped
+        )
+    };
     executor
         .execute(&send_cmd)
         .await
@@ -126,8 +150,8 @@ pub async fn list_tasks(
             status: r.status,
             tmux_window: r.tmux_window,
             created_at: r.created_at.to_string(),
-            started_at: r.started_at.map(|t| t.to_string()),
-            completed_at: r.completed_at.map(|t| t.to_string()),
+            started_at: r.started_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
+            completed_at: r.completed_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
         })
         .collect();
 
@@ -153,7 +177,7 @@ pub async fn get_task(
         status: row.status,
         tmux_window: row.tmux_window,
         created_at: row.created_at.to_string(),
-        started_at: row.started_at.map(|t| t.to_string()),
-        completed_at: row.completed_at.map(|t| t.to_string()),
+        started_at: row.started_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
+        completed_at: row.completed_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
     }))
 }

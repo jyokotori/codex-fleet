@@ -19,12 +19,12 @@
 
 ---
 
-## 快速启动
+## 快速启动（Docker）
 
 ```bash
 git clone git@github.com:jyokotori/codex-fleet.git
 cd codex-fleet
-cp .env.example .env   # 生产环境请修改 CODEX_MASTER_KEY
+cp .env.example .env   # 生产环境请修改账号密码等配置
 
 docker compose up -d
 ```
@@ -33,8 +33,22 @@ docker compose up -d
 
 默认管理员账号：**`codex` / `codex`**
 
-> `.env` 已加入 `.gitignore`。默认配置（`COMPOSE_PROFILES=bundled-db`）会自动启动内置 PostgreSQL 容器。
-> 如需使用外部数据库，将 `.env` 中的 `COMPOSE_PROFILES` 留空，并修改 `DATABASE_URL`。
+---
+
+## 本地开发
+
+```bash
+# 1. 只启动 postgres
+docker compose up postgres -d
+
+# 2. 启动后端（一个终端）
+cargo run -p backend
+
+# 3. 启动前端开发服务器，支持热更新（另一个终端）
+cd frontend && npm install && npm run dev
+```
+
+前端开发地址：**http://localhost:5173**（`/api` 和 `/ws` 会自动代理到后端）
 
 ---
 
@@ -44,7 +58,11 @@ docker compose up -d
 添加远程服务器，一键测试 SSH 连通性。支持免密 SSH、密码认证、SSH Key。添加好之后，该服务器上的所有 Agent 都自动走这套连接。
 
 ### Agent 管理
-创建 Agent 时，选择一台服务器（或者选「本机」，不需要 SSH），选好 CLI 工具（目前支持 Codex，更多 WIP），可以选择关联一个 Git 仓库。创建后控制台自动完成所有初始化：拉取代码、启动 Docker 容器、在容器内建好 tmux 会话。
+创建 Agent 时，选择一台远程服务器，选好 CLI 工具（目前仅支持 Codex），可以选择关联一个 Git 仓库。Docker 可选。
+初始化时会先在服务器上固定创建两类目录：
+- `~/.codex-fleet/{agent_id}/agent`：存放 Agent 配置
+- `~/.codex-fleet/{agent_id}/workspace`：项目工作目录
+如果启用 Docker，这两个目录会挂载到容器内的 `/agent` 和 `/workspace`，并应用 Docker 配置（端口、环境变量、挂载、初始化脚本）。
 
 每个 Agent 可以单独配置：
 - **Codex Config** — 绑定一组 `config.toml` + `auth.json`，让 Agent 启动就有认证信息和配置
@@ -56,7 +74,7 @@ docker compose up -d
 
 ### 实时日志 & 终端
 - **日志标签** — 实时显示 Agent tmux 会话的输出，自动滚动
-- **终端标签** — 完整的交互式终端，可以直接在容器里敲命令
+- **终端标签** — 完整的交互式终端，可以直接在运行环境里敲命令（容器或宿主机）
 
 ### 配置管理
 把可复用的配置统一存储，随时挂到任意 Agent 上：
@@ -86,26 +104,15 @@ docker compose up -d
 
 ---
 
-## 从源码构建
+## 更新 SQLx 离线缓存
 
-**前置条件：** Rust 1.88+、Node 20+、Docker、`sqlx-cli`
+修改了 SQL 查询后，需要重新生成 `.sqlx/` 缓存，否则 Docker 构建时会报错：
 
 ```bash
-# 安装带 PostgreSQL 支持的 sqlx-cli
 cargo install sqlx-cli --no-default-features --features native-tls,postgres
-
-# 启动临时 postgres 并生成 sqlx 离线缓存
-./scripts/prepare-sqlx.sh
-
-# 构建前端
-cd frontend && npm install && npm run build && cd ..
-
-# 启动（需要 postgres 在运行）
-export DATABASE_URL=postgres://codexfleet:codexfleet@localhost:5432/codexfleet
-cargo run -p backend
+docker compose up postgres -d
+cargo sqlx prepare --workspace
 ```
-
-访问 **http://localhost:3000**
 
 ---
 

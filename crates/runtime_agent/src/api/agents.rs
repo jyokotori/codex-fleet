@@ -6,6 +6,8 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::{
@@ -27,13 +29,15 @@ impl Executor {
     }
 }
 
-fn cli_config_dir(cli_type: &str) -> &str {
-    match cli_type {
-        "codex" => "/root/.codex",
-        "claude" | "claude_code" => "/root/.claude",
-        "gemini" | "gemini_cli" => "/root/.gemini",
-        "opencode" => "/root/.opencode",
-        _ => "/root/.config/cli",
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn target_shell_command(use_docker: bool, container_name: &str, cmd: &str) -> String {
+    if use_docker {
+        format!("docker exec {} sh -lc {}", container_name, shell_quote(cmd))
+    } else {
+        cmd.to_string()
     }
 }
 
@@ -68,6 +72,7 @@ pub struct Agent {
     pub use_docker: bool,
     pub status: String,
     pub provision_log: String,
+    pub provision_steps: serde_json::Value,
     pub created_at: String,
 }
 
@@ -99,14 +104,71 @@ pub struct UpdateAgentRequest {
     pub docker_config_id: Option<String>,
 }
 
-async fn append_provision_log(db: &sqlx::PgPool, agent_id: &str, msg: &str) {
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+fn ev_step_start(step: u8, name: &str) -> Value {
+    json!({"t":"step_start","step":step,"name":name,"ts":unix_now()})
+}
+fn ev_step_output(step: u8, text: &str) -> Value {
+    json!({"t":"step_output","step":step,"text":text,"ts":unix_now()})
+}
+fn ev_step_done(step: u8) -> Value {
+    json!({"t":"step_done","step":step,"ts":unix_now()})
+}
+fn ev_step_skipped(step: u8, reason: &str) -> Value {
+    json!({"t":"step_skipped","step":step,"reason":reason,"ts":unix_now()})
+}
+fn ev_step_failed(step: u8, error: &str) -> Value {
+    json!({"t":"step_failed","step":step,"error":error,"ts":unix_now()})
+}
+fn ev_warn(step: u8, text: &str) -> Value {
+    json!({"t":"warn","step":step,"text":text,"ts":unix_now()})
+}
+fn ev_provision_done(status: &str) -> Value {
+    json!({"t":"provision_done","status":status,"ts":unix_now()})
+}
+
+async fn emit(
+    db: &sqlx::PgPool,
+    agent_id: &str,
+    tx: &broadcast::Sender<String>,
+    event: Value,
+) {
+    let line = serde_json::to_string(&event).unwrap_or_default() + "\n";
     let _ = sqlx::query!(
         "UPDATE agents SET provision_log = provision_log || $1 WHERE id = $2",
-        msg,
+        line,
         agent_id
     )
     .execute(db)
     .await;
+
+    // Persist step state transitions so provision_steps survives reconnects/refreshes
+    let step_num = event.get("step").and_then(|v| v.as_u64());
+    let new_status = match event.get("t").and_then(|v| v.as_str()) {
+        Some("step_start") => Some("running"),
+        Some("step_done") => Some("ok"),
+        Some("step_failed") => Some("failed"),
+        Some("step_skipped") => Some("skipped"),
+        _ => None,
+    };
+    if let (Some(step), Some(status)) = (step_num, new_status) {
+        let _ = sqlx::query!(
+            "UPDATE agents SET provision_steps = provision_steps || jsonb_build_object($1::text, $2::text) WHERE id = $3",
+            step.to_string(),
+            status,
+            agent_id
+        )
+        .execute(db)
+        .await;
+    }
+
+    let _ = tx.send(line);
 }
 
 pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Agent>>> {
@@ -114,7 +176,7 @@ pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Age
         r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
-           tmux_session, workdir, use_docker, status, provision_log, created_at
+           tmux_session, workdir, use_docker, status, provision_log, provision_steps, created_at
            FROM agents ORDER BY created_at DESC"#
     )
     .fetch_all(&state.db)
@@ -142,6 +204,7 @@ pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Age
             use_docker: r.use_docker,
             status: r.status,
             provision_log: r.provision_log,
+            provision_steps: r.provision_steps,
             created_at: r.created_at.to_string(),
         })
         .collect();
@@ -166,6 +229,12 @@ pub async fn create_agent(
 
     let use_docker = req.use_docker.unwrap_or(true);
 
+    if req.cli_type != "codex" {
+        return Err(AppError::BadRequest(
+            "Only codex is supported for now".into(),
+        ));
+    }
+
     // Always require a real server
     if req.server_id.is_empty() {
         return Err(AppError::BadRequest("server_id is required".into()));
@@ -180,7 +249,10 @@ pub async fn create_agent(
     .ok_or_else(|| AppError::NotFound("Server not found".into()))?;
 
     let id = Uuid::new_v4().to_string();
-    let git_branch = req.git_branch.unwrap_or_else(|| "main".into());
+    let git_branch = req
+        .git_branch
+        .filter(|b| !b.trim().is_empty())
+        .unwrap_or_else(|| "main".into());
     let docker_image = req.docker_image.unwrap_or_else(|| "ubuntu:24.04".into());
     let tmux_session = tmux_session_for_cli(&req.cli_type).to_string();
     let workdir = if use_docker {
@@ -238,6 +310,14 @@ pub async fn create_agent(
     let ssh_password_enc = server.password_encrypted.clone();
     let ssh_key_content = server.ssh_key_content.clone();
 
+    // Create broadcast channel and register it before spawning
+    let (tx, _) = broadcast::channel::<String>(256);
+    {
+        let mut ch = state.provision_channels.lock().await;
+        ch.insert(agent_id.clone(), tx.clone());
+    }
+    let provision_channels = state.provision_channels.clone();
+
     tokio::spawn(async move {
         let crypto = Crypto::new(&master_key);
         let password = ssh_password_enc
@@ -255,11 +335,12 @@ pub async fn create_agent(
         {
             Ok(client) => Executor::Ssh(client),
             Err(e) => {
-                let msg = format!("\n[Error] SSH connect failed: {}\n", e);
-                append_provision_log(&db, &agent_id, &msg).await;
+                emit(&db, &agent_id, &tx, ev_step_failed(0, &format!("SSH connect failed: {}", e))).await;
+                emit(&db, &agent_id, &tx, ev_provision_done("error")).await;
                 let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
                     .execute(&db)
                     .await;
+                provision_channels.lock().await.remove(&agent_id);
                 return;
             }
         };
@@ -268,6 +349,7 @@ pub async fn create_agent(
             &executor,
             &db,
             &agent_id,
+            &tx,
             &cli_type_clone,
             codex_config_id_clone.as_deref(),
             agents_md_id_clone.as_deref(),
@@ -285,14 +367,10 @@ pub async fn create_agent(
                 tracing::info!("Agent {} provisioned successfully", agent_id);
             }
             Err(e) => {
-                let msg = format!("\n[Error] Provisioning failed: {}\n", e);
-                append_provision_log(&db, &agent_id, &msg).await;
-                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
-                    .execute(&db)
-                    .await;
                 tracing::error!("Agent {} provisioning failed: {}", agent_id, e);
             }
         }
+        provision_channels.lock().await.remove(&agent_id);
     });
 
     Ok(Json(Agent {
@@ -315,6 +393,7 @@ pub async fn create_agent(
         use_docker,
         status: "provisioning".into(),
         provision_log: String::new(),
+        provision_steps: serde_json::json!({}),
         created_at: now.to_string(),
     }))
 }
@@ -324,6 +403,7 @@ async fn provision_agent(
     executor: &Executor,
     db: &sqlx::PgPool,
     agent_id: &str,
+    tx: &broadcast::Sender<String>,
     cli_type: &str,
     codex_config_id: Option<&str>,
     agents_md_id: Option<&str>,
@@ -335,34 +415,37 @@ async fn provision_agent(
     master_key: &str,
     use_docker: bool,
 ) -> anyhow::Result<()> {
-    let log = |msg: &str| format!("{}\n", msg);
+    let workspace_dir = if use_docker {
+        "/workspace".to_string()
+    } else {
+        format!("$HOME/.codex-fleet/{}/workspace", agent_id)
+    };
 
-    // Step 1: Create directories
-    append_provision_log(db, agent_id, &log("[Step 1] Create directories")).await;
+    // Step 1: Create dirs + write config files
+    emit(db, agent_id, tx, ev_step_start(1, "Create dirs & write configs")).await;
     let dir_cmd = format!(
         "mkdir -p $HOME/.codex-fleet/{id}/agent $HOME/.codex-fleet/{id}/workspace",
         id = agent_id
     );
     match executor.execute(&dir_cmd).await {
         Ok(out) => {
-            if !out.is_empty() {
-                append_provision_log(db, agent_id, &log(&format!("  {}", out.trim()))).await;
+            if !out.trim().is_empty() {
+                emit(db, agent_id, tx, ev_step_output(1, out.trim())).await;
             }
-            append_provision_log(
-                db,
-                agent_id,
-                &log(&format!("  Created: ~/.codex-fleet/{}/", agent_id)),
-            )
-            .await;
+            emit(db, agent_id, tx, ev_step_output(1, &format!("Created: ~/.codex-fleet/{}/", agent_id))).await;
         }
         Err(e) => {
-            return Err(anyhow::anyhow!("Step 1 failed: {}", e));
+            let err = format!("Step 1 failed: {}", e);
+            emit(db, agent_id, tx, ev_step_failed(1, &err)).await;
+            emit(db, agent_id, tx, ev_provision_done("error")).await;
+            let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
+                .execute(db)
+                .await;
+            return Err(anyhow::anyhow!(err));
         }
     }
 
-    // Step 2: Write config files
-    append_provision_log(db, agent_id, &log("[Step 2] Write config files")).await;
-
+    // Write config files (codex config, auth.json, AGENTS.md)
     if let Some(config_id) = codex_config_id {
         if let Ok(row) = sqlx::query!(
             "SELECT config_toml, auth_json FROM codex_configs WHERE id = $1",
@@ -387,14 +470,9 @@ async fn provision_agent(
                     b64, agent_id
                 );
                 if let Err(e) = executor.execute(&cmd).await {
-                    append_provision_log(
-                        db,
-                        agent_id,
-                        &log(&format!("  [warn] config.toml write failed: {}", e)),
-                    )
-                    .await;
+                    emit(db, agent_id, tx, ev_warn(1, &format!("config.toml write failed: {}", e))).await;
                 } else {
-                    append_provision_log(db, agent_id, &log("  Wrote config.toml")).await;
+                    emit(db, agent_id, tx, ev_step_output(1, "Wrote config.toml")).await;
                 }
             }
 
@@ -405,14 +483,9 @@ async fn provision_agent(
                     b64, agent_id
                 );
                 if let Err(e) = executor.execute(&cmd).await {
-                    append_provision_log(
-                        db,
-                        agent_id,
-                        &log(&format!("  [warn] auth.json write failed: {}", e)),
-                    )
-                    .await;
+                    emit(db, agent_id, tx, ev_warn(1, &format!("auth.json write failed: {}", e))).await;
                 } else {
-                    append_provision_log(db, agent_id, &log("  Wrote auth.json")).await;
+                    emit(db, agent_id, tx, ev_step_output(1, "Wrote auth.json")).await;
                 }
             }
         }
@@ -430,31 +503,31 @@ async fn provision_agent(
                     b64, agent_id
                 );
                 if let Err(e) = executor.execute(&cmd).await {
-                    append_provision_log(
-                        db,
-                        agent_id,
-                        &log(&format!("  [warn] AGENTS.md write failed: {}", e)),
-                    )
-                    .await;
+                    emit(db, agent_id, tx, ev_warn(1, &format!("AGENTS.md write failed: {}", e))).await;
                 } else {
-                    append_provision_log(db, agent_id, &log("  Wrote AGENTS.md")).await;
+                    emit(db, agent_id, tx, ev_step_output(1, "Wrote AGENTS.md")).await;
                 }
             }
         }
     }
+    emit(db, agent_id, tx, ev_step_done(1)).await;
 
+    // Step 2: Docker start + run init_script (skip if !use_docker)
     if use_docker {
-        // Step 3: Start Docker container
-        append_provision_log(db, agent_id, &log("[Step 3] Start Docker container")).await;
+        emit(db, agent_id, tx, ev_step_start(2, "Docker setup")).await;
 
-        let config_dir = cli_config_dir(cli_type);
+        let _ = executor
+            .execute(&format!(
+                "docker rm -f {} 2>/dev/null || true",
+                container_name
+            ))
+            .await;
         let mut docker_run = format!(
-            "docker run -d --name {container} \
-             -v $HOME/.codex-fleet/{id}/agent:{config_dir} \
+            "docker run -d --name {container} --workdir /workspace \
+             -v $HOME/.codex-fleet/{id}/agent:/agent \
              -v $HOME/.codex-fleet/{id}/workspace:/workspace",
             container = container_name,
             id = agent_id,
-            config_dir = config_dir,
         );
 
         if let Some(dc_id) = docker_config_id {
@@ -487,17 +560,15 @@ async fn provision_agent(
                             let key = e.get("key").and_then(|v| v.as_str()).unwrap_or("");
                             let val = e.get("value").and_then(|v| v.as_str()).unwrap_or("");
                             if !key.is_empty() {
-                                docker_run.push_str(&format!(" -e {}={}", key, val));
+                                docker_run.push_str(&format!(
+                                    " -e {}",
+                                    shell_quote(&format!("{}={}", key, val))
+                                ));
                                 env_count += 1;
                             }
                         }
                         if env_count > 0 {
-                            append_provision_log(
-                                db,
-                                agent_id,
-                                &log(&format!("  Injecting {} env var(s)", env_count)),
-                            )
-                            .await;
+                            emit(db, agent_id, tx, ev_step_output(2, &format!("Injecting {} env var(s)", env_count))).await;
                         }
                     }
                 }
@@ -511,7 +582,10 @@ async fn provision_agent(
                                 .unwrap_or("");
                             let mode = v.get("mode").and_then(|v| v.as_str()).unwrap_or("rw");
                             if !host.is_empty() && !cont.is_empty() {
-                                docker_run.push_str(&format!(" -v {}:{}:{}", host, cont, mode));
+                                docker_run.push_str(&format!(
+                                    " -v {}",
+                                    shell_quote(&format!("{}:{}:{}", host, cont, mode))
+                                ));
                             }
                         }
                     }
@@ -519,17 +593,13 @@ async fn provision_agent(
             }
         }
 
-        docker_run.push_str(&format!(" {} tail -f /dev/null", docker_image));
+        docker_run.push_str(&format!(" {} tail -f /dev/null", shell_quote(docker_image)));
+        emit(db, agent_id, tx, ev_step_output(2, &format!("$ {}", docker_run))).await;
 
         match executor.execute(&docker_run).await {
             Ok(container_id_raw) => {
                 let cid = container_id_raw.trim().to_string();
-                append_provision_log(
-                    db,
-                    agent_id,
-                    &log(&format!("  Container ID: {}", &cid[..cid.len().min(12)])),
-                )
-                .await;
+                emit(db, agent_id, tx, ev_step_output(2, &format!("Container ID: {}", &cid[..cid.len().min(12)]))).await;
                 let _ = sqlx::query!(
                     "UPDATE agents SET container_id = $1 WHERE id = $2",
                     cid,
@@ -539,12 +609,17 @@ async fn provision_agent(
                 .await;
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("Step 3 failed: {}", e));
+                let err = format!("Step 2 failed (docker run): {}", e);
+                emit(db, agent_id, tx, ev_step_failed(2, &err)).await;
+                emit(db, agent_id, tx, ev_provision_done("error")).await;
+                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
+                    .execute(db)
+                    .await;
+                return Err(anyhow::anyhow!(err));
             }
         }
 
-        // Step 4: Run init_script
-        append_provision_log(db, agent_id, &log("[Step 4] Run init_script")).await;
+        // Run init_script if configured
         if let Some(dc_id) = docker_config_id {
             if let Ok(dc) = sqlx::query!(
                 "SELECT init_script FROM docker_configs WHERE id = $1",
@@ -554,155 +629,237 @@ async fn provision_agent(
             .await
             {
                 if !dc.init_script.is_empty() {
-                    let cmd = format!(
-                        "docker exec {} sh -c '{}'",
-                        container_name,
-                        dc.init_script.replace('\'', "'\\''")
-                    );
+                    let cmd = target_shell_command(true, container_name, &dc.init_script);
                     match executor.execute(&cmd).await {
                         Ok(out) => {
-                            append_provision_log(db, agent_id, &log(&format!("  {}", out.trim())))
-                                .await
+                            if !out.trim().is_empty() {
+                                emit(db, agent_id, tx, ev_step_output(2, out.trim())).await;
+                            }
                         }
                         Err(e) => {
-                            append_provision_log(
-                                db,
-                                agent_id,
-                                &log(&format!("  [warn] init_script failed: {}", e)),
-                            )
-                            .await
-                        }
-                    }
-                } else {
-                    append_provision_log(db, agent_id, &log("  (no init_script)")).await;
-                }
-            }
-        } else {
-            append_provision_log(db, agent_id, &log("  (no docker config)")).await;
-        }
-
-        // Step 5: Install CLI (codex only)
-        append_provision_log(db, agent_id, &log("[Step 5] Install CLI")).await;
-        if cli_type == "codex" {
-            let check_npm = format!(
-                "docker exec {} sh -c 'which npm || (apt-get update -qq && apt-get install -y nodejs npm -qq)'",
-                container_name
-            );
-            match executor.execute(&check_npm).await {
-                Ok(_) => {
-                    let install_codex =
-                        format!("docker exec {} npm i -g @openai/codex", container_name);
-                    match executor.execute(&install_codex).await {
-                        Ok(out) => {
-                            append_provision_log(db, agent_id, &log(&format!("  {}", out.trim())))
-                                .await
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("Step 5 failed (npm install): {}", e));
+                            emit(db, agent_id, tx, ev_warn(2, &format!("init_script failed: {}", e))).await;
                         }
                     }
                 }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Step 5 failed (npm check): {}", e));
+            }
+        }
+        emit(db, agent_id, tx, ev_step_done(2)).await;
+    } else {
+        emit(db, agent_id, tx, ev_step_skipped(2, "no-docker mode")).await;
+    }
+
+    // Step 3: Install CLI + tmux + git (inside docker if use_docker)
+    emit(db, agent_id, tx, ev_step_start(3, "Install CLI & environment")).await;
+
+    if cli_type == "codex" {
+        let ensure_npm_script = r#"if command -v npm >/dev/null 2>&1; then
+  echo "npm already installed"
+  exit 0
+fi
+run_pm() {
+  if [ "$(id -u)" -eq 0 ]; then "$@";
+  elif command -v sudo >/dev/null 2>&1; then sudo "$@";
+  else "$@";
+  fi
+}
+if command -v apt-get >/dev/null 2>&1; then
+  run_pm apt-get update -qq && DEBIAN_FRONTEND=noninteractive run_pm apt-get install -y nodejs npm -qq
+elif command -v dnf >/dev/null 2>&1; then
+  run_pm dnf install -y nodejs npm
+elif command -v yum >/dev/null 2>&1; then
+  run_pm yum install -y nodejs npm
+elif command -v apk >/dev/null 2>&1; then
+  run_pm apk add --no-cache nodejs npm
+else
+  echo "npm not found and no supported package manager"
+  exit 1
+fi"#;
+        let ensure_npm_cmd = target_shell_command(use_docker, container_name, ensure_npm_script);
+        match executor.execute(&ensure_npm_cmd).await {
+            Ok(out) => {
+                if !out.trim().is_empty() {
+                    emit(db, agent_id, tx, ev_step_output(3, out.trim())).await;
                 }
             }
-        } else {
-            append_provision_log(
-                db,
-                agent_id,
-                &log(&format!("  (cli_type={}, skip)", cli_type)),
-            )
-            .await;
-        }
-
-        // Step 6: Install git
-        append_provision_log(db, agent_id, &log("[Step 6] Install git")).await;
-        let check_git = format!(
-            "docker exec {} sh -c 'which git || apt-get install -y git -qq'",
-            container_name
-        );
-        match executor.execute(&check_git).await {
-            Ok(out) => append_provision_log(db, agent_id, &log(&format!("  {}", out.trim()))).await,
             Err(e) => {
-                append_provision_log(
-                    db,
-                    agent_id,
-                    &log(&format!("  [warn] git install failed: {}", e)),
-                )
-                .await
+                let err = format!("Step 3 failed (npm check/install): {}", e);
+                emit(db, agent_id, tx, ev_step_failed(3, &err)).await;
+                emit(db, agent_id, tx, ev_provision_done("error")).await;
+                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
+                    .execute(db)
+                    .await;
+                return Err(anyhow::anyhow!(err));
             }
         }
 
-        // Step 7: Git clone (docker)
-        append_provision_log(db, agent_id, &log("[Step 7] Git clone")).await;
-        if !git_repo.is_empty() {
-            let clone_cmd = format!(
-                "docker exec {} sh -c 'git clone {} /workspace && cd /workspace && git checkout {}'",
-                container_name,
-                git_repo,
-                git_branch
-            );
-            match executor.execute(&clone_cmd).await {
-                Ok(out) => {
-                    append_provision_log(db, agent_id, &log(&format!("  {}", out.trim()))).await
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Step 7 failed: {}", e));
+        let install_codex_script = r#"if npm i -g @openai/codex@latest; then
+  exit 0
+fi
+if command -v sudo >/dev/null 2>&1; then
+  sudo npm i -g @openai/codex@latest
+else
+  exit 1
+fi"#;
+        let install_codex_cmd =
+            target_shell_command(use_docker, container_name, install_codex_script);
+        match executor.execute(&install_codex_cmd).await {
+            Ok(out) => {
+                if !out.trim().is_empty() {
+                    emit(db, agent_id, tx, ev_step_output(3, out.trim())).await;
                 }
             }
-        } else {
-            append_provision_log(db, agent_id, &log("  (no git repo, skip)")).await;
+            Err(e) => {
+                let err = format!("Step 3 failed (codex install): {}", e);
+                emit(db, agent_id, tx, ev_step_failed(3, &err)).await;
+                emit(db, agent_id, tx, ev_provision_done("error")).await;
+                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
+                    .execute(db)
+                    .await;
+                return Err(anyhow::anyhow!(err));
+            }
+        }
+
+        if use_docker {
+            let link_cmd = target_shell_command(
+                true,
+                container_name,
+                "mkdir -p /root && ln -sfn /agent /root/.codex",
+            );
+            if let Err(e) = executor.execute(&link_cmd).await {
+                emit(db, agent_id, tx, ev_warn(3, &format!("link /agent -> /root/.codex failed: {}", e))).await;
+            }
         }
     } else {
-        // No-docker mode: skip steps 3-6, only clone if git repo set
-        append_provision_log(
-            db,
-            agent_id,
-            &log("[Step 3] Start Docker container — skipped (no-docker mode)"),
-        )
-        .await;
-        append_provision_log(
-            db,
-            agent_id,
-            &log("[Step 4] Run init_script — skipped (no-docker mode)"),
-        )
-        .await;
-        append_provision_log(
-            db,
-            agent_id,
-            &log("[Step 5] Install CLI — skipped (no-docker mode)"),
-        )
-        .await;
-        append_provision_log(
-            db,
-            agent_id,
-            &log("[Step 6] Install git — skipped (no-docker mode)"),
-        )
-        .await;
+        emit(db, agent_id, tx, ev_step_output(3, &format!("(cli_type={}, skipping codex install)", cli_type))).await;
+    }
 
-        // Step 7: Git clone directly on host
-        append_provision_log(db, agent_id, &log("[Step 7] Git clone")).await;
-        if !git_repo.is_empty() {
-            let workdir = format!("$HOME/.codex-fleet/{}/workspace", agent_id);
-            let clone_cmd = format!(
-                "git clone {} {} && cd {} && git checkout {}",
-                git_repo, workdir, workdir, git_branch
-            );
-            match executor.execute(&clone_cmd).await {
-                Ok(out) => {
-                    append_provision_log(db, agent_id, &log(&format!("  {}", out.trim()))).await
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Step 7 failed: {}", e));
-                }
+    // Install tmux (check first)
+    let ensure_tmux_script = r#"if command -v tmux >/dev/null 2>&1; then
+  echo "tmux already installed"
+else
+  run_pm() {
+    if [ "$(id -u)" -eq 0 ]; then "$@";
+    elif command -v sudo >/dev/null 2>&1; then sudo "$@";
+    else "$@";
+    fi
+  }
+  if command -v apt-get >/dev/null 2>&1; then
+    run_pm apt-get update -qq && DEBIAN_FRONTEND=noninteractive run_pm apt-get install -y tmux -qq
+  elif command -v dnf >/dev/null 2>&1; then
+    run_pm dnf install -y tmux
+  elif command -v yum >/dev/null 2>&1; then
+    run_pm yum install -y tmux
+  elif command -v apk >/dev/null 2>&1; then
+    run_pm apk add --no-cache tmux
+  else
+    echo "tmux not found and no supported package manager" >&2 || true
+  fi
+fi"#;
+    let ensure_tmux_cmd = target_shell_command(use_docker, container_name, ensure_tmux_script);
+    match executor.execute(&ensure_tmux_cmd).await {
+        Ok(out) => {
+            if !out.trim().is_empty() {
+                emit(db, agent_id, tx, ev_step_output(3, out.trim())).await;
             }
-        } else {
-            append_provision_log(db, agent_id, &log("  (no git repo, skip)")).await;
+        }
+        Err(e) => {
+            emit(db, agent_id, tx, ev_warn(3, &format!("tmux install failed (non-fatal): {}", e))).await;
         }
     }
 
+    // Install git (check first)
+    let ensure_git_script = r#"if command -v git >/dev/null 2>&1; then
+  echo "git already installed"
+  exit 0
+fi
+run_pm() {
+  if [ "$(id -u)" -eq 0 ]; then "$@";
+  elif command -v sudo >/dev/null 2>&1; then sudo "$@";
+  else "$@";
+  fi
+}
+if command -v apt-get >/dev/null 2>&1; then
+  run_pm apt-get update -qq && DEBIAN_FRONTEND=noninteractive run_pm apt-get install -y git -qq
+elif command -v dnf >/dev/null 2>&1; then
+  run_pm dnf install -y git
+elif command -v yum >/dev/null 2>&1; then
+  run_pm yum install -y git
+elif command -v apk >/dev/null 2>&1; then
+  run_pm apk add --no-cache git
+else
+  echo "git not found and no supported package manager"
+  exit 1
+fi"#;
+    let ensure_git_cmd = target_shell_command(use_docker, container_name, ensure_git_script);
+    match executor.execute(&ensure_git_cmd).await {
+        Ok(out) => {
+            if !out.trim().is_empty() {
+                emit(db, agent_id, tx, ev_step_output(3, out.trim())).await;
+            }
+            emit(db, agent_id, tx, ev_step_done(3)).await;
+        }
+        Err(e) => {
+            if git_repo.is_empty() {
+                emit(db, agent_id, tx, ev_warn(3, &format!("git install failed: {}", e))).await;
+                emit(db, agent_id, tx, ev_step_done(3)).await;
+            } else {
+                let err = format!("Step 3 failed (git install): {}", e);
+                emit(db, agent_id, tx, ev_step_failed(3, &err)).await;
+                emit(db, agent_id, tx, ev_provision_done("error")).await;
+                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
+                    .execute(db)
+                    .await;
+                return Err(anyhow::anyhow!(err));
+            }
+        }
+    }
+
+    // Step 4: Git clone / sync (skip if no git_repo)
+    if !git_repo.is_empty() {
+        emit(db, agent_id, tx, ev_step_start(4, "Git clone / sync")).await;
+        let branch = if git_branch.trim().is_empty() {
+            "main"
+        } else {
+            git_branch
+        };
+        let git_sync_script = format!(
+            r#"workspace="{workspace}"
+if [ -d "$workspace/.git" ]; then
+  cd "$workspace" && git fetch --all && git checkout {branch} && (git pull --ff-only origin {branch} || git pull --ff-only || true)
+else
+  if [ -n "$(ls -A "$workspace" 2>/dev/null)" ]; then
+    rm -rf "$workspace"/* "$workspace"/.[!.]* "$workspace"/..?* 2>/dev/null || true
+  fi
+  git clone {repo} "$workspace" && cd "$workspace" && git checkout {branch}
+fi"#,
+            workspace = workspace_dir,
+            repo = shell_quote(git_repo),
+            branch = shell_quote(branch),
+        );
+        let git_sync_cmd = target_shell_command(use_docker, container_name, &git_sync_script);
+        match executor.execute(&git_sync_cmd).await {
+            Ok(out) => {
+                if !out.trim().is_empty() {
+                    emit(db, agent_id, tx, ev_step_output(4, out.trim())).await;
+                }
+                emit(db, agent_id, tx, ev_step_done(4)).await;
+            }
+            Err(e) => {
+                let err = format!("Step 4 failed: {}", e);
+                emit(db, agent_id, tx, ev_step_failed(4, &err)).await;
+                emit(db, agent_id, tx, ev_provision_done("error")).await;
+                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
+                    .execute(db)
+                    .await;
+                return Err(anyhow::anyhow!(err));
+            }
+        }
+    } else {
+        emit(db, agent_id, tx, ev_step_skipped(4, "no git repo configured")).await;
+    }
+
     // Done
-    append_provision_log(db, agent_id, &log("[Done] Provisioning complete")).await;
+    emit(db, agent_id, tx, ev_provision_done("stopped")).await;
     let _ = sqlx::query!(
         "UPDATE agents SET status = 'stopped' WHERE id = $1",
         agent_id
@@ -722,7 +879,7 @@ pub async fn update_agent(
         r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
-           tmux_session, workdir, use_docker, status, provision_log, created_at
+           tmux_session, workdir, use_docker, status, provision_log, provision_steps, created_at
            FROM agents WHERE id = $1"#,
         id
     )
@@ -866,7 +1023,22 @@ pub async fn update_agent(
             }
 
             if reclone_needed {
-                append_provision_log(&db, &agent_id, "\n[Re-clone] Clearing workspace...\n").await;
+                // Helper to append a JSONL event to provision_log without broadcasting
+                let db_log = |db: &sqlx::PgPool, aid: &str, ev: Value| {
+                    let db = db.clone();
+                    let aid = aid.to_string();
+                    async move {
+                        let line = serde_json::to_string(&ev).unwrap_or_default() + "\n";
+                        let _ = sqlx::query!(
+                            "UPDATE agents SET provision_log = provision_log || $1 WHERE id = $2",
+                            line, aid
+                        )
+                        .execute(&db)
+                        .await;
+                    }
+                };
+
+                db_log(&db, &agent_id, json!({"t":"step_output","step":7,"text":"[Re-clone] Clearing workspace...","ts":unix_now()})).await;
                 if use_docker && !container_name.is_empty() {
                     let clear_cmd =
                         format!("docker exec {} sh -c 'rm -rf /workspace/*'", container_name);
@@ -877,20 +1049,10 @@ pub async fn update_agent(
                     );
                     match executor.execute(&clone_cmd).await {
                         Ok(out) => {
-                            append_provision_log(
-                                &db,
-                                &agent_id,
-                                &format!("[Re-clone] Done: {}\n", out.trim()),
-                            )
-                            .await
+                            db_log(&db, &agent_id, json!({"t":"step_output","step":7,"text":format!("[Re-clone] Done: {}", out.trim()),"ts":unix_now()})).await;
                         }
                         Err(e) => {
-                            append_provision_log(
-                                &db,
-                                &agent_id,
-                                &format!("[Re-clone] Failed: {}\n", e),
-                            )
-                            .await
+                            db_log(&db, &agent_id, json!({"t":"warn","step":7,"text":format!("[Re-clone] Failed: {}", e),"ts":unix_now()})).await;
                         }
                     }
                 } else {
@@ -903,20 +1065,10 @@ pub async fn update_agent(
                     );
                     match executor.execute(&clone_cmd).await {
                         Ok(out) => {
-                            append_provision_log(
-                                &db,
-                                &agent_id,
-                                &format!("[Re-clone] Done: {}\n", out.trim()),
-                            )
-                            .await
+                            db_log(&db, &agent_id, json!({"t":"step_output","step":7,"text":format!("[Re-clone] Done: {}", out.trim()),"ts":unix_now()})).await;
                         }
                         Err(e) => {
-                            append_provision_log(
-                                &db,
-                                &agent_id,
-                                &format!("[Re-clone] Failed: {}\n", e),
-                            )
-                            .await
+                            db_log(&db, &agent_id, json!({"t":"warn","step":7,"text":format!("[Re-clone] Failed: {}", e),"ts":unix_now()})).await;
                         }
                     }
                 }
@@ -928,7 +1080,7 @@ pub async fn update_agent(
         r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
-           tmux_session, workdir, use_docker, status, provision_log, created_at
+           tmux_session, workdir, use_docker, status, provision_log, provision_steps, created_at
            FROM agents WHERE id = $1"#,
         id
     )
@@ -955,6 +1107,7 @@ pub async fn update_agent(
         use_docker: updated.use_docker,
         status: updated.status,
         provision_log: updated.provision_log,
+        provision_steps: updated.provision_steps,
         created_at: updated.created_at.to_string(),
     };
 
@@ -1004,7 +1157,7 @@ pub async fn start_agent(
             .execute(&format!("docker start {}", container_name))
             .await;
         let tmux_cmd = format!(
-            "docker exec {} tmux new-session -d -s {} 2>/dev/null || true",
+            "docker exec {} tmux new-session -d -s {} -c /workspace 2>/dev/null || true",
             container_name, tmux_session
         );
         executor

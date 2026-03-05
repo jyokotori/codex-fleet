@@ -64,6 +64,7 @@ pub fn me_router() -> Router<AppContext> {
     Router::new()
         .route("/me", get(me))
         .route("/me/password", put(change_my_password))
+        .route("/users", get(list_users_simple))
 }
 
 pub fn extract_token(headers: &HeaderMap) -> Option<String> {
@@ -339,4 +340,32 @@ pub async fn change_my_password(
     .await;
 
     Ok(Json(serde_json::json!({"message": "Password updated"})))
+}
+
+#[derive(Debug, Serialize)]
+pub struct SimpleUser {
+    pub id: String,
+    pub username: String,
+    pub display_name: String,
+}
+
+pub async fn list_users_simple(
+    State(state): State<AppContext>,
+) -> Result<Json<Vec<SimpleUser>>> {
+    let rows = sqlx::query(
+        "SELECT id, username, display_name FROM users WHERE status = 'active' ORDER BY display_name ASC",
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let users = rows
+        .into_iter()
+        .map(|r| SimpleUser {
+            id: r.get("id"),
+            username: r.get("username"),
+            display_name: r.get("display_name"),
+        })
+        .collect();
+
+    Ok(Json(users))
 }

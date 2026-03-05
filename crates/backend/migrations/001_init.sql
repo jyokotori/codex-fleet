@@ -131,6 +131,7 @@ CREATE TABLE agents (
     use_docker BOOLEAN NOT NULL DEFAULT TRUE,
     status TEXT NOT NULL DEFAULT 'stopped',
     provision_log TEXT NOT NULL DEFAULT '',
+    provision_steps JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
