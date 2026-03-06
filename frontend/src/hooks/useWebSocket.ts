@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 interface UseWebSocketOptions {
   onMessage?: (data: string) => void
+  onBinaryMessage?: (data: Uint8Array) => void
   onOpen?: () => void
   onClose?: () => void
   reconnectDelay?: number
@@ -9,21 +10,24 @@ interface UseWebSocketOptions {
 }
 
 export function useWebSocket(url: string | null, options: UseWebSocketOptions = {}) {
-  const { onMessage, onOpen, onClose, reconnectDelay = 3000, maxReconnects = 5 } = options
+  const { onMessage, onBinaryMessage, onOpen, onClose, reconnectDelay = 3000, maxReconnects = 5 } = options
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectCount = useRef(0)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const manuallyDisconnected = useRef(false)
   const [isConnected, setIsConnected] = useState(false)
 
   const connect = useCallback(() => {
     if (!url) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
+    manuallyDisconnected.current = false
 
     const token = localStorage.getItem('token')
     const wsUrl = url.startsWith('ws') ? url : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${url}`
-    const fullUrl = token ? `${wsUrl}?token=${token}` : wsUrl
+    const fullUrl = token ? `${wsUrl}${wsUrl.includes('?') ? '&' : '?'}token=${token}` : wsUrl
 
     const ws = new WebSocket(fullUrl)
+    ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -33,13 +37,17 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
     }
 
     ws.onmessage = (event) => {
-      onMessage?.(typeof event.data === 'string' ? event.data : '')
+      if (event.data instanceof ArrayBuffer) {
+        onBinaryMessage?.(new Uint8Array(event.data))
+      } else {
+        onMessage?.(typeof event.data === 'string' ? event.data : '')
+      }
     }
 
     ws.onclose = () => {
       setIsConnected(false)
       onClose?.()
-      if (reconnectCount.current < maxReconnects) {
+      if (!manuallyDisconnected.current && reconnectCount.current < maxReconnects) {
         reconnectCount.current++
         reconnectTimer.current = setTimeout(connect, reconnectDelay)
       }
@@ -48,9 +56,10 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
     ws.onerror = () => {
       ws.close()
     }
-  }, [url, onMessage, onOpen, onClose, reconnectDelay, maxReconnects])
+  }, [url, onMessage, onBinaryMessage, onOpen, onClose, reconnectDelay, maxReconnects])
 
   const disconnect = useCallback(() => {
+    manuallyDisconnected.current = true
     if (reconnectTimer.current) {
       clearTimeout(reconnectTimer.current)
     }
@@ -64,10 +73,16 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
     }
   }, [])
 
+  const sendBinary = useCallback((data: Uint8Array) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(data)
+    }
+  }, [])
+
   useEffect(() => {
     connect()
     return () => disconnect()
   }, [connect, disconnect])
 
-  return { isConnected, send, disconnect, connect }
+  return { isConnected, send, sendBinary, disconnect, connect }
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi,
   type Agent, type Server,
@@ -147,8 +147,7 @@ export default function Agents() {
       setDispatchAgent(null)
       setDispatchInput('')
       // Navigate to agent detail terminal tab
-      const params = task.tmux_window ? `?tab=terminal&window=${encodeURIComponent(task.tmux_window)}` : ''
-      navigate(`/agents/${task.agent_id}${params}`)
+      navigate(`/agents/${task.agent_id}?tab=tasks`)
     },
   })
 
@@ -575,6 +574,7 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
   t: ReturnType<typeof useI18n>['t']
   onStart: () => void; onStop: () => void; onResume: () => void; onEdit: () => void; onDispatch: () => void; onDelete: () => void
 }) {
+  const navigate = useNavigate()
   const serverLabel = servers.find(s => s.id === agent.server_id)?.name ?? agent.server_id
 
   const statusMap: Record<string, string> = {
@@ -585,7 +585,10 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
   }
 
   return (
-    <div className="card flex items-center gap-4">
+    <div
+      className="card flex items-center gap-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+      onClick={() => navigate(`/agents/${agent.id}`)}
+    >
       <div className="w-10 h-10 rounded-lg bg-purple-600/20 flex items-center justify-center">
         <Bot size={18} className="text-purple-400" />
       </div>
@@ -603,7 +606,7 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
           {agent.git_repo && ` · ${agent.git_repo.split('/').slice(-2).join('/')} (${agent.git_branch})`}
         </p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
         {agent.status === 'stopped' && (
           <button onClick={onStart} className="btn-secondary btn-sm flex items-center gap-1"><Play size={13} />{t.agents.start}</button>
         )}
@@ -617,7 +620,6 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
           <button onClick={onDispatch} className="btn-primary btn-sm flex items-center gap-1"><Send size={13} />{t.agents.dispatchTask}</button>
         )}
         <button onClick={onEdit} className="btn-secondary btn-sm">Edit</button>
-        <Link to={`/agents/${agent.id}`} className="btn-secondary btn-sm flex items-center gap-1"><ExternalLink size={13} />{t.agents.open}</Link>
         <button onClick={onDelete} className="btn-danger btn-sm"><Trash2 size={13} /></button>
       </div>
     </div>

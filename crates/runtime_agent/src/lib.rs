@@ -49,7 +49,6 @@ pub fn router() -> Router<AppContext> {
 
 pub fn ws_router() -> Router<AppContext> {
     Router::new()
-        .route("/ws/agents/{id}/logs", get(ws::logs::ws_logs_handler))
         .route(
             "/ws/agents/{id}/terminal",
             get(ws::terminal::ws_terminal_handler),
@@ -57,5 +56,9 @@ pub fn ws_router() -> Router<AppContext> {
         .route(
             "/ws/agents/{id}/provision",
             get(ws::provision::ws_provision_handler),
+        )
+        .route(
+            "/ws/tasks/{id}/logs",
+            get(ws::task_logs::ws_task_logs_handler),
         )
 }

@@ -1311,6 +1311,63 @@ pub struct AgentRow {
     pub use_docker: bool,
 }
 
+pub struct ServerCredentials {
+    pub ip: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_type: String,
+    pub password: Option<String>,
+    pub ssh_key_content: Option<String>,
+}
+
+/// Get server credentials and agent info for an agent (used by WS handlers that need raw SSH).
+pub async fn get_server_credentials(
+    state: &AppContext,
+    agent_id: &str,
+) -> Result<(ServerCredentials, AgentRow)> {
+    let agent = sqlx::query!(
+        "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = $1",
+        agent_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", agent_id)))?;
+
+    let agent_row = AgentRow {
+        tmux_session: agent.tmux_session,
+        docker_container_name: agent.docker_container_name,
+        cli_type: agent.cli_type,
+        workdir: agent.workdir,
+        use_docker: agent.use_docker,
+    };
+
+    let server = sqlx::query!(
+        "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
+        agent.server_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Server {} not found", agent.server_id)))?;
+
+    let crypto = Crypto::new(&state.config.master_key);
+    let password = server
+        .password_encrypted
+        .as_deref()
+        .and_then(|p| crypto.decrypt(p).ok());
+
+    Ok((
+        ServerCredentials {
+            ip: server.ip,
+            port: server.port as u16,
+            username: server.username,
+            auth_type: server.auth_type,
+            password,
+            ssh_key_content: server.ssh_key_content,
+        },
+        agent_row,
+    ))
+}
+
 /// Get an Executor (SSH) and agent row info for an agent.
 pub async fn get_executor(state: &AppContext, agent_id: &str) -> Result<(Executor, AgentRow)> {
     let agent = sqlx::query!(

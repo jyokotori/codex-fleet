@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, agent_id, description, status, tmux_window, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC",
+  "query": "SELECT id, agent_id, description, status, task_log, thread_id, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -25,21 +25,26 @@
       },
       {
         "ordinal": 4,
-        "name": "tmux_window",
+        "name": "task_log",
         "type_info": "Text"
       },
       {
         "ordinal": 5,
+        "name": "thread_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "completed_at",
         "type_info": "Timestamptz"
       }
@@ -54,11 +59,12 @@
       false,
       false,
       false,
+      false,
       true,
       false,
       true,
       true
     ]
   },
-  "hash": "ad1102ed26f4d31afbf0e5114d2ae0fb15fb897b6077f57873226633602c1581"
+  "hash": "48a0af93851d9de802161e61a40f7d7149e21760b888f56bc45654fdef539589"
 }

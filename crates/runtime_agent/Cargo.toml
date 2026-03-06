@@ -6,7 +6,10 @@ edition.workspace = true
 [dependencies]
 aes-gcm = "0.10"
 anyhow = "1"
+async-trait = "0.1"
 async-ssh2-tokio = "0.8"
+russh = "0.46"
+russh-keys = "0.46"
 axum = { version = "0.8", features = ["ws", "macros"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

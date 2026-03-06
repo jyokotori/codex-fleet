@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -7,25 +7,45 @@ import { useI18n } from '../hooks/useI18n'
 
 interface TerminalProps {
   agentId: string
-  tmuxWindow?: string
   className?: string
 }
 
-export default function Terminal({ agentId, tmuxWindow, className = '' }: TerminalProps) {
+export default function Terminal({ agentId, className = '' }: TerminalProps) {
   const { t } = useI18n()
   const termRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
 
-  const wsUrl = tmuxWindow
-    ? `/ws/agents/${agentId}/terminal?window=${encodeURIComponent(tmuxWindow)}`
-    : `/ws/agents/${agentId}/terminal`
+  const wsUrl = `/ws/agents/${agentId}/terminal`
 
-  const { isConnected, send } = useWebSocket(wsUrl, {
-    onMessage: (data) => xtermRef.current?.write(data),
+  const sendResize = useCallback((cols: number, rows: number, sendFn: (data: string) => void) => {
+    sendFn(JSON.stringify({ type: 'resize', cols, rows }))
+  }, [])
+
+  const { isConnected, send, sendBinary } = useWebSocket(wsUrl, {
+    onBinaryMessage: (data) => xtermRef.current?.write(data),
+    onMessage: (data) => {
+      // Handle JSON error messages from server
+      try {
+        const msg = JSON.parse(data)
+        if (msg.type === 'error') {
+          xtermRef.current?.write(`\r\n\x1b[31m[Error] ${msg.message}\x1b[0m\r\n`)
+          return
+        }
+      } catch {
+        // Not JSON, treat as raw text
+      }
+      xtermRef.current?.write(data)
+    },
     onOpen: () => {
-      xtermRef.current?.clear()
-      xtermRef.current?.write(`\x1b[32m${t.agentDetail.terminalConnected}\x1b[0m\r\n`)
+      // Send initial resize after connect
+      if (fitAddonRef.current) {
+        fitAddonRef.current.fit()
+        const term = xtermRef.current
+        if (term) {
+          sendResize(term.cols, term.rows, send)
+        }
+      }
     },
     onClose: () => xtermRef.current?.write(`\r\n\x1b[31m${t.agentDetail.disconnected}\x1b[0m\r\n`),
   })
@@ -38,7 +58,6 @@ export default function Terminal({ agentId, tmuxWindow, className = '' }: Termin
       fontFamily: 'ui-monospace, monospace',
       fontSize: 13,
       cursorBlink: true,
-      convertEol: true,
     })
 
     const fitAddon = new FitAddon()
@@ -49,9 +68,19 @@ export default function Terminal({ agentId, tmuxWindow, className = '' }: Termin
     xtermRef.current = term
     fitAddonRef.current = fitAddon
 
-    term.onData((data) => send(data))
+    // Terminal input -> WS binary
+    term.onData((data) => {
+      sendBinary(new TextEncoder().encode(data))
+    })
 
-    const handleResize = () => fitAddon.fit()
+    // Resize events
+    term.onResize(({ cols, rows }) => {
+      send(JSON.stringify({ type: 'resize', cols, rows }))
+    })
+
+    const handleResize = () => {
+      fitAddon.fit()
+    }
     globalThis.addEventListener('resize', handleResize)
 
     return () => {
@@ -59,7 +88,7 @@ export default function Terminal({ agentId, tmuxWindow, className = '' }: Termin
       term.dispose()
       xtermRef.current = null
     }
-  }, [send])
+  }, [send, sendBinary])
 
   return (
     <div className={`flex flex-col ${className}`}>

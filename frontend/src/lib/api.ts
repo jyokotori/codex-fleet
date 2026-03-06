@@ -304,6 +304,7 @@ export interface Agent {
   use_docker: boolean
   status: string
   provision_log: string
+  provision_steps: Record<string, string>
   created_at: string
 }
 
@@ -357,7 +358,8 @@ export interface Task {
   agent_id: string
   description: string
   status: string
-  tmux_window?: string
+  task_log: string
+  thread_id?: string
   created_at: string
   started_at?: string
   completed_at?: string

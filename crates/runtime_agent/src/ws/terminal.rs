@@ -1,126 +1,132 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        Path, Query, State, WebSocketUpgrade,
+        Path, State, WebSocketUpgrade,
     },
     response::Response,
 };
+use russh::ChannelMsg;
 use serde::Deserialize;
 
-use crate::api::agents::get_executor;
+use crate::api::agents::get_server_credentials;
+use crate::ssh::terminal::open_pty_channel;
 use shared_kernel::{AppContext, AppError};
 
-#[derive(Deserialize, Default)]
-pub struct TerminalQuery {
-    pub window: Option<String>,
+#[derive(Deserialize)]
+struct ResizeMsg {
+    #[serde(rename = "type")]
+    msg_type: String,
+    cols: u32,
+    rows: u32,
 }
 
 pub async fn ws_terminal_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppContext>,
     Path(agent_id): Path<String>,
-    Query(query): Query<TerminalQuery>,
 ) -> std::result::Result<Response, AppError> {
-    Ok(ws.on_upgrade(move |socket| handle_terminal_socket(socket, state, agent_id, query.window)))
+    Ok(ws.on_upgrade(move |socket| handle_terminal_socket(socket, state, agent_id)))
 }
 
-async fn handle_terminal_socket(
-    mut socket: WebSocket,
-    state: AppContext,
-    agent_id: String,
-    window: Option<String>,
-) {
-    let (executor, agent_info) = match get_executor(&state, &agent_id).await {
+fn error_json(msg: &str) -> String {
+    serde_json::json!({"type":"error","message":msg}).to_string()
+}
+
+async fn handle_terminal_socket(mut socket: WebSocket, state: AppContext, agent_id: String) {
+    let (creds, agent_info) = match get_server_credentials(&state, &agent_id).await {
         Ok(a) => a,
         Err(e) => {
             let _ = socket
-                .send(Message::Text(format!("Error: {}", e).into()))
+                .send(Message::Text(error_json(&e.to_string()).into()))
                 .await;
             return;
         }
     };
-    let tmux_session = agent_info.tmux_session;
-    let use_docker = agent_info.use_docker;
 
-    // Build the tmux target: session or session:window
-    let tmux_target = match &window {
-        Some(w) if !w.is_empty() => format!("{}:{}", tmux_session, w),
-        _ => tmux_session.clone(),
+    let command = if agent_info.use_docker {
+        let container = agent_info.docker_container_name.as_deref().unwrap_or("");
+        format!(
+            "docker exec -it {} bash -c 'cd /workspace && exec bash'",
+            container
+        )
+    } else {
+        format!("bash -c 'cd {} && exec bash'", agent_info.workdir)
     };
 
-    // Interactive terminal: relay input from WebSocket to tmux, output via capture-pane polling
-    let mut last_output = String::new();
-    let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(100));
+    let default_cols = 120u32;
+    let default_rows = 30u32;
 
+    let (mut channel, _handle) = match open_pty_channel(
+        &creds.ip,
+        creds.port,
+        &creds.username,
+        &creds.auth_type,
+        creds.password.as_deref(),
+        creds.ssh_key_content.as_deref(),
+        default_cols,
+        default_rows,
+        &command,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = socket
+                .send(Message::Text(
+                    error_json(&format!("SSH connect failed: {}", e)).into(),
+                ))
+                .await;
+            return;
+        }
+    };
+
+    // Main loop: bidirectional WS <-> SSH
+    // Both channel.wait() (&mut self) and channel.data()/window_change() (&self)
+    // can't be called concurrently on the same channel. But tokio::select! ensures
+    // only one branch runs at a time, so this is safe.
     loop {
         tokio::select! {
-            _ = ticker.tick() => {
-                let cmd = if use_docker {
-                    let container_name = agent_info.docker_container_name.as_deref().unwrap_or("");
-                    format!(
-                        "docker exec {} tmux capture-pane -p -J -e -t {} 2>/dev/null || echo ''",
-                        container_name, tmux_target
-                    )
-                } else {
-                    format!(
-                        "tmux capture-pane -p -J -e -t {} 2>/dev/null || echo ''",
-                        tmux_target
-                    )
-                };
-                if let Ok(output) = executor.execute(&cmd).await {
-                    if output != last_output {
-                        let new_part = if output.starts_with(&last_output) {
-                            &output[last_output.len()..]
-                        } else {
-                            &output
-                        };
-                        if !new_part.is_empty() {
-                            if socket.send(Message::Text(new_part.to_string().into())).await.is_err() {
-                                break;
-                            }
-                        }
-                        last_output = output;
-                    }
-                }
-            }
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        let send_cmd = if use_docker {
-                            let container_name = agent_info.docker_container_name.as_deref().unwrap_or("");
-                            format!(
-                                "docker exec {} tmux send-keys -t {} '{}'",
-                                container_name, tmux_target,
-                                text.replace('\'', "\\'")
-                            )
-                        } else {
-                            format!(
-                                "tmux send-keys -t {} '{}'",
-                                tmux_target,
-                                text.replace('\'', "\\'")
-                            )
-                        };
-                        if executor.execute(&send_cmd).await.is_err() {
+            // SSH output -> WS binary
+            ssh_msg = channel.wait() => {
+                match ssh_msg {
+                    Some(ChannelMsg::Data { data }) => {
+                        if socket.send(Message::Binary(data.to_vec().into())).await.is_err() {
                             break;
                         }
                     }
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        if socket.send(Message::Binary(data.to_vec().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(ChannelMsg::Eof | ChannelMsg::Close) | None => {
+                        let _ = socket
+                            .send(Message::Text(error_json("SSH session ended").into()))
+                            .await;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            // WS input -> SSH
+            ws_msg = socket.recv() => {
+                match ws_msg {
                     Some(Ok(Message::Binary(data))) => {
-                        if let Ok(s) = String::from_utf8(data.to_vec()) {
-                            let send_cmd = if use_docker {
-                                let container_name = agent_info.docker_container_name.as_deref().unwrap_or("");
-                                format!(
-                                    "docker exec {} tmux send-keys -t {} '{}'",
-                                    container_name, tmux_target,
-                                    s.replace('\'', "\\'")
-                                )
-                            } else {
-                                format!(
-                                    "tmux send-keys -t {} '{}'",
-                                    tmux_target,
-                                    s.replace('\'', "\\'")
-                                )
-                            };
-                            let _ = executor.execute(&send_cmd).await;
+                        if channel.data(&data[..]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(resize) = serde_json::from_str::<ResizeMsg>(&text) {
+                            if resize.msg_type == "resize" {
+                                let _ = channel.window_change(
+                                    resize.cols, resize.rows, 0, 0
+                                ).await;
+                                continue;
+                            }
+                        }
+                        if channel.data(text.as_bytes()).await.is_err() {
+                            break;
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,

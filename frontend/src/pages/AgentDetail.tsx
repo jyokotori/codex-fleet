@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Terminal as TerminalIcon, Copy, Send } from 'lucide-react'
+import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Terminal as TerminalIcon, Copy, Send, FileText } from 'lucide-react'
 import { agentsApi, serversApi, tasksApi, type Task } from '../lib/api'
 import { useI18n } from '../hooks/useI18n'
-import LogStream from '../components/LogStream'
 import Terminal from '../components/Terminal'
+import TaskLogViewer from '../components/TaskLogViewer'
 import ProvisionLog from '../components/ProvisionLog'
 
-type TabType = 'logs' | 'terminal' | 'tasks'
+type TabType = 'terminal' | 'tasks' | 'provision'
 
 export default function AgentDetail() {
   const { id } = useParams<{ id: string }>()
@@ -18,12 +18,12 @@ export default function AgentDetail() {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<TabType>(() => {
     const tab = searchParams.get('tab')
-    return (tab === 'terminal' || tab === 'tasks' || tab === 'logs') ? tab : 'logs'
+    return (tab === 'terminal' || tab === 'tasks' || tab === 'provision') ? tab : 'terminal'
   })
-  const [activeWindow, setActiveWindow] = useState<string | undefined>(() => searchParams.get('window') ?? undefined)
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [taskInput, setTaskInput] = useState('')
   const [copyToast, setCopyToast] = useState(false)
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
 
   const { data: agent, isLoading, refetch: refetchAgent } = useQuery({
     queryKey: ['agents', id],
@@ -31,6 +31,13 @@ export default function AgentDetail() {
     enabled: !!id,
     refetchInterval: 5000,
   })
+
+  // Auto-select provision tab when agent is provisioning
+  useEffect(() => {
+    if (agent?.status === 'provisioning') {
+      setActiveTab('provision')
+    }
+  }, [agent?.status])
 
   const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
   const { data: tasks = [] } = useQuery({
@@ -51,11 +58,9 @@ export default function AgentDetail() {
       qc.invalidateQueries({ queryKey: ['tasks', id] })
       setTaskInput('')
       setShowTaskModal(false)
-      // Auto-switch to terminal tab with the task's tmux window
-      if (task.tmux_window) {
-        setActiveWindow(task.tmux_window)
-      }
-      setActiveTab('terminal')
+      // Show task log viewer for the new task
+      setExpandedTaskId(task.id)
+      setActiveTab('tasks')
     },
   })
 
@@ -72,10 +77,9 @@ export default function AgentDetail() {
   }
 
   function handleProvisionDone(status: string) {
-    // Refresh agent data when provisioning completes
     refetchAgent()
     if (status === 'stopped') {
-      setActiveTab('logs')
+      setActiveTab('terminal')
     }
   }
 
@@ -88,9 +92,9 @@ export default function AgentDetail() {
   const statusLabel = t.status[agent.status as keyof typeof t.status] ?? agent.status
 
   const tabLabels: Record<TabType, string> = {
-    logs: t.agentDetail.logs,
     terminal: t.agentDetail.terminal,
     tasks: t.agentDetail.tasks,
+    provision: t.provision?.title ?? 'Provision',
   }
 
   const canDispatchTask = agent.status === 'stopped' || agent.status === 'running'
@@ -176,56 +180,55 @@ export default function AgentDetail() {
         </div>
       </div>
 
-      {/* Provisioning view */}
-      {isProvisioning ? (
-        <div className="flex-1 overflow-auto p-8">
-          <ProvisionLog agentId={id!} onDone={handleProvisionDone} />
+      {/* Tabs */}
+      <div className="border-b border-gray-100 dark:border-gray-800 px-8">
+        <div className="flex gap-1">
+          {(['terminal', 'tasks', 'provision'] as TabType[]).map(tab => (
+            <button key={tab} onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === tab ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+            >
+              {tabLabels[tab]}
+              {tab === 'tasks' && tasks.length > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">{tasks.length}</span>
+              )}
+            </button>
+          ))}
         </div>
-      ) : (
-        <>
-          {/* Tabs */}
-          <div className="border-b border-gray-100 dark:border-gray-800 px-8">
-            <div className="flex gap-1">
-              {(['logs', 'terminal', 'tasks'] as TabType[]).map(tab => (
-                <button key={tab} onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === tab ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
-                >
-                  {tabLabels[tab]}
-                  {tab === 'tasks' && tasks.length > 0 && (
-                    <span className="ml-1.5 px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">{tasks.length}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
+      </div>
 
-          {/* Content */}
-          <div className="flex-1 overflow-auto p-8">
-            {activeTab === 'logs' && <LogStream agentId={id!} className="h-full" />}
-            {activeTab === 'terminal' && <Terminal agentId={id!} tmuxWindow={activeWindow} className="h-full" />}
-            {activeTab === 'tasks' && (
-              <div className="space-y-3">
-                {tasks.length === 0 ? (
-                  <div className="text-center py-12 card">
-                    <p className="text-gray-500">{t.agentDetail.noTasks}</p>
-                    {canDispatchTask && <p className="text-gray-400 dark:text-gray-600 text-sm mt-1">{t.agentDetail.noTasksHint}</p>}
-                  </div>
-                ) : tasks.map(task => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    t={t}
-                    onOpenTerminal={task.tmux_window ? () => {
-                      setActiveWindow(task.tmux_window)
-                      setActiveTab('terminal')
-                    } : undefined}
-                  />
-                ))}
+      {/* Content */}
+      <div className="flex-1 overflow-auto p-8">
+        {activeTab === 'terminal' && <Terminal agentId={id!} className="h-full" />}
+        {activeTab === 'tasks' && (
+          <div className="space-y-3">
+            {tasks.length === 0 ? (
+              <div className="text-center py-12 card">
+                <p className="text-gray-500">{t.agentDetail.noTasks}</p>
+                {canDispatchTask && <p className="text-gray-400 dark:text-gray-600 text-sm mt-1">{t.agentDetail.noTasksHint}</p>}
               </div>
-            )}
+            ) : tasks.map(task => (
+              <div key={task.id}>
+                <TaskCard
+                  task={task}
+                  t={t}
+                  expanded={expandedTaskId === task.id}
+                  onToggle={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
+                />
+                {expandedTaskId === task.id && (
+                  <div className="mt-2 ml-4">
+                    <TaskLogViewer taskId={task.id} />
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
-        </>
-      )}
+        )}
+        {activeTab === 'provision' && (
+          isProvisioning
+            ? <ProvisionLog agentId={id!} onDone={handleProvisionDone} />
+            : <ProvisionHistory agent={agent} t={t} />
+        )}
+      </div>
 
       {/* Dispatch task modal */}
       {showTaskModal && (
@@ -266,32 +269,105 @@ export default function AgentDetail() {
   )
 }
 
-function TaskCard({ task, t, onOpenTerminal }: {
+function ProvisionHistory({ agent, t }: {
+  agent: { provision_steps: Record<string, string>; provision_log: string }
+  t: ReturnType<typeof useI18n>['t']
+}) {
+  const [showRawLog, setShowRawLog] = useState(false)
+  const steps = Object.entries(agent.provision_steps ?? {}).sort(([a], [b]) => Number(a) - Number(b))
+  const stepName = (n: number) => t.provision?.steps?.[n] ?? `Step ${n}`
+
+  const statusIcon = (status: string) => {
+    if (status === 'ok') return <span className="text-green-400">✓</span>
+    if (status === 'failed') return <span className="text-red-400">✗</span>
+    if (status === 'skipped') return <span className="text-gray-500">–</span>
+    return <span className="text-gray-500">○</span>
+  }
+
+  return (
+    <div className="space-y-4">
+      {steps.length === 0 ? (
+        <div className="text-center py-12 card">
+          <p className="text-gray-500">No provision history available.</p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+          {steps.map(([num, status], idx) => (
+            <div
+              key={num}
+              className={[
+                'flex items-center gap-3 px-4 py-2.5 text-sm',
+                idx < steps.length - 1 && 'border-b border-gray-100 dark:border-gray-800',
+                status === 'ok' ? 'bg-green-50/40 dark:bg-green-900/10' :
+                status === 'failed' ? 'bg-red-50/40 dark:bg-red-900/10' :
+                'bg-white dark:bg-gray-900',
+              ].filter(Boolean).join(' ')}
+            >
+              <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                {statusIcon(status)}
+              </div>
+              <span className="flex-1 font-mono text-gray-700 dark:text-gray-300">
+                <span className="text-gray-400 dark:text-gray-600 mr-1">{num}.</span>
+                {stepName(Number(num))}
+              </span>
+              <span className={`text-xs font-mono ${
+                status === 'ok' ? 'text-green-600 dark:text-green-400' :
+                status === 'failed' ? 'text-red-600 dark:text-red-400' :
+                'text-gray-500'
+              }`}>{status}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {agent.provision_log && (
+        <div>
+          <button
+            onClick={() => setShowRawLog(v => !v)}
+            className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-400 font-mono"
+          >
+            {showRawLog ? '▼ Hide raw log' : '▶ Show raw log'}
+          </button>
+          {showRawLog && (
+            <pre className="mt-2 p-4 rounded-lg bg-black text-gray-300 text-xs font-mono overflow-auto max-h-96 border border-gray-700">
+              {agent.provision_log}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TaskCard({ task, t, expanded, onToggle }: {
   task: Task
   t: ReturnType<typeof useI18n>['t']
-  onOpenTerminal?: () => void
+  expanded: boolean
+  onToggle: () => void
 }) {
   const statusMap: Record<string, string> = {
     pending: 'badge-gray', running: 'badge-yellow', completed: 'badge-green',
     failed: 'badge-red', cancelled: 'badge-gray',
   }
   return (
-    <div className="card">
+    <div className="card cursor-pointer" onClick={onToggle}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-700 dark:text-gray-200 break-words">{task.description}</p>
           <p className="text-xs text-gray-500 mt-1">{new Date(task.created_at).toLocaleString()}</p>
-          {task.tmux_window && (
-            <p className="text-xs text-gray-400 mt-0.5 font-mono">window: {task.tmux_window}</p>
+          {task.thread_id && (
+            <p className="text-xs text-gray-400 mt-0.5 font-mono">thread: {task.thread_id}</p>
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className={statusMap[task.status] ?? 'badge-gray'}>{t.status[task.status as keyof typeof t.status] ?? task.status}</span>
-          {onOpenTerminal && (
-            <button onClick={onOpenTerminal} className="btn-secondary btn-sm flex items-center gap-1" title="Open in terminal">
-              <TerminalIcon size={12} />
-            </button>
-          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggle() }}
+            className="btn-secondary btn-sm flex items-center gap-1"
+            title={expanded ? 'Hide logs' : 'Show logs'}
+          >
+            <FileText size={12} />
+          </button>
         </div>
       </div>
     </div>

@@ -90,7 +90,7 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
     )
   }
 
-  const { isConnected } = useWebSocket(`/ws/agents/${agentId}/provision`, {
+  const { isConnected, disconnect } = useWebSocket(`/ws/agents/${agentId}/provision`, {
     maxReconnects: 5,
     onMessage: (data) => {
       if (doneRef.current) return
@@ -109,6 +109,8 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
 
       switch (type) {
         case 'provision_init': {
+          // Clear terminal on reconnect to prevent duplicate output
+          xtermRef.current?.clear()
           // Restore step states from DB on connect/reconnect — prevents stale UI after page refresh
           const stepsMap = (ev.steps ?? {}) as Record<string, string>
           setSteps(prev => prev.map(s => ({
@@ -162,6 +164,7 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
           doneRef.current = true
           setDone(true)
           setDoneStatus(finalStatus)
+          disconnect()
           onDone?.(finalStatus)
           break
         }
