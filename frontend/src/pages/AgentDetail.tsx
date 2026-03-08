@@ -8,6 +8,8 @@ import { useI18n } from '../hooks/useI18n'
 import Terminal from '../components/Terminal'
 import TaskLogViewer from '../components/TaskLogViewer'
 import ProvisionLog from '../components/ProvisionLog'
+import DeleteAgentDialog from '../components/DeleteAgentDialog'
+import { canDispatchTask, getAgentRuntimeAction, type AgentRuntimeAction } from '../lib/agentRuntime'
 
 type TabType = 'terminal' | 'tasks' | 'provision'
 
@@ -26,6 +28,7 @@ export default function AgentDetail() {
   const [copyToast, setCopyToast] = useState(false)
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(() => searchParams.get('task'))
   const [taskPage, setTaskPage] = useState(1)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const taskPerPage = 20
 
   const { data: agent, isLoading, refetch: refetchAgent } = useQuery({
@@ -53,10 +56,18 @@ export default function AgentDetail() {
   const totalTasks = tasksData?.total ?? 0
   const totalPages = Math.ceil(totalTasks / taskPerPage)
 
-  const startMutation = useMutation({ mutationFn: () => agentsApi.start(id!), onSuccess: () => qc.invalidateQueries({ queryKey: ['agents', id] }) })
-  const stopMutation = useMutation({ mutationFn: () => agentsApi.stop(id!), onSuccess: () => qc.invalidateQueries({ queryKey: ['agents', id] }) })
-  const resumeMutation = useMutation({ mutationFn: () => agentsApi.resume(id!) })
-  const deleteMutation = useMutation({ mutationFn: () => agentsApi.delete(id!), onSuccess: () => navigate('/agents') })
+  const runtimeMutation = useMutation({
+    mutationFn: (action: AgentRuntimeAction) => {
+      if (action === 'start') return agentsApi.start(id!)
+      if (action === 'pause') return agentsApi.stop(id!)
+      return agentsApi.restart(id!)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  })
+  const deleteMutation = useMutation({
+    mutationFn: () => agentsApi.delete(id!),
+    onSuccess: () => navigate('/agents'),
+  })
 
   const createTaskMutation = useMutation({
     mutationFn: (description: string) => tasksApi.create(id!, description),
@@ -90,7 +101,7 @@ export default function AgentDetail() {
   }
 
   if (isLoading) return <div className="p-8 text-gray-500">{t.common.loading}</div>
-  if (!agent) return <div className="p-8 text-gray-500">Agent not found</div>
+  if (!agent) return <div className="p-8 text-gray-500">{t.agentDetail.notFound}</div>
 
   const isProvisioning = agent.status === 'provisioning'
   const server = servers.find(s => s.id === agent.server_id)
@@ -103,7 +114,13 @@ export default function AgentDetail() {
     provision: t.provision?.title ?? 'Provision',
   }
 
-  const canDispatchTask = agent.status === 'stopped' || agent.status === 'running'
+  const runtimeAction = getAgentRuntimeAction(agent)
+  const RuntimeIcon = runtimeAction === 'start' ? Play : runtimeAction === 'pause' ? Square : RotateCcw
+  const runtimeLabel = runtimeAction === 'start'
+    ? t.agents.start
+    : runtimeAction === 'pause'
+      ? t.agents.pause
+      : t.agents.restart
 
   return (
     <div className="flex flex-col h-full">
@@ -137,49 +154,44 @@ export default function AgentDetail() {
               <button
                 onClick={handleCopyTerminalCommand}
                 className="btn-secondary btn-sm flex items-center gap-1"
-                title="Copy terminal attach command"
+                title={t.agents.copyTerminalCommand}
               >
                 <Copy size={13} />
-                {copyToast ? 'Copied!' : 'Copy cmd'}
+                {copyToast ? t.agents.copied : t.agents.copyCommand}
               </button>
             </div>
 
             {/* Open terminal (placeholder) */}
             <button
               className="btn-secondary btn-sm flex items-center gap-1"
-              title="Open in local terminal"
+              title={t.agents.openTerminal}
               onClick={handleCopyTerminalCommand}
             >
               <TerminalIcon size={13} />
             </button>
 
             {/* Dispatch task */}
-            {canDispatchTask && (
+            {canDispatchTask(agent) && (
               <button
                 onClick={() => setShowTaskModal(true)}
                 className="btn-primary btn-sm flex items-center gap-1"
               >
                 <Send size={13} />
-                Dispatch Task
+                {t.agents.dispatchTask}
               </button>
             )}
 
-            {agent.status === 'stopped' && (
-              <button onClick={() => startMutation.mutate()} className="btn-secondary btn-sm flex items-center gap-1" disabled={startMutation.isPending}>
-                <Play size={13} />{t.agents.start}
+            {runtimeAction && (
+              <button
+                onClick={() => runtimeMutation.mutate(runtimeAction)}
+                className="btn-secondary btn-sm flex items-center gap-1"
+                disabled={runtimeMutation.isPending}
+              >
+                <RuntimeIcon size={13} />
+                {runtimeLabel}
               </button>
             )}
-            {agent.status === 'running' && (
-              <>
-                <button onClick={() => stopMutation.mutate()} className="btn-secondary btn-sm flex items-center gap-1" disabled={stopMutation.isPending}>
-                  <Square size={13} />{t.agents.stop}
-                </button>
-                <button onClick={() => resumeMutation.mutate()} className="btn-secondary btn-sm flex items-center gap-1" disabled={resumeMutation.isPending}>
-                  <RotateCcw size={13} />{t.agents.resume}
-                </button>
-              </>
-            )}
-            <button onClick={() => { if (confirm(t.agents.deleteConfirm(agent.name))) deleteMutation.mutate() }} className="btn-danger btn-sm">
+            <button onClick={() => setShowDeleteDialog(true)} className="btn-danger btn-sm">
               <Trash2 size={13} />
             </button>
           </div>
@@ -210,7 +222,7 @@ export default function AgentDetail() {
             {tasks.length === 0 ? (
               <div className="text-center py-12 card">
                 <p className="text-gray-500">{t.agentDetail.noTasks}</p>
-                {canDispatchTask && <p className="text-gray-400 dark:text-gray-600 text-sm mt-1">{t.agentDetail.noTasksHint}</p>}
+                {canDispatchTask(agent) && <p className="text-gray-400 dark:text-gray-600 text-sm mt-1">{t.agentDetail.noTasksHint}</p>}
               </div>
             ) : (
               <>
@@ -266,11 +278,11 @@ export default function AgentDetail() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-200 rounded-xl w-full max-w-lg dark:bg-gray-900 dark:border-gray-700">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="font-semibold text-gray-800 dark:text-gray-100">Dispatch Task</h3>
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.dispatchTask}</h3>
               <button onClick={() => setShowTaskModal(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
             </div>
             <div className="p-6">
-              <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">Task Description</label>
+              <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">{t.agents.dispatchTaskDesc}</label>
               <textarea
                 className="input w-full"
                 rows={5}
@@ -296,6 +308,14 @@ export default function AgentDetail() {
           </div>
         </div>
       )}
+
+      <DeleteAgentDialog
+        agent={agent}
+        open={showDeleteDialog}
+        pending={deleteMutation.isPending}
+        onClose={() => setShowDeleteDialog(false)}
+        onConfirm={(_agent) => deleteMutation.mutate()}
+      />
     </div>
   )
 }
@@ -319,7 +339,7 @@ function ProvisionHistory({ agent, t }: {
     <div className="space-y-4">
       {steps.length === 0 ? (
         <div className="text-center py-12 card">
-          <p className="text-gray-500">No provision history available.</p>
+          <p className="text-gray-500">{t.agentDetail.provisionHistoryEmpty}</p>
         </div>
       ) : (
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -357,7 +377,7 @@ function ProvisionHistory({ agent, t }: {
             onClick={() => setShowRawLog(v => !v)}
             className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-400 font-mono"
           >
-            {showRawLog ? '▼ Hide raw log' : '▶ Show raw log'}
+            {showRawLog ? `▼ ${t.agentDetail.hideRawLog}` : `▶ ${t.agentDetail.showRawLog}`}
           </button>
           {showRawLog && (
             <pre className="mt-2 p-4 rounded-lg bg-black text-gray-300 text-xs font-mono overflow-auto max-h-96 border border-gray-700">
@@ -398,7 +418,7 @@ function TaskCard({ task, t, expanded, onToggle }: {
           <button
             onClick={(e) => { e.stopPropagation(); onToggle() }}
             className="btn-secondary btn-sm flex items-center gap-1"
-            title={expanded ? 'Hide logs' : 'Show logs'}
+            title={expanded ? t.agentDetail.hideLogs : t.agentDetail.showLogs}
           >
             <FileText size={12} />
           </button>

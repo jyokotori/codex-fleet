@@ -303,6 +303,9 @@ export interface Agent {
   workdir: string
   use_docker: boolean
   status: string
+  runtime_action?: 'start' | 'pause' | 'restart'
+  docker_runtime_status?: string
+  docker_health_status?: string
   provision_log: string
   provision_steps: Record<string, string>
   created_at: string
@@ -346,6 +349,8 @@ export const agentsApi = {
     request<{ message: string; status: string }>(`/api/agents/${id}/start`, { method: 'POST' }),
   stop: (id: string) =>
     request<{ message: string; status: string }>(`/api/agents/${id}/stop`, { method: 'POST' }),
+  restart: (id: string) =>
+    request<{ message: string; status: string }>(`/api/agents/${id}/restart`, { method: 'POST' }),
   resume: (id: string) =>
     request<{ message: string }>(`/api/agents/${id}/resume`, { method: 'POST' }),
   getTerminalCommand: (id: string) =>

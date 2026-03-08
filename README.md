@@ -68,6 +68,8 @@ Each agent has its own:
 - **Codex Config** — attach a `config.toml` + `auth.json` bundle so the agent has its credentials and settings ready
 - **AGENTS.md** — inject shared project instructions into the agent's workspace
 - **Docker Config** — customize port mappings, env vars, volume mounts, and init scripts
+- **Runtime controls** — Docker agents expose a single state-aware action button (`Pause`, `Start`, or `Restart`); non-Docker agents do not expose runtime start/stop controls in the UI
+- **Delete confirmation** — deleting any agent removes `~/.codex-fleet/{agent_id}` and the database record after explicit confirmation; Docker agents also remove the container
 
 ### Tasks
 Open an agent, type a task, hit Send. The task goes straight into the agent's tmux session. You can see all past tasks and their status on the same page.

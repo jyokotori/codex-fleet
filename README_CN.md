@@ -68,6 +68,8 @@ cd frontend && npm install && npm run dev
 - **Codex Config** — 绑定一组 `config.toml` + `auth.json`，让 Agent 启动就有认证信息和配置
 - **AGENTS.md** — 把共享的项目说明文件注入 Agent 工作区
 - **Docker 配置** — 自定义端口映射、环境变量、目录挂载、初始化脚本
+- **运行时控制** — Docker Agent 在界面里只显示一个随容器状态变化的动作按钮（`暂停`、`启动` 或 `重启`）；非 Docker Agent 不提供运行时启停按钮
+- **删除确认** — 删除任意 Agent 前都需要显式确认；实际会删除 `~/.codex-fleet/{agent_id}` 和数据库记录，Docker Agent 还会额外删除容器
 
 ### 任务下发
 打开一个 Agent 详情页，输入任务，点发送，任务直接进入 Agent 的 tmux 会话。同一页面可以看到所有历史任务和状态。

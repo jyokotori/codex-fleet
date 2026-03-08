@@ -7,6 +7,8 @@ import {
   type Agent, type Server,
 } from '../lib/api'
 import { useI18n } from '../hooks/useI18n'
+import DeleteAgentDialog from '../components/DeleteAgentDialog'
+import { canDispatchTask, getAgentRuntimeAction, type AgentRuntimeAction } from '../lib/agentRuntime'
 
 interface AgentFormData {
   name: string
@@ -78,6 +80,7 @@ export default function Agents() {
   const [gitRepoConfirm, setGitRepoConfirm] = useState(false)
   const [dispatchAgent, setDispatchAgent] = useState<Agent | null>(null)
   const [dispatchInput, setDispatchInput] = useState('')
+  const [deleteAgent, setDeleteAgent] = useState<Agent | null>(null)
 
   const { data: agents = [], isLoading } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
   const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
@@ -134,10 +137,21 @@ export default function Agents() {
     },
   })
 
-  const deleteMutation = useMutation({ mutationFn: agentsApi.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }) })
-  const startMutation = useMutation({ mutationFn: agentsApi.start, onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }) })
-  const stopMutation = useMutation({ mutationFn: agentsApi.stop, onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }) })
-  const resumeMutation = useMutation({ mutationFn: agentsApi.resume })
+  const deleteMutation = useMutation({
+    mutationFn: agentsApi.delete,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      setDeleteAgent(null)
+    },
+  })
+  const runtimeMutation = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: AgentRuntimeAction }) => {
+      if (action === 'start') return agentsApi.start(id)
+      if (action === 'pause') return agentsApi.stop(id)
+      return agentsApi.restart(id)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  })
 
   const dispatchMutation = useMutation({
     mutationFn: ({ agentId, desc }: { agentId: string; desc: string }) =>
@@ -174,6 +188,12 @@ export default function Agents() {
     updateMutation.mutate({ id: editAgent.id, data: editForm, forceReclone })
   }
 
+  function handleRuntimeAction(agent: Agent) {
+    const action = getAgentRuntimeAction(agent)
+    if (!action) return
+    runtimeMutation.mutate({ id: agent.id, action })
+  }
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-8">
@@ -198,12 +218,11 @@ export default function Agents() {
         <div className="grid gap-4">
           {agents.map(agent => (
             <AgentRow key={agent.id} agent={agent} servers={servers} t={t}
-              onStart={() => startMutation.mutate(agent.id)}
-              onStop={() => stopMutation.mutate(agent.id)}
-              onResume={() => resumeMutation.mutate(agent.id)}
+              onRuntimeAction={() => handleRuntimeAction(agent)}
               onEdit={() => handleEditOpen(agent)}
               onDispatch={() => { setDispatchAgent(agent); setDispatchInput('') }}
-              onDelete={() => { if (confirm(t.agents.deleteConfirm(agent.name))) deleteMutation.mutate(agent.id) }}
+              onDelete={() => setDeleteAgent(agent)}
+              runtimePending={runtimeMutation.isPending}
             />
           ))}
         </div>
@@ -544,7 +563,7 @@ export default function Agents() {
                 rows={5}
                 value={dispatchInput}
                 onChange={e => setDispatchInput(e.target.value)}
-                placeholder={`向 ${dispatchAgent.cli_type} 发送任务...`}
+                placeholder={t.agentDetail.taskPlaceholder(dispatchAgent.cli_type)}
                 autoFocus
               />
               {dispatchMutation.error && (
@@ -564,18 +583,37 @@ export default function Agents() {
           </div>
         </div>
       )}
+
+      <DeleteAgentDialog
+        agent={deleteAgent}
+        open={!!deleteAgent}
+        pending={deleteMutation.isPending}
+        onClose={() => setDeleteAgent(null)}
+        onConfirm={(agent) => deleteMutation.mutate(agent.id)}
+      />
     </div>
   )
 }
 
-function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDispatch, onDelete }: {
+function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onDelete, runtimePending }: {
   agent: Agent
   servers: Server[]
   t: ReturnType<typeof useI18n>['t']
-  onStart: () => void; onStop: () => void; onResume: () => void; onEdit: () => void; onDispatch: () => void; onDelete: () => void
+  onRuntimeAction: () => void
+  onEdit: () => void
+  onDispatch: () => void
+  onDelete: () => void
+  runtimePending: boolean
 }) {
   const navigate = useNavigate()
   const serverLabel = servers.find(s => s.id === agent.server_id)?.name ?? agent.server_id
+  const runtimeAction = getAgentRuntimeAction(agent)
+  const RuntimeIcon = runtimeAction === 'start' ? Play : runtimeAction === 'pause' ? Square : RotateCcw
+  const runtimeLabel = runtimeAction === 'start'
+    ? t.agents.start
+    : runtimeAction === 'pause'
+      ? t.agents.pause
+      : t.agents.restart
 
   const statusMap: Record<string, string> = {
     running: 'badge-green',
@@ -598,7 +636,7 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
           <span className={statusMap[agent.status] ?? 'badge-gray'}>{t.status[agent.status as keyof typeof t.status] ?? agent.status}</span>
           <span className="badge badge-blue">{agent.cli_type}</span>
           {!agent.use_docker && (
-            <span className="badge badge-gray">No Docker</span>
+            <span className="badge badge-gray">{t.agents.noDockerBadge}</span>
           )}
         </div>
         <p className="text-sm text-gray-500">
@@ -607,19 +645,20 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
         </p>
       </div>
       <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-        {(agent.status === 'stopped' || agent.status === 'running') && (
+        {canDispatchTask(agent) && (
           <button onClick={onDispatch} className="btn-primary btn-sm flex items-center gap-1"><Send size={13} />{t.agents.dispatchTask}</button>
         )}
-        {agent.status === 'stopped' && (
-          <button onClick={onStart} className="btn-secondary btn-sm flex items-center gap-1"><Play size={13} />{t.agents.start}</button>
+        {runtimeAction && (
+          <button
+            onClick={onRuntimeAction}
+            className="btn-secondary btn-sm flex items-center gap-1"
+            disabled={runtimePending}
+          >
+            <RuntimeIcon size={13} />
+            {runtimeLabel}
+          </button>
         )}
-        {agent.status === 'running' && (
-          <>
-            <button onClick={onStop} className="btn-secondary btn-sm flex items-center gap-1"><Square size={13} />{t.agents.stop}</button>
-            <button onClick={onResume} className="btn-secondary btn-sm flex items-center gap-1"><RotateCcw size={13} />{t.agents.resume}</button>
-          </>
-        )}
-        <button onClick={onEdit} className="btn-secondary btn-sm">Edit</button>
+        <button onClick={onEdit} className="btn-secondary btn-sm">{t.common.edit}</button>
         <button onClick={onDelete} className="btn-danger btn-sm"><Trash2 size={13} /></button>
       </div>
     </div>
