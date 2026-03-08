@@ -353,20 +353,32 @@ export const agentsApi = {
 }
 
 // Tasks
-export interface Task {
+export interface TaskSummary {
   id: string
   agent_id: string
   description: string
   status: string
-  task_log: string
+  task_dir: string
   thread_id?: string
   created_at: string
   started_at?: string
   completed_at?: string
 }
 
+export interface Task extends TaskSummary {
+  task_log: string
+}
+
+export interface PaginatedTasks {
+  items: TaskSummary[]
+  total: number
+  page: number
+  per_page: number
+}
+
 export const tasksApi = {
-  list: (agentId: string) => request<Task[]>(`/api/agents/${agentId}/tasks`),
+  list: (agentId: string, page = 1, perPage = 20) =>
+    request<PaginatedTasks>(`/api/agents/${agentId}/tasks?page=${page}&per_page=${perPage}`),
   create: (agentId: string, description: string) =>
     request<Task>(`/api/agents/${agentId}/tasks`, {
       method: 'POST',

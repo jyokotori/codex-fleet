@@ -22,7 +22,7 @@ pub async fn create_pool(config: &AppConfig) -> anyhow::Result<PgPool> {
     );
 
     let pool = PgPoolOptions::new()
-        .max_connections(10)
+        .max_connections(30)
         .acquire_timeout(std::time::Duration::from_secs(10))
         .connect_with(connect_opts)
         .await?;

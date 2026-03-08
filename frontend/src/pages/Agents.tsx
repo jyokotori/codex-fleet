@@ -146,8 +146,8 @@ export default function Agents() {
       qc.invalidateQueries({ queryKey: ['agents'] })
       setDispatchAgent(null)
       setDispatchInput('')
-      // Navigate to agent detail terminal tab
-      navigate(`/agents/${task.agent_id}?tab=tasks`)
+      // Navigate to agent detail with the new task expanded
+      navigate(`/agents/${task.agent_id}?tab=tasks&task=${task.id}`)
     },
   })
 
@@ -607,6 +607,9 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
         </p>
       </div>
       <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+        {(agent.status === 'stopped' || agent.status === 'running') && (
+          <button onClick={onDispatch} className="btn-primary btn-sm flex items-center gap-1"><Send size={13} />{t.agents.dispatchTask}</button>
+        )}
         {agent.status === 'stopped' && (
           <button onClick={onStart} className="btn-secondary btn-sm flex items-center gap-1"><Play size={13} />{t.agents.start}</button>
         )}
@@ -615,9 +618,6 @@ function AgentRow({ agent, servers, t, onStart, onStop, onResume, onEdit, onDisp
             <button onClick={onStop} className="btn-secondary btn-sm flex items-center gap-1"><Square size={13} />{t.agents.stop}</button>
             <button onClick={onResume} className="btn-secondary btn-sm flex items-center gap-1"><RotateCcw size={13} />{t.agents.resume}</button>
           </>
-        )}
-        {(agent.status === 'stopped' || agent.status === 'running') && (
-          <button onClick={onDispatch} className="btn-primary btn-sm flex items-center gap-1"><Send size={13} />{t.agents.dispatchTask}</button>
         )}
         <button onClick={onEdit} className="btn-secondary btn-sm">Edit</button>
         <button onClick={onDelete} className="btn-danger btn-sm"><Trash2 size={13} /></button>

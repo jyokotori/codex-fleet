@@ -91,7 +91,6 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
   }
 
   const { isConnected, disconnect } = useWebSocket(`/ws/agents/${agentId}/provision`, {
-    maxReconnects: 5,
     onMessage: (data) => {
       if (doneRef.current) return
       let ev: Record<string, unknown>

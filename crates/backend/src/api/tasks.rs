@@ -18,7 +18,7 @@ pub struct Task {
     pub agent_id: String,
     pub description: String,
     pub status: String,
-    pub tmux_window: Option<String>,
+    pub task_dir: String,
     pub created_at: String,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
@@ -27,6 +27,16 @@ pub struct Task {
 #[derive(Deserialize)]
 pub struct CreateTaskRequest {
     pub description: String,
+}
+
+/// Compute date-partitioned task directory path (codex only).
+fn task_dir_path(use_docker: bool, agent_id: &str, task_id: &str, now: &chrono::DateTime<Utc>) -> String {
+    let date_part = format!("{}/{}/{}", now.format("%Y"), now.format("%-m"), now.format("%-d"));
+    if use_docker {
+        format!("/agent/task-codex-fleet/logs/{}/{}", date_part, task_id)
+    } else {
+        format!("~/.codex-fleet/{}/agent/task-codex-fleet/logs/{}/{}", agent_id, date_part, task_id)
+    }
 }
 
 pub async fn create_task(
@@ -44,13 +54,28 @@ pub async fn create_task(
     let tmux_session = agent_info.tmux_session;
 
     let id = Uuid::new_v4().to_string();
-    let tmux_window = format!("task-{}", &id[..8]);
+    let now = Utc::now();
 
-    let cli_cmd = match agent_info.cli_type.as_str() {
-        "claude" | "claude_code" => format!("claude '{}'", req.description.replace('\'', "'\\''")),
-        "codex" => format!("codex --yolo '{}'", req.description.replace('\'', "'\\''")),
-        "gemini" | "gemini_cli" => format!("gemini '{}'", req.description.replace('\'', "'\\''")),
-        "opencode" => format!("opencode '{}'", req.description.replace('\'', "'\\''")),
+    let escaped_desc = req.description.replace('\'', "'\\''");
+
+    let (cli_cmd, task_dir) = match agent_info.cli_type.as_str() {
+        "codex" => {
+            let dir = task_dir_path(agent_info.use_docker, &agent_id, &id, &now);
+            let cmd = format!(
+                "set -o pipefail; mkdir -p '{}' && cd /workspace && codex --yolo -o '{}/result.md' '{}' 2>&1 | tee '{}/task.log'",
+                dir, dir, escaped_desc, dir
+            );
+            (cmd, dir)
+        }
+        "claude" | "claude_code" => {
+            (format!("claude '{}'", escaped_desc), String::new())
+        }
+        "gemini" | "gemini_cli" => {
+            (format!("gemini '{}'", escaped_desc), String::new())
+        }
+        "opencode" => {
+            (format!("opencode '{}'", escaped_desc), String::new())
+        }
         _ => return Err(AppError::BadRequest("Unknown cli_type".into())),
     };
 
@@ -62,6 +87,7 @@ pub async fn create_task(
     let _ = executor.execute(&ensure_session).await;
 
     // Create a new window for this task
+    let tmux_window = format!("task-{}", &id[..8]);
     let new_window_cmd = format!(
         "docker exec {} tmux new-window -t {} -n {}",
         container_name, tmux_session, tmux_window
@@ -81,11 +107,9 @@ pub async fn create_task(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let now = Utc::now();
-
     sqlx::query!(
-        "INSERT INTO tasks (id, agent_id, description, status, tmux_window, created_at, started_at) VALUES ($1, $2, $3, 'running', $4, $5, $6)",
-        id, agent_id, req.description, tmux_window, now, now
+        "INSERT INTO tasks (id, agent_id, description, status, task_dir, created_at, started_at) VALUES ($1, $2, $3, 'running', $4, $5, $5)",
+        id, agent_id, req.description, task_dir, now
     )
     .execute(&state.db)
     .await?;
@@ -95,7 +119,7 @@ pub async fn create_task(
         agent_id,
         description: req.description,
         status: "running".into(),
-        tmux_window: Some(tmux_window),
+        task_dir,
         created_at: now.to_string(),
         started_at: Some(now.to_string()),
         completed_at: None,
@@ -112,7 +136,7 @@ pub async fn list_tasks(
         .ok_or_else(|| AppError::NotFound("Agent not found".into()))?;
 
     let rows = sqlx::query!(
-        "SELECT id, agent_id, description, status, tmux_window, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC",
+        "SELECT id, agent_id, description, status, task_dir, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC",
         agent_id
     )
     .fetch_all(&state.db)
@@ -125,7 +149,7 @@ pub async fn list_tasks(
             agent_id: r.agent_id,
             description: r.description,
             status: r.status,
-            tmux_window: r.tmux_window,
+            task_dir: r.task_dir,
             created_at: r.created_at.to_string(),
             started_at: r.started_at.map(|t| t.to_string()),
             completed_at: r.completed_at.map(|t| t.to_string()),
@@ -140,7 +164,7 @@ pub async fn get_task(
     Path(task_id): Path<String>,
 ) -> Result<Json<Task>> {
     let row = sqlx::query!(
-        "SELECT id, agent_id, description, status, tmux_window, created_at, started_at, completed_at FROM tasks WHERE id = $1",
+        "SELECT id, agent_id, description, status, task_dir, created_at, started_at, completed_at FROM tasks WHERE id = $1",
         task_id
     )
     .fetch_optional(&state.db)
@@ -152,7 +176,7 @@ pub async fn get_task(
         agent_id: row.agent_id,
         description: row.description,
         status: row.status,
-        tmux_window: row.tmux_window,
+        task_dir: row.task_dir,
         created_at: row.created_at.to_string(),
         started_at: row.started_at.map(|t| t.to_string()),
         completed_at: row.completed_at.map(|t| t.to_string()),

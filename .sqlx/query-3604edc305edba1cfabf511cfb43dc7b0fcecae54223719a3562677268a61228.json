@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, agent_id, description, status, task_log, thread_id, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC",
+  "query": "SELECT id, agent_id, description, status, task_dir, thread_id, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
   "describe": {
     "columns": [
       {
@@ -25,7 +25,7 @@
       },
       {
         "ordinal": 4,
-        "name": "task_log",
+        "name": "task_dir",
         "type_info": "Text"
       },
       {
@@ -51,7 +51,9 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Int8",
+        "Int8"
       ]
     },
     "nullable": [
@@ -66,5 +68,5 @@
       true
     ]
   },
-  "hash": "48a0af93851d9de802161e61a40f7d7149e21760b888f56bc45654fdef539589"
+  "hash": "3604edc305edba1cfabf511cfb43dc7b0fcecae54223719a3562677268a61228"
 }

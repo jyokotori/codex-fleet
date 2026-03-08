@@ -1,9 +1,16 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { useI18n } from '../hooks/useI18n'
+
+const darkTheme = { background: '#000000', foreground: '#d1d5db', cursor: '#60a5fa', selectionBackground: '#374151' }
+const lightTheme = { background: '#ffffff', foreground: '#1f2937', cursor: '#2563eb', selectionBackground: '#bfdbfe' }
+
+function isDarkMode() {
+  return document.documentElement.classList.contains('dark')
+}
 
 interface TerminalProps {
   agentId: string
@@ -15,17 +22,15 @@ export default function Terminal({ agentId, className = '' }: TerminalProps) {
   const termRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const sendRef = useRef<(data: string) => void>(() => {})
+  const sendBinaryRef = useRef<(data: Uint8Array) => void>(() => {})
+  const wasConnectedRef = useRef(false)
 
   const wsUrl = `/ws/agents/${agentId}/terminal`
 
-  const sendResize = useCallback((cols: number, rows: number, sendFn: (data: string) => void) => {
-    sendFn(JSON.stringify({ type: 'resize', cols, rows }))
-  }, [])
-
-  const { isConnected, send, sendBinary } = useWebSocket(wsUrl, {
+  const { isConnected, send, sendBinary, disconnect } = useWebSocket(wsUrl, {
     onBinaryMessage: (data) => xtermRef.current?.write(data),
     onMessage: (data) => {
-      // Handle JSON error messages from server
       try {
         const msg = JSON.parse(data)
         if (msg.type === 'error') {
@@ -38,23 +43,32 @@ export default function Terminal({ agentId, className = '' }: TerminalProps) {
       xtermRef.current?.write(data)
     },
     onOpen: () => {
-      // Send initial resize after connect
-      if (fitAddonRef.current) {
+      wasConnectedRef.current = true
+      if (fitAddonRef.current && xtermRef.current) {
         fitAddonRef.current.fit()
         const term = xtermRef.current
-        if (term) {
-          sendResize(term.cols, term.rows, send)
-        }
+        sendRef.current(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
       }
     },
-    onClose: () => xtermRef.current?.write(`\r\n\x1b[31m${t.agentDetail.disconnected}\x1b[0m\r\n`),
+    onClose: () => {
+      // Only show "Disconnected" if we were actually connected before
+      if (wasConnectedRef.current) {
+        xtermRef.current?.write(`\r\n\x1b[31m${t.agentDetail.disconnected}\x1b[0m\r\n`)
+        wasConnectedRef.current = false
+      }
+    },
   })
 
+  // Keep refs in sync with latest send functions
+  sendRef.current = send
+  sendBinaryRef.current = sendBinary
+
+  // Create xterm once on mount, dispose on unmount
   useEffect(() => {
     if (!termRef.current) return
 
     const term = new XTerm({
-      theme: { background: '#000000', foreground: '#d1d5db', cursor: '#60a5fa', selectionBackground: '#374151' },
+      theme: isDarkMode() ? darkTheme : lightTheme,
       fontFamily: 'ui-monospace, monospace',
       fontSize: 13,
       cursorBlink: true,
@@ -68,14 +82,14 @@ export default function Terminal({ agentId, className = '' }: TerminalProps) {
     xtermRef.current = term
     fitAddonRef.current = fitAddon
 
-    // Terminal input -> WS binary
+    // Terminal input -> WS binary (via ref to avoid dependency)
     term.onData((data) => {
-      sendBinary(new TextEncoder().encode(data))
+      sendBinaryRef.current(new TextEncoder().encode(data))
     })
 
-    // Resize events
+    // Resize events (via ref)
     term.onResize(({ cols, rows }) => {
-      send(JSON.stringify({ type: 'resize', cols, rows }))
+      sendRef.current(JSON.stringify({ type: 'resize', cols, rows }))
     })
 
     const handleResize = () => {
@@ -83,12 +97,30 @@ export default function Terminal({ agentId, className = '' }: TerminalProps) {
     }
     globalThis.addEventListener('resize', handleResize)
 
+    // Watch for dark/light mode changes
+    const mqDark = globalThis.matchMedia?.('(prefers-color-scheme: dark)')
+    const handleThemeChange = () => {
+      term.options.theme = isDarkMode() ? darkTheme : lightTheme
+    }
+    mqDark?.addEventListener('change', handleThemeChange)
+
+    // Also observe the <html> class for manual dark mode toggle
+    const observer = new MutationObserver(handleThemeChange)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+
     return () => {
       globalThis.removeEventListener('resize', handleResize)
+      mqDark?.removeEventListener('change', handleThemeChange)
+      observer.disconnect()
       term.dispose()
       xtermRef.current = null
     }
-  }, [send, sendBinary])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Disconnect WS on unmount
+  useEffect(() => {
+    return () => disconnect()
+  }, [disconnect])
 
   return (
     <div className={`flex flex-col ${className}`}>

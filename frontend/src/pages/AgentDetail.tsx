@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Terminal as TerminalIcon, Copy, Send, FileText } from 'lucide-react'
-import { agentsApi, serversApi, tasksApi, type Task } from '../lib/api'
+import { agentsApi, serversApi, tasksApi, type TaskSummary } from '../lib/api'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useI18n } from '../hooks/useI18n'
 import Terminal from '../components/Terminal'
 import TaskLogViewer from '../components/TaskLogViewer'
@@ -18,12 +19,14 @@ export default function AgentDetail() {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<TabType>(() => {
     const tab = searchParams.get('tab')
-    return (tab === 'terminal' || tab === 'tasks' || tab === 'provision') ? tab : 'terminal'
+    return (tab === 'terminal' || tab === 'tasks' || tab === 'provision') ? tab : 'tasks'
   })
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [taskInput, setTaskInput] = useState('')
   const [copyToast, setCopyToast] = useState(false)
-  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(() => searchParams.get('task'))
+  const [taskPage, setTaskPage] = useState(1)
+  const taskPerPage = 20
 
   const { data: agent, isLoading, refetch: refetchAgent } = useQuery({
     queryKey: ['agents', id],
@@ -40,12 +43,15 @@ export default function AgentDetail() {
   }, [agent?.status])
 
   const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
-  const { data: tasks = [] } = useQuery({
-    queryKey: ['tasks', id],
-    queryFn: () => tasksApi.list(id!),
+  const { data: tasksData } = useQuery({
+    queryKey: ['tasks', id, taskPage],
+    queryFn: () => tasksApi.list(id!, taskPage, taskPerPage),
     enabled: !!id,
     refetchInterval: 3000,
   })
+  const tasks = tasksData?.items ?? []
+  const totalTasks = tasksData?.total ?? 0
+  const totalPages = Math.ceil(totalTasks / taskPerPage)
 
   const startMutation = useMutation({ mutationFn: () => agentsApi.start(id!), onSuccess: () => qc.invalidateQueries({ queryKey: ['agents', id] }) })
   const stopMutation = useMutation({ mutationFn: () => agentsApi.stop(id!), onSuccess: () => qc.invalidateQueries({ queryKey: ['agents', id] }) })
@@ -55,10 +61,10 @@ export default function AgentDetail() {
   const createTaskMutation = useMutation({
     mutationFn: (description: string) => tasksApi.create(id!, description),
     onSuccess: (task) => {
+      setTaskPage(1)
       qc.invalidateQueries({ queryKey: ['tasks', id] })
       setTaskInput('')
       setShowTaskModal(false)
-      // Show task log viewer for the new task
       setExpandedTaskId(task.id)
       setActiveTab('tasks')
     },
@@ -183,13 +189,13 @@ export default function AgentDetail() {
       {/* Tabs */}
       <div className="border-b border-gray-100 dark:border-gray-800 px-8">
         <div className="flex gap-1">
-          {(['terminal', 'tasks', 'provision'] as TabType[]).map(tab => (
+          {(['tasks', 'terminal', 'provision'] as TabType[]).map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)}
               className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === tab ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
             >
               {tabLabels[tab]}
-              {tab === 'tasks' && tasks.length > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">{tasks.length}</span>
+              {tab === 'tasks' && totalTasks > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">{totalTasks}</span>
               )}
             </button>
           ))}
@@ -206,21 +212,46 @@ export default function AgentDetail() {
                 <p className="text-gray-500">{t.agentDetail.noTasks}</p>
                 {canDispatchTask && <p className="text-gray-400 dark:text-gray-600 text-sm mt-1">{t.agentDetail.noTasksHint}</p>}
               </div>
-            ) : tasks.map(task => (
-              <div key={task.id}>
-                <TaskCard
-                  task={task}
-                  t={t}
-                  expanded={expandedTaskId === task.id}
-                  onToggle={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
-                />
-                {expandedTaskId === task.id && (
-                  <div className="mt-2 ml-4">
-                    <TaskLogViewer taskId={task.id} />
+            ) : (
+              <>
+                {tasks.map(task => (
+                  <div key={task.id}>
+                    <TaskCard
+                      task={task}
+                      t={t}
+                      expanded={expandedTaskId === task.id}
+                      onToggle={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
+                    />
+                    {expandedTaskId === task.id && (
+                      <div className="mt-2 ml-4">
+                        <TaskLogViewer taskId={task.id} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 pt-4">
+                    <button
+                      onClick={() => setTaskPage(p => Math.max(1, p - 1))}
+                      disabled={taskPage <= 1}
+                      className="btn-secondary btn-sm flex items-center gap-1"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className="text-sm text-gray-500">
+                      {taskPage} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setTaskPage(p => Math.min(totalPages, p + 1))}
+                      disabled={taskPage >= totalPages}
+                      className="btn-secondary btn-sm flex items-center gap-1"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
                   </div>
                 )}
-              </div>
-            ))}
+              </>
+            )}
           </div>
         )}
         {activeTab === 'provision' && (
@@ -340,7 +371,7 @@ function ProvisionHistory({ agent, t }: {
 }
 
 function TaskCard({ task, t, expanded, onToggle }: {
-  task: Task
+  task: TaskSummary
   t: ReturnType<typeof useI18n>['t']
   expanded: boolean
   onToggle: () => void
@@ -355,6 +386,9 @@ function TaskCard({ task, t, expanded, onToggle }: {
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-700 dark:text-gray-200 break-words">{task.description}</p>
           <p className="text-xs text-gray-500 mt-1">{new Date(task.created_at).toLocaleString()}</p>
+          {task.task_dir && (
+            <p className="text-xs text-gray-400 mt-0.5 font-mono">{task.task_dir}</p>
+          )}
           {task.thread_id && (
             <p className="text-xs text-gray-400 mt-0.5 font-mono">thread: {task.thread_id}</p>
           )}

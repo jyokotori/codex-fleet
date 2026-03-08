@@ -5,22 +5,26 @@ interface UseWebSocketOptions {
   onBinaryMessage?: (data: Uint8Array) => void
   onOpen?: () => void
   onClose?: () => void
-  reconnectDelay?: number
-  maxReconnects?: number
 }
 
 export function useWebSocket(url: string | null, options: UseWebSocketOptions = {}) {
-  const { onMessage, onBinaryMessage, onOpen, onClose, reconnectDelay = 3000, maxReconnects = 5 } = options
   const wsRef = useRef<WebSocket | null>(null)
-  const reconnectCount = useRef(0)
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const manuallyDisconnected = useRef(false)
   const [isConnected, setIsConnected] = useState(false)
+
+  // Store callbacks in refs so connect() doesn't depend on them
+  const onMessageRef = useRef(options.onMessage)
+  const onBinaryMessageRef = useRef(options.onBinaryMessage)
+  const onOpenRef = useRef(options.onOpen)
+  const onCloseRef = useRef(options.onClose)
+
+  onMessageRef.current = options.onMessage
+  onBinaryMessageRef.current = options.onBinaryMessage
+  onOpenRef.current = options.onOpen
+  onCloseRef.current = options.onClose
 
   const connect = useCallback(() => {
     if (!url) return
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
-    manuallyDisconnected.current = false
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
 
     const token = localStorage.getItem('token')
     const wsUrl = url.startsWith('ws') ? url : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${url}`
@@ -32,37 +36,29 @@ export function useWebSocket(url: string | null, options: UseWebSocketOptions = 
 
     ws.onopen = () => {
       setIsConnected(true)
-      reconnectCount.current = 0
-      onOpen?.()
+      onOpenRef.current?.()
     }
 
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
-        onBinaryMessage?.(new Uint8Array(event.data))
+        onBinaryMessageRef.current?.(new Uint8Array(event.data))
       } else {
-        onMessage?.(typeof event.data === 'string' ? event.data : '')
+        onMessageRef.current?.(typeof event.data === 'string' ? event.data : '')
       }
     }
 
     ws.onclose = () => {
       setIsConnected(false)
-      onClose?.()
-      if (!manuallyDisconnected.current && reconnectCount.current < maxReconnects) {
-        reconnectCount.current++
-        reconnectTimer.current = setTimeout(connect, reconnectDelay)
-      }
+      onCloseRef.current?.()
+      // No auto-reconnect — caller must explicitly reconnect if needed
     }
 
     ws.onerror = () => {
       ws.close()
     }
-  }, [url, onMessage, onBinaryMessage, onOpen, onClose, reconnectDelay, maxReconnects])
+  }, [url])
 
   const disconnect = useCallback(() => {
-    manuallyDisconnected.current = true
-    if (reconnectTimer.current) {
-      clearTimeout(reconnectTimer.current)
-    }
     wsRef.current?.close()
     wsRef.current = null
   }, [])
