@@ -73,26 +73,9 @@ pub struct Agent {
     pub workdir: String,
     pub use_docker: bool,
     pub status: String,
-    pub runtime_action: Option<String>,
-    pub docker_runtime_status: Option<String>,
-    pub docker_health_status: Option<String>,
     pub provision_log: String,
     pub provision_steps: serde_json::Value,
     pub created_at: String,
-}
-
-#[derive(Clone, Default)]
-struct DockerRuntimeProbe {
-    runtime_status: Option<String>,
-    health_status: Option<String>,
-    action: Option<String>,
-}
-
-#[derive(Clone)]
-struct DockerProbeTarget {
-    agent_id: String,
-    agent_status: String,
-    container_name: String,
 }
 
 #[derive(Deserialize)]
@@ -152,67 +135,73 @@ fn ev_provision_done(status: &str) -> Value {
     json!({"t":"provision_done","status":status,"ts":unix_now()})
 }
 
-fn fallback_docker_action(agent_status: &str) -> Option<String> {
-    if agent_status == "provisioning" {
-        None
-    } else if agent_status == "stopped" {
-        Some("start".into())
-    } else {
-        Some("restart".into())
-    }
+const DOCKER_UNAVAILABLE_MARKER: &str = "__docker_unavailable__";
+
+#[derive(Clone)]
+struct DockerSyncTarget {
+    agent_id: String,
+    container_name: String,
 }
 
-fn docker_runtime_action(
-    runtime_status: &str,
-    health_status: Option<&str>,
-    agent_status: &str,
-) -> Option<String> {
-    if agent_status == "provisioning" {
-        return None;
+#[derive(Clone)]
+struct DockerStatusProbe {
+    runtime_status: String,
+    health_status: Option<String>,
+}
+
+fn agent_status_from_docker_probe(probe: &DockerStatusProbe) -> Option<&'static str> {
+    if probe.health_status.as_deref() == Some("unhealthy") {
+        return Some("error");
     }
 
-    if health_status == Some("unhealthy") {
-        return Some("restart".into());
-    }
-
-    let action = match runtime_status {
-        "running" => "pause",
-        "created" | "exited" => "start",
-        "paused" | "restarting" | "dead" | "removing" | "missing" | "unknown" => "restart",
-        _ => {
-            if agent_status == "stopped" {
-                "start"
-            } else {
-                "restart"
-            }
+    match probe.runtime_status.as_str() {
+        "running" => Some("running"),
+        "created" | "exited" | "paused" | "restarting" | "removing" | "dead" | "missing" => {
+            Some("stopped")
         }
-    };
-
-    Some(action.into())
-}
-
-fn fallback_docker_probe(agent_status: &str) -> DockerRuntimeProbe {
-    DockerRuntimeProbe {
-        runtime_status: Some("unknown".into()),
-        health_status: None,
-        action: fallback_docker_action(agent_status),
+        _ => None,
     }
 }
 
-fn parse_docker_runtime_output(
-    output: &str,
-    targets: &[DockerProbeTarget],
-) -> HashMap<String, DockerRuntimeProbe> {
-    let target_status_by_container = targets
+fn docker_status_probe_command(container_names: &[String]) -> String {
+    let names = container_names
         .iter()
-        .map(|target| (target.container_name.clone(), target.agent_status.as_str()))
-        .collect::<HashMap<_, _>>();
+        .map(|name| shell_quote(name))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let format_template = shell_quote(
+        "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+    );
 
+    format!(
+        "if ! command -v docker >/dev/null 2>&1 || ! docker ps >/dev/null 2>&1; then \
+            echo '{marker}'; \
+         else \
+            for name in {names}; do \
+                if out=$(docker inspect --format {template} \"$name\" 2>/dev/null); then \
+                    printf '%s|%s\\n' \"$name\" \"$out\"; \
+                else \
+                    printf '%s|missing|none\\n' \"$name\"; \
+                fi; \
+            done; \
+         fi",
+        marker = DOCKER_UNAVAILABLE_MARKER,
+        names = names,
+        template = format_template,
+    )
+}
+
+fn parse_docker_status_probes(output: &str) -> Option<HashMap<String, DockerStatusProbe>> {
     let mut probes = HashMap::new();
+
     for line in output.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
+        }
+
+        if trimmed == DOCKER_UNAVAILABLE_MARKER {
+            return None;
         }
 
         let mut parts = trimmed.splitn(3, '|');
@@ -227,56 +216,111 @@ fn parse_docker_runtime_output(
             "" | "none" | "null" => None,
             value => Some(value.to_string()),
         };
-        let agent_status = target_status_by_container
-            .get(container_name)
-            .copied()
-            .unwrap_or("running");
 
         probes.insert(
             container_name.to_string(),
-            DockerRuntimeProbe {
-                runtime_status: Some(runtime_status.to_string()),
-                health_status: health_status.clone(),
-                action: docker_runtime_action(
-                    runtime_status,
-                    health_status.as_deref(),
-                    agent_status,
-                ),
+            DockerStatusProbe {
+                runtime_status: runtime_status.to_string(),
+                health_status,
             },
         );
     }
 
-    probes
+    Some(probes)
 }
 
-async fn inspect_docker_runtime(
+async fn inspect_docker_statuses(
     executor: &Executor,
-    targets: &[DockerProbeTarget],
-) -> anyhow::Result<HashMap<String, DockerRuntimeProbe>> {
-    if targets.is_empty() {
-        return Ok(HashMap::new());
+    container_names: &[String],
+) -> anyhow::Result<Option<HashMap<String, DockerStatusProbe>>> {
+    if container_names.is_empty() {
+        return Ok(Some(HashMap::new()));
     }
 
-    let names = targets
-        .iter()
-        .map(|target| shell_quote(&target.container_name))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let inspect_template =
-        shell_quote("{{.Name}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}");
-    let cmd = format!(
-        "for name in {names}; do if out=$(docker inspect --format {template} \"$name\" 2>/dev/null); then printf '%s\\n' \"$out\"; else printf '%s|missing|unknown\\n' \"$name\"; fi; done",
-        names = names,
-        template = inspect_template,
-    );
-    let output = executor.execute(&cmd).await?;
+    let output = executor
+        .execute(&docker_status_probe_command(container_names))
+        .await?;
 
-    Ok(parse_docker_runtime_output(&output, targets))
+    Ok(parse_docker_status_probes(&output))
 }
 
-async fn attach_runtime_actions(state: &AppContext, agents: &mut [Agent]) {
-    let mut targets_by_server: HashMap<String, Vec<DockerProbeTarget>> = HashMap::new();
-    for agent in agents.iter() {
+async fn connect_executor_for_server(state: &AppContext, server_id: &str) -> Result<Executor> {
+    let server = sqlx::query(
+        "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
+    )
+    .bind(server_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Server {} not found", server_id)))?;
+
+    let crypto = Crypto::new(&state.config.master_key);
+    let password_encrypted: Option<String> = server.get("password_encrypted");
+    let password = password_encrypted
+        .as_deref()
+        .and_then(|value| crypto.decrypt(value).ok());
+    let ip: String = server.get("ip");
+    let port: i32 = server.get("port");
+    let username: String = server.get("username");
+    let auth_type: String = server.get("auth_type");
+    let ssh_key_content: Option<String> = server.get("ssh_key_content");
+    let client = SshClientPool::connect(
+        &ip,
+        port as u16,
+        &username,
+        &auth_type,
+        password.as_deref(),
+        ssh_key_content.as_deref(),
+    )
+    .await
+    .map_err(|e| AppError::Ssh(e.to_string()))?;
+
+    Ok(Executor::Ssh(client))
+}
+
+async fn sync_docker_agent_status_with_executor(
+    state: &AppContext,
+    agent_id: &str,
+    executor: &Executor,
+    agent_info: &AgentRow,
+) -> Result<String> {
+    if !agent_info.use_docker || agent_info.status == "provisioning" {
+        return Ok(agent_info.status.clone());
+    }
+
+    let Some(container_name) = agent_info
+        .docker_container_name
+        .as_ref()
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(agent_info.status.clone());
+    };
+
+    let next_status = inspect_docker_statuses(executor, &[container_name.clone()])
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .and_then(|probes| {
+            probes
+                .get(container_name)
+                .and_then(agent_status_from_docker_probe)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| agent_info.status.clone());
+
+    if next_status != agent_info.status {
+        sqlx::query("UPDATE agents SET status = $1 WHERE id = $2")
+            .bind(&next_status)
+            .bind(agent_id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    Ok(next_status)
+}
+
+async fn sync_docker_statuses(state: &AppContext, agents: &mut [Agent]) {
+    let mut targets_by_server: HashMap<String, Vec<(usize, DockerSyncTarget)>> = HashMap::new();
+
+    for (index, agent) in agents.iter().enumerate() {
         if !agent.use_docker || agent.status == "provisioning" {
             continue;
         }
@@ -289,90 +333,76 @@ async fn attach_runtime_actions(state: &AppContext, agents: &mut [Agent]) {
             targets_by_server
                 .entry(agent.server_id.clone())
                 .or_default()
-                .push(DockerProbeTarget {
-                    agent_id: agent.id.clone(),
-                    agent_status: agent.status.clone(),
-                    container_name: container_name.clone(),
-                });
+                .push((
+                    index,
+                    DockerSyncTarget {
+                        agent_id: agent.id.clone(),
+                        container_name: container_name.clone(),
+                    },
+                ));
         }
     }
 
-    let crypto = Crypto::new(&state.config.master_key);
-    let mut probes_by_agent = HashMap::new();
+    let mut updates = Vec::new();
 
     for (server_id, targets) in targets_by_server {
-        let server = match sqlx::query(
-            "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
-        )
-        .bind(&server_id)
-        .fetch_optional(&state.db)
-        .await
-        {
-            Ok(server) => server,
-            Err(_) => None,
-        };
-
-        let Some(server) = server else {
-            for target in targets {
-                probes_by_agent.insert(
-                    target.agent_id.clone(),
-                    fallback_docker_probe(&target.agent_status),
-                );
+        let executor = match connect_executor_for_server(state, &server_id).await {
+            Ok(executor) => executor,
+            Err(err) => {
+                tracing::warn!("Failed to sync docker status for server {}: {}", server_id, err);
+                continue;
             }
+        };
+
+        let container_names = targets
+            .iter()
+            .map(|(_, target)| target.container_name.clone())
+            .collect::<Vec<_>>();
+
+        let Some(probes) = (match inspect_docker_statuses(&executor, &container_names).await {
+            Ok(result) => result,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to inspect docker status for server {}: {}",
+                    server_id,
+                    err
+                );
+                continue;
+            }
+        }) else {
             continue;
         };
 
-        let password_encrypted = server
-            .try_get::<Option<String>, _>("password_encrypted")
-            .ok()
-            .flatten();
-        let password = password_encrypted
-            .as_deref()
-            .and_then(|value| crypto.decrypt(value).ok());
-        let ssh_key_content = server
-            .try_get::<Option<String>, _>("ssh_key_content")
-            .ok()
-            .flatten();
-        let client = SshClientPool::connect(
-            &server.try_get::<String, _>("ip").unwrap_or_default(),
-            server.try_get::<i32, _>("port").unwrap_or_default() as u16,
-            &server.try_get::<String, _>("username").unwrap_or_default(),
-            &server
-                .try_get::<String, _>("auth_type")
-                .unwrap_or_else(|_| "passwordless".into()),
-            password.as_deref(),
-            ssh_key_content.as_deref(),
-        )
-        .await;
+        for (index, target) in targets {
+            let Some(probe) = probes.get(&target.container_name) else {
+                continue;
+            };
+            let Some(next_status) = agent_status_from_docker_probe(probe) else {
+                continue;
+            };
 
-        let probes_by_container = match client {
-            Ok(client) => inspect_docker_runtime(&Executor::Ssh(client), &targets)
-                .await
-                .unwrap_or_default(),
-            Err(_) => HashMap::new(),
-        };
-
-        for target in targets {
-            let probe = probes_by_container
-                .get(&target.container_name)
-                .cloned()
-                .unwrap_or_else(|| fallback_docker_probe(&target.agent_status));
-            probes_by_agent.insert(target.agent_id.clone(), probe);
+            if agents[index].status != next_status {
+                agents[index].status = next_status.to_string();
+                updates.push((target.agent_id.clone(), next_status.to_string()));
+            }
         }
     }
 
-    for agent in agents.iter_mut() {
-        if !agent.use_docker || agent.status == "provisioning" {
-            continue;
+    for (agent_id, status) in updates {
+        if let Err(err) = sqlx::query("UPDATE agents SET status = $1 WHERE id = $2")
+            .bind(&status)
+            .bind(&agent_id)
+            .execute(&state.db)
+            .await
+        {
+            tracing::warn!("Failed to persist synced status for agent {}: {}", agent_id, err);
         }
-
-        let probe = probes_by_agent
-            .remove(&agent.id)
-            .unwrap_or_else(|| fallback_docker_probe(&agent.status));
-        agent.runtime_action = probe.action;
-        agent.docker_runtime_status = probe.runtime_status;
-        agent.docker_health_status = probe.health_status;
     }
+}
+
+pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<String> {
+    let (executor, agent_info) = get_executor(state, agent_id).await?;
+    sync_docker_agent_status_with_executor(state, agent_id, &executor, &agent_info).await
 }
 
 fn docker_container_name(agent_info: &AgentRow) -> Result<&str> {
@@ -470,16 +500,13 @@ pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Age
             workdir: r.workdir,
             use_docker: r.use_docker,
             status: r.status,
-            runtime_action: None,
-            docker_runtime_status: None,
-            docker_health_status: None,
             provision_log: r.provision_log,
             provision_steps: r.provision_steps,
             created_at: r.created_at.to_string(),
         })
         .collect::<Vec<_>>();
 
-    attach_runtime_actions(&state, &mut agents).await;
+    sync_docker_statuses(&state, &mut agents).await;
 
     Ok(Json(agents))
 }
@@ -670,9 +697,6 @@ pub async fn create_agent(
         workdir,
         use_docker,
         status: "provisioning".into(),
-        runtime_action: None,
-        docker_runtime_status: None,
-        docker_health_status: None,
         provision_log: String::new(),
         provision_steps: serde_json::json!({}),
         created_at: now.to_string(),
@@ -1481,9 +1505,6 @@ pub async fn update_agent(
         workdir: updated.workdir,
         use_docker: updated.use_docker,
         status: updated.status,
-        runtime_action: None,
-        docker_runtime_status: None,
-        docker_health_status: None,
         provision_log: updated.provision_log,
         provision_steps: updated.provision_steps,
         created_at: updated.created_at.to_string(),
@@ -1533,6 +1554,15 @@ pub async fn start_agent(
         let _ = executor
             .execute(&format!("docker start {}", container_name))
             .await;
+
+        let synced_status =
+            sync_docker_agent_status_with_executor(&state, &id, &executor, &agent_info).await?;
+        if synced_status != "running" {
+            return Err(AppError::Conflict(format!(
+                "Docker agent did not start successfully (current status: {})",
+                synced_status
+            )));
+        }
     }
 
     ensure_tmux_session(&executor, &agent_info).await?;
@@ -1558,6 +1588,14 @@ pub async fn stop_agent(
             .execute(&format!("docker stop {}", container_name))
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        let synced_status =
+            sync_docker_agent_status_with_executor(&state, &id, &executor, &agent_info).await?;
+        if synced_status == "running" {
+            return Err(AppError::Conflict(
+                "Docker agent is still running after stop".into(),
+            ));
+        }
     } else {
         let tmux_session = agent_info.tmux_session;
         let _ = executor
@@ -1594,6 +1632,16 @@ pub async fn restart_agent(
         .execute(&format!("docker restart {}", container_name))
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let synced_status =
+        sync_docker_agent_status_with_executor(&state, &id, &executor, &agent_info).await?;
+    if synced_status != "running" {
+        return Err(AppError::Conflict(format!(
+            "Docker agent did not restart successfully (current status: {})",
+            synced_status
+        )));
+    }
+
     ensure_tmux_session(&executor, &agent_info).await?;
 
     sqlx::query!("UPDATE agents SET status = 'running' WHERE id = $1", id)
@@ -1650,41 +1698,61 @@ pub async fn terminal_command(
     State(state): State<AppContext>,
     Path(id): Path<String>,
 ) -> Result<Json<TerminalCommandResponse>> {
-    let agent = sqlx::query!(
-        "SELECT server_id, docker_container_name, tmux_session, use_docker FROM agents WHERE id = $1",
-        id
+    let agent = sqlx::query(
+        "SELECT server_id, docker_container_name, workdir, use_docker FROM agents WHERE id = $1",
     )
+    .bind(&id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
 
-    let session = agent.tmux_session;
-    let use_docker = agent.use_docker;
+    let server_id: String = agent.get("server_id");
+    let docker_container_name: Option<String> = agent.get("docker_container_name");
+    let workdir: String = agent.get("workdir");
+    let use_docker: bool = agent.get("use_docker");
 
-    let (local_cmd, ssh_attach_cmd) = if use_docker {
-        let container = agent.docker_container_name.unwrap_or_default();
+    let (local_cmd, ssh_shell_cmd) = if use_docker {
+        let container = docker_container_name.unwrap_or_default();
         (
-            format!("docker exec -it {} tmux attach -t {}", container, session),
-            format!("docker exec -it {} tmux attach -t {}", container, session),
+            format!(
+                "docker exec -it {} bash -lc {}",
+                container,
+                shell_quote("cd /workspace && exec bash")
+            ),
+            format!(
+                "docker exec -it {} bash -lc {}",
+                container,
+                shell_quote("cd /workspace && exec bash")
+            ),
         )
     } else {
         (
-            format!("tmux attach -t {}", session),
-            format!("tmux attach -t {}", session),
+            format!(
+                "cd {} && exec \"${{SHELL:-bash}}\" -l",
+                shell_quote(&workdir)
+            ),
+            format!(
+                "cd {} && exec \"${{SHELL:-bash}}\" -l",
+                shell_quote(&workdir)
+            ),
         )
     };
 
     let ssh_cmd = if let Ok(server) = sqlx::query!(
         "SELECT ip, port, username FROM servers WHERE id = $1",
-        agent.server_id
+        server_id
     )
     .fetch_one(&state.db)
     .await
     {
-        Some(format!(
-            "ssh {}@{} -p {} -t \"{}\"",
-            server.username, server.ip, server.port, ssh_attach_cmd
-        ))
+        if use_docker {
+            Some(format!(
+                "ssh {}@{} -p {} -t \"{}\"",
+                server.username, server.ip, server.port, ssh_shell_cmd
+            ))
+        } else {
+            Some(format!("ssh {}@{} -p {}", server.username, server.ip, server.port))
+        }
     } else {
         None
     };
@@ -1698,6 +1766,7 @@ pub struct AgentRow {
     pub cli_type: String,
     pub workdir: String,
     pub use_docker: bool,
+    pub status: String,
 }
 
 pub struct ServerCredentials {
@@ -1714,29 +1783,32 @@ pub async fn get_server_credentials(
     state: &AppContext,
     agent_id: &str,
 ) -> Result<(ServerCredentials, AgentRow)> {
-    let agent = sqlx::query!(
-        "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = $1",
-        agent_id
+    let agent = sqlx::query(
+        "SELECT server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker, status FROM agents WHERE id = $1",
     )
+    .bind(agent_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", agent_id)))?;
 
+    let server_id: String = agent.get("server_id");
+
     let agent_row = AgentRow {
-        tmux_session: agent.tmux_session,
-        docker_container_name: agent.docker_container_name,
-        cli_type: agent.cli_type,
-        workdir: agent.workdir,
-        use_docker: agent.use_docker,
+        tmux_session: agent.get("tmux_session"),
+        docker_container_name: agent.get("docker_container_name"),
+        cli_type: agent.get("cli_type"),
+        workdir: agent.get("workdir"),
+        use_docker: agent.get("use_docker"),
+        status: agent.get("status"),
     };
 
     let server = sqlx::query!(
         "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
-        agent.server_id
+        server_id
     )
     .fetch_optional(&state.db)
     .await?
-    .ok_or_else(|| AppError::NotFound(format!("Server {} not found", agent.server_id)))?;
+    .ok_or_else(|| AppError::NotFound(format!("Server {} not found", server_id)))?;
 
     let crypto = Crypto::new(&state.config.master_key);
     let password = server
@@ -1759,29 +1831,32 @@ pub async fn get_server_credentials(
 
 /// Get an Executor (SSH) and agent row info for an agent.
 pub async fn get_executor(state: &AppContext, agent_id: &str) -> Result<(Executor, AgentRow)> {
-    let agent = sqlx::query!(
-        "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = $1",
-        agent_id
+    let agent = sqlx::query(
+        "SELECT server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker, status FROM agents WHERE id = $1",
     )
+    .bind(agent_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", agent_id)))?;
 
+    let server_id: String = agent.get("server_id");
+
     let agent_row = AgentRow {
-        tmux_session: agent.tmux_session,
-        docker_container_name: agent.docker_container_name,
-        cli_type: agent.cli_type,
-        workdir: agent.workdir,
-        use_docker: agent.use_docker,
+        tmux_session: agent.get("tmux_session"),
+        docker_container_name: agent.get("docker_container_name"),
+        cli_type: agent.get("cli_type"),
+        workdir: agent.get("workdir"),
+        use_docker: agent.get("use_docker"),
+        status: agent.get("status"),
     };
 
     let server = sqlx::query!(
         "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
-        agent.server_id
+        server_id
     )
     .fetch_optional(&state.db)
     .await?
-    .ok_or_else(|| AppError::NotFound(format!("Server {} not found", agent.server_id)))?;
+    .ok_or_else(|| AppError::NotFound(format!("Server {} not found", server_id)))?;
 
     let crypto = Crypto::new(&state.config.master_key);
     let password = server

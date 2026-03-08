@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Terminal as TerminalIcon, Copy, Send, FileText } from 'lucide-react'
+import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Copy, Send, FileText } from 'lucide-react'
 import { agentsApi, serversApi, tasksApi, type TaskSummary } from '../lib/api'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useI18n } from '../hooks/useI18n'
@@ -149,27 +149,6 @@ export default function AgentDetail() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Copy terminal command */}
-            <div className="relative">
-              <button
-                onClick={handleCopyTerminalCommand}
-                className="btn-secondary btn-sm flex items-center gap-1"
-                title={t.agents.copyTerminalCommand}
-              >
-                <Copy size={13} />
-                {copyToast ? t.agents.copied : t.agents.copyCommand}
-              </button>
-            </div>
-
-            {/* Open terminal (placeholder) */}
-            <button
-              className="btn-secondary btn-sm flex items-center gap-1"
-              title={t.agents.openTerminal}
-              onClick={handleCopyTerminalCommand}
-            >
-              <TerminalIcon size={13} />
-            </button>
-
             {/* Dispatch task */}
             {canDispatchTask(agent) && (
               <button
@@ -180,6 +159,17 @@ export default function AgentDetail() {
                 {t.agents.dispatchTask}
               </button>
             )}
+
+            <div className="relative">
+              <button
+                onClick={handleCopyTerminalCommand}
+                className="btn-secondary btn-sm flex items-center gap-1"
+                title={t.agents.copyTerminalCommand}
+              >
+                <Copy size={13} />
+                {copyToast ? t.agents.copied : t.agents.copyCommand}
+              </button>
+            </div>
 
             {runtimeAction && (
               <button

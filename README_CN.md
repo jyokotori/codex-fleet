@@ -68,15 +68,18 @@ cd frontend && npm install && npm run dev
 - **Codex Config** — 绑定一组 `config.toml` + `auth.json`，让 Agent 启动就有认证信息和配置
 - **AGENTS.md** — 把共享的项目说明文件注入 Agent 工作区
 - **Docker 配置** — 自定义端口映射、环境变量、目录挂载、初始化脚本
-- **运行时控制** — Docker Agent 在界面里只显示一个随容器状态变化的动作按钮（`暂停`、`启动` 或 `重启`）；非 Docker Agent 不提供运行时启停按钮
+- **运行时控制** — Docker Agent 在界面里只显示一个随容器状态变化的动作按钮（`停止`、`启动` 或 `重启`）；非 Docker Agent 不提供运行时启停按钮
+- **状态同步** — 前端仍然只读取数据库中的 Agent 状态（`provisioning`、`running`、`stopped`、`error`），但后端会把 Docker 实际运行状态同步回这个字段
 - **删除确认** — 删除任意 Agent 前都需要显式确认；实际会删除 `~/.codex-fleet/{agent_id}` 和数据库记录，Docker Agent 还会额外删除容器
 
 ### 任务下发
 打开一个 Agent 详情页，输入任务，点发送，任务直接进入 Agent 的 tmux 会话。同一页面可以看到所有历史任务和状态。
+Docker Agent 只有在同步后的状态为 `running` 时允许派发任务；非 Docker Agent 在 `running` 或 `stopped` 时都允许派发任务。
 
 ### 实时日志 & 终端
 - **日志标签** — 实时显示 Agent tmux 会话的输出，自动滚动
 - **终端标签** — 完整的交互式终端，可以直接在运行环境里敲命令（容器或宿主机）
+- **复制命令** — 非 Docker Agent 复制直连宿主机的 SSH 命令；Docker Agent 复制 SSH 后进入容器 shell 的命令
 
 ### 配置管理
 把可复用的配置统一存储，随时挂到任意 Agent 上：

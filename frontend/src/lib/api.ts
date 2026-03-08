@@ -303,9 +303,6 @@ export interface Agent {
   workdir: string
   use_docker: boolean
   status: string
-  runtime_action?: 'start' | 'pause' | 'restart'
-  docker_runtime_status?: string
-  docker_health_status?: string
   provision_log: string
   provision_steps: Record<string, string>
   created_at: string

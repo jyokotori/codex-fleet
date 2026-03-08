@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::api::agents::get_server_credentials;
+use crate::api::agents::{get_server_credentials, sync_agent_status};
 use crate::ssh::terminal::open_exec_channel;
 use shared_kernel::{AppContext, AppError, Result};
 
@@ -87,7 +87,21 @@ pub async fn create_task(
         ));
     }
 
+    let _ = sync_agent_status(&state, &agent_id).await?;
     let (creds, agent_info) = get_server_credentials(&state, &agent_id).await?;
+
+    if agent_info.status == "provisioning" || agent_info.status == "error" {
+        return Err(AppError::Conflict(format!(
+            "Agent is {} and cannot accept tasks",
+            agent_info.status
+        )));
+    }
+
+    if agent_info.use_docker && agent_info.status != "running" {
+        return Err(AppError::Conflict(
+            "Docker agent must be running before dispatching tasks".into(),
+        ));
+    }
 
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
