@@ -16,9 +16,10 @@ interface TerminalProps {
   agentId: string
   className?: string
   initialCommand?: string
+  resumeThreadId?: string
 }
 
-export default function Terminal({ agentId, className = '', initialCommand }: TerminalProps) {
+export default function Terminal({ agentId, className = '', initialCommand, resumeThreadId }: TerminalProps) {
   const { t } = useI18n()
   const termRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
@@ -27,7 +28,9 @@ export default function Terminal({ agentId, className = '', initialCommand }: Te
   const sendBinaryRef = useRef<(data: Uint8Array) => void>(() => {})
   const wasConnectedRef = useRef(false)
 
-  const wsUrl = `/ws/agents/${agentId}/terminal`
+  const wsUrl = resumeThreadId
+    ? `/ws/agents/${agentId}/terminal?resume_thread_id=${encodeURIComponent(resumeThreadId)}`
+    : `/ws/agents/${agentId}/terminal`
 
   const { isConnected, send, sendBinary, disconnect } = useWebSocket(wsUrl, {
     onBinaryMessage: (data) => xtermRef.current?.write(data),
@@ -98,6 +101,12 @@ export default function Terminal({ agentId, className = '', initialCommand }: Te
     }
     globalThis.addEventListener('resize', handleResize)
 
+    // Re-fit when the container becomes visible (e.g. tab switch from hidden)
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit()
+    })
+    resizeObserver.observe(termRef.current)
+
     // Watch for dark/light mode changes
     const mqDark = globalThis.matchMedia?.('(prefers-color-scheme: dark)')
     const handleThemeChange = () => {
@@ -110,6 +119,7 @@ export default function Terminal({ agentId, className = '', initialCommand }: Te
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
 
     return () => {
+      resizeObserver.disconnect()
       globalThis.removeEventListener('resize', handleResize)
       mqDark?.removeEventListener('change', handleThemeChange)
       observer.disconnect()

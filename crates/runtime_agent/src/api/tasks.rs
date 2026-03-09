@@ -215,6 +215,7 @@ pub async fn dispatch_task_for_agent(
                     "agent_id": notif_agent_id,
                     "title": notif_title,
                     "status": status,
+                    "result_md": if result_md.is_empty() { None } else { Some(&result_md) },
                     "user_id": notif_user_id,
                     "username": notif_username,
                     "created_at": now.to_string(),

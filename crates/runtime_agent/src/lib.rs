@@ -39,6 +39,10 @@ pub fn router() -> Router<AppContext> {
             get(api::agents::resume_command),
         )
         .route(
+            "/api/agents/{id}/check-resume-process",
+            get(api::agents::check_resume_process),
+        )
+        .route(
             "/api/agents/{id}/clone",
             post(api::agents::clone_agent),
         )

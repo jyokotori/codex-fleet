@@ -1908,6 +1908,46 @@ pub async fn resume_command(
     Ok(Json(TerminalCommandResponse { local_cmd, ssh_cmd }))
 }
 
+#[derive(Serialize)]
+pub struct CheckResumeProcessResponse {
+    pub running: bool,
+    pub count: i32,
+}
+
+pub async fn check_resume_process(
+    State(state): State<AppContext>,
+    Path(id): Path<String>,
+    Query(params): Query<ResumeCommandQuery>,
+) -> Result<Json<CheckResumeProcessResponse>> {
+    let (executor, agent_info) = get_executor(&state, &id).await?;
+
+    let tid = &params.thread_id;
+    let pattern = format!(
+        "[c]odex resume {tid}|[c]laude resume {tid}|[g]emini resume {tid}|[o]pencode resume {tid}"
+    );
+
+    let cmd = if agent_info.use_docker {
+        let container = docker_container_name(&agent_info)?;
+        format!(
+            "docker exec {} pgrep -c -f '{}' 2>/dev/null || echo 0",
+            container, pattern
+        )
+    } else {
+        format!("pgrep -c -f '{}' 2>/dev/null || echo 0", pattern)
+    };
+
+    let output = executor
+        .execute(&cmd)
+        .await
+        .unwrap_or_else(|_| "0".to_string());
+    let count: i32 = output.trim().parse().unwrap_or(0);
+
+    Ok(Json(CheckResumeProcessResponse {
+        running: count > 0,
+        count,
+    }))
+}
+
 pub struct AgentRow {
     pub tmux_session: String,
     pub docker_container_name: Option<String>,

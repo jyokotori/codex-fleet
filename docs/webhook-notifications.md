@@ -52,6 +52,7 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
     "agent_id": "uuid",
     "title": "string",
     "status": "<status>",
+    "result_md": "string | null",
     "user_id": "uuid | null",
     "username": "string",
     "created_at": "timestamp",
@@ -70,6 +71,7 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
 
 - `event`: The status that triggered the notification.
 - `task`: Always present. Contains task metadata (excludes `task_log` for payload size).
+- `task.result_md`: The agent's result summary in Markdown format. Present when the agent writes a `result.md` file in the task directory upon completion; `null` otherwise.
 - `work_item`: Present only if the task is linked to a work item.
 
 ### Example Payload
@@ -82,6 +84,7 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
     "agent_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
     "title": "Implement login page",
     "status": "agent_completed",
+    "result_md": "## Summary\nImplemented login page with email/password form ...",
     "user_id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
     "username": "alice",
     "created_at": "2026-03-09 10:30:00 UTC",

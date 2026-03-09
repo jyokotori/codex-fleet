@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, Tag, X } from 'lucide-react'
@@ -28,6 +28,7 @@ export default function AgentDetail() {
     return (tab === 'terminal' || tab === 'tasks' || tab === 'provision') ? tab : 'tasks'
   })
   const [resumeTabs, setResumeTabs] = useState<ResumeTab[]>([])
+  const [terminalMounted, setTerminalMounted] = useState(() => searchParams.get('tab') === 'terminal')
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [taskTitleInput, setTaskTitleInput] = useState('')
   const [taskInput, setTaskInput] = useState('')
@@ -36,7 +37,30 @@ export default function AgentDetail() {
   const [taskPage, setTaskPage] = useState(1)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [selectedNotifIds, setSelectedNotifIds] = useState<string[]>([])
+  const [resumeConfirm, setResumeConfirm] = useState<{ threadId: string; command: string; title: string } | null>(null)
+  const [closeConfirm, setCloseConfirm] = useState<string | null>(null)
   const taskPerPage = 20
+  const hasResumeTabs = resumeTabs.length > 0
+  const resumeTabsRef = useRef(resumeTabs)
+  resumeTabsRef.current = resumeTabs
+  const [pendingNav, setPendingNav] = useState<string | null>(null)
+
+  // Warn on browser tab close / refresh when resume tabs are open
+  useEffect(() => {
+    if (!hasResumeTabs) return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    globalThis.addEventListener('beforeunload', handler)
+    return () => globalThis.removeEventListener('beforeunload', handler)
+  }, [hasResumeTabs])
+
+  // Guarded navigate: shows confirmation if resume tabs are open
+  function guardedNavigate(to: string) {
+    if (resumeTabsRef.current.length > 0) {
+      setPendingNav(to)
+    } else {
+      navigate(to)
+    }
+  }
 
   const { data: agent, isLoading, refetch: refetchAgent } = useQuery({
     queryKey: ['agents', id],
@@ -116,6 +140,7 @@ export default function AgentDetail() {
   function handleProvisionDone(status: string) {
     refetchAgent()
     if (status === 'stopped') {
+      setTerminalMounted(true)
       setActiveTab('terminal')
     }
   }
@@ -134,20 +159,44 @@ export default function AgentDetail() {
     { key: 'provision', label: t.provision?.title ?? 'Provision' },
   ]
 
-  function addResumeTab(threadId: string, command: string) {
+  async function handleResumeRequest(threadId: string, command: string, title: string) {
+    // Part 1: Reuse existing tab
     const existing = resumeTabs.find(rt => rt.id === threadId)
     if (existing) {
       setActiveTab(`resume-${threadId}`)
       return
     }
-    const shortId = threadId.length > 8 ? threadId.slice(-8) : threadId
-    setResumeTabs(prev => [...prev, { id: threadId, label: `Resume ${shortId}`, command }])
+    // Part 2: Check for running process, warn if found
+    try {
+      const { running } = await agentsApi.checkResumeProcess(id!, threadId)
+      if (running) {
+        setResumeConfirm({ threadId, command, title })
+        return
+      }
+    } catch (e) {
+      console.error('Failed to check resume process', e)
+    }
+    addResumeTab(threadId, command, title)
+  }
+
+  function addResumeTab(threadId: string, command: string, title: string) {
+    const label = title.length > 16 ? title.slice(0, 16) + '…' : title
+    setResumeTabs(prev => {
+      if (prev.find(rt => rt.id === threadId)) return prev
+      return [...prev, { id: threadId, label, command }]
+    })
     setActiveTab(`resume-${threadId}`)
   }
 
   function closeResumeTab(tabId: string) {
-    setResumeTabs(prev => prev.filter(rt => rt.id !== tabId))
-    if (activeTab === `resume-${tabId}`) setActiveTab('tasks')
+    setCloseConfirm(tabId)
+  }
+
+  function confirmCloseResumeTab() {
+    if (!closeConfirm) return
+    setResumeTabs(prev => prev.filter(rt => rt.id !== closeConfirm))
+    if (activeTab === `resume-${closeConfirm}`) setActiveTab('tasks')
+    setCloseConfirm(null)
   }
 
   const runtimeAction = getAgentRuntimeAction(agent)
@@ -163,7 +212,7 @@ export default function AgentDetail() {
       {/* Header */}
       <div className="border-b border-gray-100 dark:border-gray-800 px-8 py-5">
         <div className="flex items-center gap-4 mb-4">
-          <button onClick={() => navigate('/agents')} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
+          <button onClick={() => guardedNavigate('/agents')} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
             <ArrowLeft size={18} />
           </button>
           <div className="flex items-center gap-3 flex-1">
@@ -230,7 +279,7 @@ export default function AgentDetail() {
         <div className="flex gap-1">
           {fixedTabs.map((tab, idx) => (
             <React.Fragment key={tab.key}>
-              <button onClick={() => setActiveTab(tab.key)}
+              <button onClick={() => { setActiveTab(tab.key); if (tab.key === 'terminal') setTerminalMounted(true) }}
                 className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === tab.key ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
               >
                 {tab.label}
@@ -263,12 +312,18 @@ export default function AgentDetail() {
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-8">
-        {activeTab === 'terminal' && <Terminal agentId={id!} className="h-full" />}
+        {/* Terminals: stay mounted once activated, hidden when inactive to keep WS alive */}
+        {terminalMounted && (
+          <div className={activeTab === 'terminal' ? 'h-full' : 'hidden'}>
+            <Terminal agentId={id!} className="h-full" />
+          </div>
+        )}
         {resumeTabs.map(rt => (
-          activeTab === `resume-${rt.id}` && (
-            <Terminal key={`resume-${rt.id}`} agentId={id!} className="h-full" initialCommand={rt.command} />
-          )
+          <div key={`resume-${rt.id}`} className={activeTab === `resume-${rt.id}` ? 'h-full' : 'hidden'}>
+            <Terminal agentId={id!} className="h-full" initialCommand={rt.command} resumeThreadId={rt.id} />
+          </div>
         ))}
+
         {activeTab === 'tasks' && (
           <div className="space-y-3">
             {tasks.length === 0 ? (
@@ -292,7 +347,7 @@ export default function AgentDetail() {
                       onReject={() => {
                         if (task.work_item_id) reviewMutation.mutate({ workItemId: task.work_item_id, status: 'human_rejected' })
                       }}
-                      onOpenResumeTerminal={(threadId, cmd) => addResumeTab(threadId, cmd)}
+                      onOpenResumeTerminal={(threadId, cmd, title) => handleResumeRequest(threadId, cmd, title)}
                     />
                     {expandedTaskId === task.id && (
                       <div className="mt-2 ml-4">
@@ -402,6 +457,66 @@ export default function AgentDetail() {
         </div>
       )}
 
+      {/* Resume process warning dialog */}
+      {resumeConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl w-full max-w-md dark:bg-gray-900 dark:border-gray-700">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.resumeProcessRunning}</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-400">{t.agents.resumeProcessRunningDesc}</p>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setResumeConfirm(null)} className="btn-secondary">{t.common.cancel}</button>
+                <button
+                  onClick={() => {
+                    addResumeTab(resumeConfirm.threadId, resumeConfirm.command, resumeConfirm.title)
+                    setResumeConfirm(null)
+                  }}
+                  className="btn-primary"
+                >{t.agents.continueAnyway}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close resume tab confirmation dialog */}
+      {closeConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl w-full max-w-md dark:bg-gray-900 dark:border-gray-700">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.closeResumeTab}</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-400">{t.agents.closeResumeTabDesc}</p>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setCloseConfirm(null)} className="btn-secondary">{t.common.cancel}</button>
+                <button onClick={confirmCloseResumeTab} className="btn-danger">{t.agents.closeAndKill}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Navigation blocker dialog when resume tabs are open */}
+      {pendingNav && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl w-full max-w-md dark:bg-gray-900 dark:border-gray-700">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.leavePageTitle}</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-400">{t.agents.leavePageDesc}</p>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setPendingNav(null)} className="btn-secondary">{t.common.cancel}</button>
+                <button onClick={() => { setPendingNav(null); navigate(pendingNav) }} className="btn-danger">{t.agents.leaveAndKill}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <DeleteAgentDialog
         agent={agent}
         open={showDeleteDialog}
@@ -491,7 +606,7 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
   onToggle: () => void
   onApprove?: () => void
   onReject?: () => void
-  onOpenResumeTerminal?: (threadId: string, command: string) => void
+  onOpenResumeTerminal?: (threadId: string, command: string, title: string) => void
 }) {
   const [resumeCopied, setResumeCopied] = useState(false)
   const statusMap: Record<string, string> = {
@@ -519,7 +634,7 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
   function handleOpenResumeTerminal(e: React.MouseEvent) {
     e.stopPropagation()
     if (task.thread_id && onOpenResumeTerminal) {
-      onOpenResumeTerminal(task.thread_id, `codex resume ${task.thread_id}`)
+      onOpenResumeTerminal(task.thread_id, `codex resume ${task.thread_id}`, task.title)
     }
   }
 

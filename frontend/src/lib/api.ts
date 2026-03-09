@@ -355,6 +355,8 @@ export const agentsApi = {
     request<TerminalCommandResponse>(`/api/agents/${id}/terminal-command`),
   getResumeCommand: (id: string, threadId: string) =>
     request<TerminalCommandResponse>(`/api/agents/${id}/resume-command?thread_id=${encodeURIComponent(threadId)}`),
+  checkResumeProcess: (id: string, threadId: string) =>
+    request<{ running: boolean; count: number }>(`/api/agents/${id}/check-resume-process?thread_id=${encodeURIComponent(threadId)}`),
   clone: (id: string) =>
     request<Agent>(`/api/agents/${id}/clone`, { method: 'POST' }),
 }
