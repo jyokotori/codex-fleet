@@ -137,7 +137,14 @@ export default function RequirementDetail() {
     },
   })
 
-  function openCreate() { setEditItem(null); setForm(defaultForm); setShowModal(true) }
+  function openCreate() {
+    setEditItem(null)
+    // Inherit notification_ids from project
+    let projectNotifIds: string[] = []
+    try { projectNotifIds = JSON.parse(project?.notification_ids ?? '[]') } catch {}
+    setForm({ ...defaultForm, notification_ids: projectNotifIds })
+    setShowModal(true)
+  }
   function openEdit(item: WorkItem) {
     setEditItem(item)
     let parsedNotifIds: string[] = []
@@ -566,11 +573,11 @@ export default function RequirementDetail() {
               </div>
 
               {/* Notifications */}
-              {notifConfigs.filter(n => n.enabled).length > 0 && (
+              {notifConfigs.length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t.notifications.selectNotifications}</label>
                   <div className="space-y-1.5">
-                    {notifConfigs.filter(n => n.enabled).map(n => (
+                    {notifConfigs.map(n => (
                       <label key={n.id} className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -581,7 +588,10 @@ export default function RequirementDetail() {
                           }}
                           className="w-4 h-4 rounded"
                         />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">{n.name}</span>
+                        <span className={`text-sm ${n.enabled ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>
+                          {n.name}
+                          {!n.enabled && <span className="ml-1 text-xs">({t.common.disabled})</span>}
+                        </span>
                       </label>
                     ))}
                   </div>

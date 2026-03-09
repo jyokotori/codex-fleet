@@ -2,15 +2,16 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Edit2, ClipboardList, Archive, ArchiveRestore } from 'lucide-react'
-import { projectsApi, type Project } from '../lib/api'
+import { projectsApi, notificationsApi, type Project } from '../lib/api'
 import { useI18n } from '../hooks/useI18n'
 
 interface ProjectFormData {
   name: string
   description: string
+  notification_ids: string[]
 }
 
-const defaultForm: ProjectFormData = { name: '', description: '' }
+const defaultForm: ProjectFormData = { name: '', description: '', notification_ids: [] }
 
 export default function Requirements() {
   const qc = useQueryClient()
@@ -27,8 +28,17 @@ export default function Requirements() {
     queryFn: projectsApi.list,
   })
 
+  const { data: notifConfigs = [] } = useQuery({
+    queryKey: ['notifications'],
+    queryFn: notificationsApi.list,
+  })
+
   const createMutation = useMutation({
-    mutationFn: (data: ProjectFormData) => projectsApi.create(data),
+    mutationFn: (data: ProjectFormData) => projectsApi.create({
+      name: data.name,
+      description: data.description || undefined,
+      notification_ids: data.notification_ids.length > 0 ? data.notification_ids : undefined,
+    }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); closeModal() },
   })
 
@@ -46,14 +56,20 @@ export default function Requirements() {
   function openCreate() { setEditProject(null); setForm(defaultForm); setShowModal(true) }
   function openEdit(p: Project) {
     setEditProject(p)
-    setForm({ name: p.name, description: p.description })
+    let parsedNotifIds: string[] = []
+    try { parsedNotifIds = JSON.parse(p.notification_ids) } catch {}
+    setForm({ name: p.name, description: p.description, notification_ids: parsedNotifIds })
     setShowModal(true)
   }
   function closeModal() { setShowModal(false); setEditProject(null); setForm(defaultForm) }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (editProject) updateMutation.mutate({ id: editProject.id, data: form })
+    if (editProject) updateMutation.mutate({ id: editProject.id, data: {
+      name: form.name,
+      description: form.description,
+      notification_ids: form.notification_ids,
+    }})
     else createMutation.mutate(form)
   }
 
@@ -179,6 +195,30 @@ export default function Requirements() {
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent resize-none"
                 />
               </div>
+              {notifConfigs.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t.notifications.selectNotifications}</label>
+                  <div className="space-y-1.5">
+                    {notifConfigs.map(n => (
+                      <label key={n.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={form.notification_ids.includes(n.id)}
+                          onChange={e => {
+                            if (e.target.checked) setForm(f => ({ ...f, notification_ids: [...f.notification_ids, n.id] }))
+                            else setForm(f => ({ ...f, notification_ids: f.notification_ids.filter(x => x !== n.id) }))
+                          }}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className={`text-sm ${n.enabled ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>
+                          {n.name}
+                          {!n.enabled && <span className="ml-1 text-xs">({t.common.disabled})</span>}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeModal} className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
                   {t.common.cancel}

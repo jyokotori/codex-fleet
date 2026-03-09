@@ -14,7 +14,11 @@ use chrono::Utc;
 use application::token::{decode_access_token, fetch_auth_context};
 use shared_kernel::{AppContext, AppError};
 
-pub use api::{admin_users::admin_router, auth::auth_router};
+pub use api::{
+    admin_users::admin_router,
+    auth::auth_router,
+    external::{external_api_auth, external_router},
+};
 
 pub fn public_router() -> Router<AppContext> {
     auth_router()

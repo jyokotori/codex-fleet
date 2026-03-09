@@ -381,11 +381,11 @@ export default function AgentDetail() {
                 />
               </div>
               {/* Notification configs */}
-              {notifConfigs.filter(n => n.enabled).length > 0 && (
+              {notifConfigs.length > 0 && (
                 <div>
                   <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.selectNotifications}</label>
                   <div className="space-y-1.5">
-                    {notifConfigs.filter(n => n.enabled).map(n => (
+                    {notifConfigs.map(n => (
                       <label key={n.id} className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -396,7 +396,10 @@ export default function AgentDetail() {
                           }}
                           className="w-4 h-4 rounded"
                         />
-                        <span className="text-sm text-gray-700 dark:text-gray-300">{n.name}</span>
+                        <span className={`text-sm ${n.enabled ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>
+                          {n.name}
+                          {!n.enabled && <span className="ml-1 text-xs">({t.common.disabled})</span>}
+                        </span>
                       </label>
                     ))}
                   </div>

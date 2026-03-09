@@ -354,7 +354,7 @@ pub async fn create_task(
     let notification_ids = req.notification_ids.unwrap_or_default();
     let task = dispatch_task_for_agent(
         &state, &agent_id, &title, &req.description, None,
-        notification_ids, Some(auth.user_id), auth.display_name,
+        notification_ids, Some(auth.user_id), auth.username,
     ).await?;
     Ok(Json(task))
 }

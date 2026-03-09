@@ -17,6 +17,7 @@ pub struct Project {
     pub name: String,
     pub description: String,
     pub status: String,
+    pub notification_ids: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -46,6 +47,7 @@ pub struct WorkItem {
 pub struct CreateProjectRequest {
     pub name: String,
     pub description: Option<String>,
+    pub notification_ids: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +55,7 @@ pub struct UpdateProjectRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub status: Option<String>,
+    pub notification_ids: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -89,7 +92,7 @@ pub struct ListWorkItemsQuery {
 
 pub async fn list_projects(State(state): State<AppContext>) -> Result<Json<Vec<Project>>> {
     let rows = sqlx::query!(
-        "SELECT id, name, description, status, created_at, updated_at FROM projects ORDER BY created_at DESC"
+        r#"SELECT id, name, description, status, notification_ids as "notification_ids!", created_at, updated_at FROM projects ORDER BY created_at DESC"#
     )
     .fetch_all(&state.db)
     .await?;
@@ -101,6 +104,7 @@ pub async fn list_projects(State(state): State<AppContext>) -> Result<Json<Vec<P
                 name: r.name,
                 description: r.description,
                 status: r.status,
+                notification_ids: r.notification_ids,
                 created_at: r.created_at.to_string(),
                 updated_at: r.updated_at.to_string(),
             })
@@ -117,11 +121,14 @@ pub async fn create_project(
     }
     let id = Uuid::new_v4().to_string();
     let description = req.description.unwrap_or_default();
+    let notification_ids_json = req.notification_ids.as_ref()
+        .map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into()))
+        .unwrap_or_else(|| "[]".into());
     let now = Utc::now();
 
     sqlx::query!(
-        "INSERT INTO projects (id, name, description, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)",
-        id, req.name, description, now, now
+        "INSERT INTO projects (id, name, description, notification_ids, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        id, req.name, description, notification_ids_json, now, now
     )
     .execute(&state.db)
     .await?;
@@ -133,6 +140,7 @@ pub async fn create_project(
             name: req.name,
             description,
             status: "active".into(),
+            notification_ids: notification_ids_json,
             created_at: now.to_string(),
             updated_at: now.to_string(),
         }),
@@ -144,7 +152,7 @@ pub async fn get_project(
     Path(id): Path<String>,
 ) -> Result<Json<Project>> {
     let row = sqlx::query!(
-        "SELECT id, name, description, status, created_at, updated_at FROM projects WHERE id = $1",
+        r#"SELECT id, name, description, status, notification_ids as "notification_ids!", created_at, updated_at FROM projects WHERE id = $1"#,
         id
     )
     .fetch_optional(&state.db)
@@ -156,6 +164,7 @@ pub async fn get_project(
         name: row.name,
         description: row.description,
         status: row.status,
+        notification_ids: row.notification_ids,
         created_at: row.created_at.to_string(),
         updated_at: row.updated_at.to_string(),
     }))
@@ -167,7 +176,7 @@ pub async fn update_project(
     Json(req): Json<UpdateProjectRequest>,
 ) -> Result<Json<Project>> {
     let row = sqlx::query!(
-        "SELECT id, name, description, status, created_at, updated_at FROM projects WHERE id = $1",
+        r#"SELECT id, name, description, status, notification_ids as "notification_ids!", created_at, updated_at FROM projects WHERE id = $1"#,
         id
     )
     .fetch_optional(&state.db)
@@ -177,11 +186,15 @@ pub async fn update_project(
     let name = req.name.unwrap_or(row.name);
     let description = req.description.unwrap_or(row.description);
     let status = req.status.unwrap_or(row.status);
+    let notification_ids = match req.notification_ids {
+        Some(ids) => serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into()),
+        None => row.notification_ids,
+    };
     let now = Utc::now();
 
     sqlx::query!(
-        "UPDATE projects SET name=$1, description=$2, status=$3, updated_at=$4 WHERE id=$5",
-        name, description, status, now, id
+        "UPDATE projects SET name=$1, description=$2, status=$3, notification_ids=$4, updated_at=$5 WHERE id=$6",
+        name, description, status, notification_ids, now, id
     )
     .execute(&state.db)
     .await?;
@@ -191,6 +204,7 @@ pub async fn update_project(
         name,
         description,
         status,
+        notification_ids,
         created_at: row.created_at.to_string(),
         updated_at: now.to_string(),
     }))
@@ -285,10 +299,21 @@ pub async fn create_work_item(
         .map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into()))
         .unwrap_or_else(|| "[]".into());
 
+    // Resolve username from assigned_user_id
+    let assigned_username = if let Some(ref uid) = req.assigned_user_id {
+        sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+            .bind(uid)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     sqlx::query!(
-        r#"INSERT INTO work_items (id, project_id, parent_id, type, title, description, status, priority, assigned_agent_id, assigned_user_id, notification_ids, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#,
-        id, project_id, req.parent_id, req.r#type, req.title, description, status, priority, req.assigned_agent_id, req.assigned_user_id, notification_ids_json, now, now
+        r#"INSERT INTO work_items (id, project_id, parent_id, type, title, description, status, priority, assigned_agent_id, assigned_user_id, assigned_username, notification_ids, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
+        id, project_id, req.parent_id, req.r#type, req.title, description, status, priority, req.assigned_agent_id, req.assigned_user_id, assigned_username, notification_ids_json, now, now
     )
     .execute(&state.db)
     .await?;
@@ -306,7 +331,7 @@ pub async fn create_work_item(
             priority,
             assigned_agent_id: req.assigned_agent_id,
             assigned_user_id: req.assigned_user_id,
-            assigned_username: String::new(),
+            assigned_username,
             execution_id: None,
             notification_ids: notification_ids_json,
             created_at: now.to_string(),
@@ -423,6 +448,17 @@ pub async fn update_work_item(
         None => row.assigned_user_id,
     };
 
+    // Resolve username from assigned_user_id
+    let assigned_username = if let Some(ref uid) = assigned_user_id {
+        sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+            .bind(uid)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     // When re-queuing from human_rejected → waiting, clear execution_id
     let execution_id = if old_status == "human_rejected" && status == "waiting" {
         None
@@ -441,8 +477,8 @@ pub async fn update_work_item(
 
     sqlx::query!(
         r#"UPDATE work_items SET title=$1, description=$2, priority=$3, status=$4,
-           assigned_agent_id=$5, assigned_user_id=$6, execution_id=$7, notification_ids=$8, updated_at=$9 WHERE id=$10"#,
-        title, description, priority, status, assigned_agent_id, assigned_user_id, execution_id, notification_ids, now, id
+           assigned_agent_id=$5, assigned_user_id=$6, assigned_username=$7, execution_id=$8, notification_ids=$9, updated_at=$10 WHERE id=$11"#,
+        title, description, priority, status, assigned_agent_id, assigned_user_id, assigned_username, execution_id, notification_ids, now, id
     )
     .execute(&state.db)
     .await?;
@@ -501,7 +537,7 @@ pub async fn update_work_item(
         priority,
         assigned_agent_id,
         assigned_user_id,
-        assigned_username: row.assigned_username,
+        assigned_username,
         execution_id,
         notification_ids,
         created_at: row.created_at.to_string(),

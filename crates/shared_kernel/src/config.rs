@@ -14,6 +14,8 @@ pub struct AppConfig {
     pub initial_admin_username: String,
     pub initial_admin_password: String,
     pub initial_admin_display_name: String,
+    pub external_api_header: String,
+    pub external_api_secret: String,
 }
 
 impl AppConfig {
@@ -63,6 +65,9 @@ impl AppConfig {
                 .unwrap_or_else(|_| "codex".into()),
             initial_admin_display_name: env::var("INITIAL_ADMIN_DISPLAY_NAME")
                 .unwrap_or_else(|_| "Codex Admin".into()),
+            external_api_header: env::var("EXTERNAL_API_HEADER")
+                .unwrap_or_else(|_| "X-Agent-Secret".into()),
+            external_api_secret: env::var("EXTERNAL_API_SECRET").unwrap_or_default(),
         }
     }
 }

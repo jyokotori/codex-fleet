@@ -405,6 +405,7 @@ export interface Project {
   name: string
   description: string
   status: string
+  notification_ids: string
   created_at: string
   updated_at: string
 }
@@ -439,10 +440,10 @@ export const usersApi = {
 
 export const projectsApi = {
   list: () => request<Project[]>('/api/projects'),
-  create: (data: { name: string; description?: string }) =>
+  create: (data: { name: string; description?: string; notification_ids?: string[] }) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
   get: (id: string) => request<Project>(`/api/projects/${id}`),
-  update: (id: string, data: { name?: string; description?: string; status?: string }) =>
+  update: (id: string, data: { name?: string; description?: string; status?: string; notification_ids?: string[] }) =>
     request<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<{ message: string }>(`/api/projects/${id}`, { method: 'DELETE' }),
