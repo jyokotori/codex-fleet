@@ -4,8 +4,10 @@ import { Plus, Trash2, Edit2, Bell, ToggleLeft, ToggleRight } from 'lucide-react
 import { notificationsApi, type NotificationConfig } from '../lib/api'
 import { useI18n } from '../hooks/useI18n'
 
+interface HeaderEntry { key: string; value: string }
+
 interface NotifFormData {
-  name: string; type: string; webhook_url: string; enabled: boolean; events: string[]
+  name: string; type: string; webhook_url: string; headers: HeaderEntry[]; enabled: boolean; events: string[]
 }
 
 const EVENT_OPTIONS = [
@@ -14,8 +16,17 @@ const EVENT_OPTIONS = [
 ]
 
 const defaultForm: NotifFormData = {
-  name: '', type: 'webhook', webhook_url: '', enabled: true,
+  name: '', type: 'webhook', webhook_url: '', headers: [], enabled: true,
   events: ['agent_completed', 'agent_failed'],
+}
+
+function buildConfigJson(url: string, headers: HeaderEntry[]): string {
+  const obj: Record<string, unknown> = { url }
+  const h = headers.filter(h => h.key.trim())
+  if (h.length > 0) {
+    obj.headers = Object.fromEntries(h.map(h => [h.key, h.value]))
+  }
+  return JSON.stringify(obj)
 }
 
 export default function Notifications() {
@@ -31,7 +42,7 @@ export default function Notifications() {
     mutationFn: (data: NotifFormData) =>
       notificationsApi.create({
         name: data.name, type: data.type,
-        config_json: JSON.stringify({ url: data.webhook_url }),
+        config_json: buildConfigJson(data.webhook_url, data.headers),
         enabled: data.enabled, events_json: JSON.stringify(data.events),
       }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }); closeModal() },
@@ -40,7 +51,7 @@ export default function Notifications() {
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: NotifFormData }) =>
       notificationsApi.update(id, {
-        name: data.name, config_json: JSON.stringify({ url: data.webhook_url }),
+        name: data.name, config_json: buildConfigJson(data.webhook_url, data.headers),
         enabled: data.enabled, events_json: JSON.stringify(data.events),
       }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }); closeModal() },
@@ -59,11 +70,17 @@ export default function Notifications() {
   function openCreate() { setEditNotif(null); setForm(defaultForm); setShowModal(true) }
   function openEdit(notif: NotificationConfig) {
     setEditNotif(notif)
-    let config: Record<string, string> = {}
+    let config: Record<string, unknown> = {}
     try { config = JSON.parse(notif.config_json) } catch {}
     let events: string[] = []
     try { events = JSON.parse(notif.events_json) } catch {}
-    setForm({ name: notif.name, type: notif.type, webhook_url: config.url ?? '', enabled: notif.enabled, events })
+    const headers: HeaderEntry[] = []
+    if (config.headers && typeof config.headers === 'object') {
+      for (const [key, value] of Object.entries(config.headers as Record<string, string>)) {
+        headers.push({ key, value })
+      }
+    }
+    setForm({ name: notif.name, type: notif.type, webhook_url: (config.url as string) ?? '', headers, enabled: notif.enabled, events })
     setShowModal(true)
   }
   function closeModal() { setShowModal(false); setEditNotif(null); setForm(defaultForm) }
@@ -153,6 +170,37 @@ export default function Notifications() {
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.webhookUrl}</label>
                 <input type="url" className="input" value={form.webhook_url} onChange={e => setForm(f => ({ ...f, webhook_url: e.target.value }))} placeholder="https://hooks.slack.com/..." required />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.headers}</label>
+                <div className="space-y-2">
+                  {form.headers.map((h, i) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <input
+                        className="input flex-1"
+                        value={h.key}
+                        onChange={e => { const headers = [...form.headers]; headers[i] = { ...h, key: e.target.value }; setForm(f => ({ ...f, headers })) }}
+                        placeholder="Header name"
+                      />
+                      <input
+                        className="input flex-1"
+                        value={h.value}
+                        onChange={e => { const headers = [...form.headers]; headers[i] = { ...h, value: e.target.value }; setForm(f => ({ ...f, headers })) }}
+                        placeholder="Value"
+                      />
+                      <button type="button" onClick={() => setForm(f => ({ ...f, headers: f.headers.filter((_, j) => j !== i) }))} className="text-gray-400 hover:text-red-500 p-1">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, headers: [...f.headers, { key: '', value: '' }] }))}
+                    className="text-xs text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
+                  >
+                    + {t.notifications.addHeader}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">{t.notifications.events}</label>
