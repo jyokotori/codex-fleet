@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Plus, Trash2, Edit2, ChevronRight, Bot, User } from 'lucide-react'
-import { projectsApi, workItemsApi, agentsApi, usersApi, type WorkItem } from '../lib/api'
+import { projectsApi, workItemsApi, agentsApi, usersApi, notificationsApi, type WorkItem } from '../lib/api'
 import { getAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
 
@@ -20,24 +20,26 @@ const PRIORITY_COLORS: Record<string, string> = {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  open: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
-  in_progress: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
-  pending_review: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-  approved: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  done: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-  rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  waiting: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  agent_in_progress: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
+  agent_completed: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  agent_failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  human_approved: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  human_rejected: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   cancelled: 'bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500',
+  closed: 'bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500',
 }
 
-// Status machine: which transitions are available from each status
+// Status machine: which manual transitions are available from each status
 const STATUS_TRANSITIONS: Record<string, string[]> = {
-  open: ['in_progress', 'cancelled'],
-  in_progress: ['pending_review', 'cancelled'],
-  pending_review: ['approved', 'rejected'],
-  approved: ['done', 'cancelled'],
-  done: [],
-  rejected: ['in_progress', 'cancelled'],
-  cancelled: ['open'],
+  waiting: ['cancelled', 'closed'],
+  agent_in_progress: ['cancelled', 'closed'],
+  agent_completed: ['human_approved', 'human_rejected'],
+  agent_failed: ['waiting', 'closed'],
+  human_approved: ['closed'],
+  human_rejected: ['waiting'],
+  cancelled: [],
+  closed: [],
 }
 
 interface WorkItemFormData {
@@ -46,13 +48,15 @@ interface WorkItemFormData {
   title: string
   description: string
   priority: string
+  assigned_agent_id: string
   assigned_user_id: string
+  notification_ids: string[]
 }
 
 const currentUserId = getAuth()?.user?.id ?? ''
 
 const defaultForm: WorkItemFormData = {
-  parent_id: '', type: 'task', title: '', description: '', priority: 'medium', assigned_user_id: currentUserId,
+  parent_id: '', type: 'task', title: '', description: '', priority: 'medium', assigned_agent_id: '', assigned_user_id: currentUserId, notification_ids: [],
 }
 
 export default function RequirementDetail() {
@@ -95,6 +99,11 @@ export default function RequirementDetail() {
     queryFn: usersApi.list,
   })
 
+  const { data: notifConfigs = [] } = useQuery({
+    queryKey: ['notifications'],
+    queryFn: notificationsApi.list,
+  })
+
   const createMutation = useMutation({
     mutationFn: (data: WorkItemFormData) =>
       projectsApi.createWorkItem(projectId!, {
@@ -103,7 +112,9 @@ export default function RequirementDetail() {
         title: data.title,
         description: data.description || undefined,
         priority: data.priority,
+        assigned_agent_id: data.assigned_agent_id || undefined,
         assigned_user_id: data.assigned_user_id || undefined,
+        notification_ids: data.notification_ids.length > 0 ? data.notification_ids : undefined,
       }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['work-items', projectId] }); closeModal() },
   })
@@ -129,13 +140,17 @@ export default function RequirementDetail() {
   function openCreate() { setEditItem(null); setForm(defaultForm); setShowModal(true) }
   function openEdit(item: WorkItem) {
     setEditItem(item)
+    let parsedNotifIds: string[] = []
+    try { parsedNotifIds = JSON.parse(item.notification_ids) } catch {}
     setForm({
       parent_id: item.parent_id ?? '',
       type: item.type,
       title: item.title,
       description: item.description,
       priority: item.priority,
+      assigned_agent_id: item.assigned_agent_id ?? '',
       assigned_user_id: item.assigned_user_id ?? '',
+      notification_ids: parsedNotifIds,
     })
     setShowModal(true)
   }
@@ -147,6 +162,7 @@ export default function RequirementDetail() {
       updateMutation.mutate({ id: editItem.id, data: {
         title: form.title, description: form.description, priority: form.priority,
         assigned_user_id: form.assigned_user_id || '',
+        notification_ids: form.notification_ids,
       }})
     } else {
       createMutation.mutate(form)
@@ -210,13 +226,11 @@ export default function RequirementDetail() {
   }
 
   const actionLabel: Record<string, string> = {
-    in_progress: tr.actionStart,
-    pending_review: tr.actionSubmitReview,
-    approved: tr.actionApprove,
-    done: tr.actionDone,
-    rejected: tr.actionReject,
+    human_approved: tr.actionApprove,
+    human_rejected: tr.actionReject,
+    closed: tr.actionClose,
     cancelled: tr.actionCancel,
-    open: tr.actionReopen,
+    waiting: tr.actionRequeue,
   }
 
   return (
@@ -246,7 +260,7 @@ export default function RequirementDetail() {
               className="text-sm border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
             >
               <option value="">{tr.allStatuses}</option>
-              {['open','in_progress','pending_review','approved','done','rejected','cancelled'].map((s) => (
+              {['waiting','agent_in_progress','agent_completed','agent_failed','human_approved','human_rejected','cancelled','closed'].map((s) => (
                 <option key={s} value={s}>{(twt as Record<string, string>)[s] ?? s}</option>
               ))}
             </select>
@@ -366,14 +380,48 @@ export default function RequirementDetail() {
               <select
                 value={selectedItem.assigned_agent_id ?? ''}
                 onChange={(e) => assignAgent(selectedItem, e.target.value)}
-                className="w-full text-sm border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                disabled={selectedItem.status === 'agent_in_progress'}
+                className="w-full text-sm border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-50"
               >
                 <option value="">{tr.noAgent}</option>
                 {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
+                  <option key={a.id} value={a.id}>{a.name}{a.is_busy ? ` (${tr.busy})` : ''}</option>
                 ))}
               </select>
             </div>
+
+            {/* Execution link */}
+            {selectedItem.execution_id && (
+              <div>
+                <p className="text-sm text-gray-500 mb-1">{tr.itemExecution}</p>
+                <button
+                  onClick={() => {
+                    const agent = agents.find(a => a.id === selectedItem.assigned_agent_id)
+                    if (agent) navigate(`/agents/${agent.id}?tab=tasks&task=${selectedItem.execution_id}`)
+                  }}
+                  className="text-sm text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300 underline"
+                >
+                  {selectedItem.execution_id.slice(0, 8)}...
+                </button>
+              </div>
+            )}
+
+            {/* Notification configs */}
+            {(() => {
+              let ids: string[] = []
+              try { ids = JSON.parse(selectedItem.notification_ids) } catch {}
+              const linked = notifConfigs.filter(n => ids.includes(n.id))
+              return linked.length > 0 ? (
+                <div>
+                  <p className="text-sm text-gray-500 mb-1">{t.notifications.selectNotifications}</p>
+                  <div className="flex flex-wrap gap-1">
+                    {linked.map(n => (
+                      <span key={n.id} className="badge badge-blue text-xs">{n.name}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : null
+            })()}
 
             {/* Status transitions */}
             <div>
@@ -384,9 +432,9 @@ export default function RequirementDetail() {
                     key={nextStatus}
                     onClick={() => transitionStatus(selectedItem, nextStatus)}
                     className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                      nextStatus === 'cancelled' || nextStatus === 'rejected'
+                      nextStatus === 'closed' || nextStatus === 'human_rejected' || nextStatus === 'cancelled'
                         ? 'border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20'
-                        : nextStatus === 'approved' || nextStatus === 'done'
+                        : nextStatus === 'human_approved'
                         ? 'border-green-300 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/20'
                         : 'border-sky-300 text-sky-600 hover:bg-sky-50 dark:border-sky-700 dark:text-sky-400 dark:hover:bg-sky-900/20'
                     }`}
@@ -487,6 +535,21 @@ export default function RequirementDetail() {
                 </select>
               </div>
 
+              {/* Assigned Agent */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{tr.itemAgent}</label>
+                <select
+                  value={form.assigned_agent_id}
+                  onChange={(e) => setForm({ ...form, assigned_agent_id: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+                >
+                  <option value="">{tr.noAgent}</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}{a.is_busy ? ` (${tr.busy})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Assigned User */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{tr.itemUser}</label>
@@ -501,6 +564,29 @@ export default function RequirementDetail() {
                   ))}
                 </select>
               </div>
+
+              {/* Notifications */}
+              {notifConfigs.filter(n => n.enabled).length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t.notifications.selectNotifications}</label>
+                  <div className="space-y-1.5">
+                    {notifConfigs.filter(n => n.enabled).map(n => (
+                      <label key={n.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={form.notification_ids.includes(n.id)}
+                          onChange={e => {
+                            if (e.target.checked) setForm(f => ({ ...f, notification_ids: [...f.notification_ids, n.id] }))
+                            else setForm(f => ({ ...f, notification_ids: f.notification_ids.filter(x => x !== n.id) }))
+                          }}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">{n.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeModal} className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">

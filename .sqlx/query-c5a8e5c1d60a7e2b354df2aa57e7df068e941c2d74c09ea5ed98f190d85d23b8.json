@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = $1",
+  "query": "SELECT id, project_id, title, status, priority, assigned_agent_id FROM work_items WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -10,33 +10,28 @@
       },
       {
         "ordinal": 1,
-        "name": "server_id",
+        "name": "project_id",
         "type_info": "Text"
       },
       {
         "ordinal": 2,
-        "name": "tmux_session",
+        "name": "title",
         "type_info": "Text"
       },
       {
         "ordinal": 3,
-        "name": "docker_container_name",
+        "name": "status",
         "type_info": "Text"
       },
       {
         "ordinal": 4,
-        "name": "cli_type",
+        "name": "priority",
         "type_info": "Text"
       },
       {
         "ordinal": 5,
-        "name": "workdir",
+        "name": "assigned_agent_id",
         "type_info": "Text"
-      },
-      {
-        "ordinal": 6,
-        "name": "use_docker",
-        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -48,11 +43,10 @@
       false,
       false,
       false,
-      true,
       false,
       false,
-      false
+      true
     ]
   },
-  "hash": "b7c27102ee2c69b8df92e938c021d23add757082f4ca45adae341c9d395757ec"
+  "hash": "c5a8e5c1d60a7e2b354df2aa57e7df068e941c2d74c09ea5ed98f190d85d23b8"
 }

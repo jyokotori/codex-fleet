@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, config_json, events_json FROM notification_configs WHERE id = ANY($1) AND enabled = true",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "config_json",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "events_json",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c782fbcc85423ff6790ebd0f00fb65719b4fb227586063c73f3451d27b4afe1a"
+}

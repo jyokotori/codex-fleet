@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send } from 'lucide-react'
+import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
   agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi,
@@ -153,9 +153,16 @@ export default function Agents() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
   })
 
+  const cloneMutation = useMutation({
+    mutationFn: (id: string) => agentsApi.clone(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  })
+
+  const [dispatchTitle, setDispatchTitle] = useState('')
+
   const dispatchMutation = useMutation({
-    mutationFn: ({ agentId, desc }: { agentId: string; desc: string }) =>
-      tasksApi.create(agentId, desc),
+    mutationFn: ({ agentId, title, desc }: { agentId: string; title: string; desc: string }) =>
+      tasksApi.create(agentId, title, desc),
     onSuccess: (task) => {
       qc.invalidateQueries({ queryKey: ['agents'] })
       setDispatchAgent(null)
@@ -220,7 +227,8 @@ export default function Agents() {
             <AgentRow key={agent.id} agent={agent} servers={servers} t={t}
               onRuntimeAction={() => handleRuntimeAction(agent)}
               onEdit={() => handleEditOpen(agent)}
-              onDispatch={() => { setDispatchAgent(agent); setDispatchInput('') }}
+              onDispatch={() => { setDispatchAgent(agent); setDispatchTitle(''); setDispatchInput('') }}
+              onClone={() => cloneMutation.mutate(agent.id)}
               onDelete={() => setDeleteAgent(agent)}
               runtimePending={runtimeMutation.isPending}
             />
@@ -556,23 +564,34 @@ export default function Agents() {
               <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.dispatchTask} — {dispatchAgent.name}</h3>
               <button onClick={() => setDispatchAgent(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
             </div>
-            <div className="p-6">
-              <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">{t.agents.dispatchTaskDesc}</label>
-              <textarea
-                className="input w-full"
-                rows={5}
-                value={dispatchInput}
-                onChange={e => setDispatchInput(e.target.value)}
-                placeholder={t.agentDetail.taskPlaceholder(dispatchAgent.cli_type)}
-                autoFocus
-              />
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.dispatchTaskTitle}</label>
+                <input
+                  className="input w-full"
+                  value={dispatchTitle}
+                  onChange={e => setDispatchTitle(e.target.value)}
+                  placeholder={t.agents.dispatchTaskTitle}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.dispatchTaskDesc}</label>
+                <textarea
+                  className="input w-full"
+                  rows={5}
+                  value={dispatchInput}
+                  onChange={e => setDispatchInput(e.target.value)}
+                  placeholder={t.agentDetail.taskPlaceholder(dispatchAgent.cli_type)}
+                />
+              </div>
               {dispatchMutation.error && (
                 <div className="text-red-500 text-sm mt-2">{String(dispatchMutation.error.message)}</div>
               )}
-              <div className="flex gap-3 justify-end pt-4">
+              <div className="flex gap-3 justify-end pt-2">
                 <button onClick={() => setDispatchAgent(null)} className="btn-secondary">{t.common.cancel}</button>
                 <button
-                  onClick={() => { if (dispatchInput.trim()) dispatchMutation.mutate({ agentId: dispatchAgent.id, desc: dispatchInput.trim() }) }}
+                  onClick={() => { if (dispatchInput.trim()) dispatchMutation.mutate({ agentId: dispatchAgent.id, title: dispatchTitle.trim(), desc: dispatchInput.trim() }) }}
                   className="btn-primary flex items-center gap-2"
                   disabled={dispatchMutation.isPending || !dispatchInput.trim()}
                 >
@@ -595,13 +614,14 @@ export default function Agents() {
   )
 }
 
-function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onDelete, runtimePending }: {
+function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onClone, onDelete, runtimePending }: {
   agent: Agent
   servers: Server[]
   t: ReturnType<typeof useI18n>['t']
   onRuntimeAction: () => void
   onEdit: () => void
   onDispatch: () => void
+  onClone: () => void
   onDelete: () => void
   runtimePending: boolean
 }) {
@@ -635,6 +655,9 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onDe
           <p className="font-medium text-gray-800 dark:text-gray-100">{agent.name}</p>
           <span className={statusMap[agent.status] ?? 'badge-gray'}>{t.status[agent.status as keyof typeof t.status] ?? agent.status}</span>
           <span className="badge badge-blue">{agent.cli_type}</span>
+          {agent.is_busy && (
+            <span className="badge-yellow">{t.requirements.busy}</span>
+          )}
           {!agent.use_docker && (
             <span className="badge badge-gray">{t.agents.noDockerBadge}</span>
           )}
@@ -658,6 +681,7 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onDe
             {runtimeLabel}
           </button>
         )}
+        <button onClick={onClone} className="btn-secondary btn-sm" title={t.requirements.clone}><Copy size={13} /></button>
         <button onClick={onEdit} className="btn-secondary btn-sm">{t.common.edit}</button>
         <button onClick={onDelete} className="btn-danger btn-sm"><Trash2 size={13} /></button>
       </div>

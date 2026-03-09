@@ -76,7 +76,7 @@ pub async fn create_notification(
     let enabled = req.enabled.unwrap_or(true);
     let events_json = req
         .events_json
-        .unwrap_or_else(|| r#"["task_completed","task_failed"]"#.into());
+        .unwrap_or_else(|| r#"["agent_completed","agent_failed"]"#.into());
     let now = Utc::now();
 
     sqlx::query!(

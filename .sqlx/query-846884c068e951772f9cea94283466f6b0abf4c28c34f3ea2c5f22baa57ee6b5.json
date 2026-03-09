@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE work_items SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'agent_in_progress'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "846884c068e951772f9cea94283466f6b0abf4c28c34f3ea2c5f22baa57ee6b5"
+}

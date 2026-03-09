@@ -15,9 +15,10 @@ function isDarkMode() {
 interface TerminalProps {
   agentId: string
   className?: string
+  initialCommand?: string
 }
 
-export default function Terminal({ agentId, className = '' }: TerminalProps) {
+export default function Terminal({ agentId, className = '', initialCommand }: TerminalProps) {
   const { t } = useI18n()
   const termRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
@@ -116,6 +117,16 @@ export default function Terminal({ agentId, className = '' }: TerminalProps) {
       xtermRef.current = null
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Send initial command once connected
+  useEffect(() => {
+    if (isConnected && initialCommand) {
+      const timer = setTimeout(() => {
+        sendBinaryRef.current(new TextEncoder().encode(initialCommand + '\n'))
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [isConnected, initialCommand])
 
   // Disconnect WS on unmount
   useEffect(() => {

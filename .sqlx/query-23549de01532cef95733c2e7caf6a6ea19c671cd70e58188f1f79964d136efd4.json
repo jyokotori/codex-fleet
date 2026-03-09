@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, project_id, parent_id, type as \"type\", title, description, status, priority,\n           assigned_agent_id, assigned_user_id, execution_id, created_at, updated_at\n           FROM work_items WHERE id = $1",
+  "query": "SELECT id, project_id, parent_id, type as \"type\", title, description, status, priority,\n           assigned_agent_id, assigned_user_id, assigned_username, execution_id, notification_ids, created_at, updated_at\n           FROM work_items WHERE execution_id = $1",
   "describe": {
     "columns": [
       {
@@ -55,16 +55,26 @@
       },
       {
         "ordinal": 10,
-        "name": "execution_id",
+        "name": "assigned_username",
         "type_info": "Text"
       },
       {
         "ordinal": 11,
+        "name": "execution_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "notification_ids",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -85,10 +95,12 @@
       false,
       true,
       true,
+      false,
       true,
+      false,
       false,
       false
     ]
   },
-  "hash": "d84d3cf623e11f43f7c4be171d64044b52b50b3993e7b1b4b3d38adc8f71b5aa"
+  "hash": "23549de01532cef95733c2e7caf6a6ea19c671cd70e58188f1f79964d136efd4"
 }

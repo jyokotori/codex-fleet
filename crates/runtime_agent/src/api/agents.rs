@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -75,6 +75,7 @@ pub struct Agent {
     pub status: String,
     pub provision_log: String,
     pub provision_steps: serde_json::Value,
+    pub is_busy: bool,
     pub created_at: String,
 }
 
@@ -259,7 +260,7 @@ async fn connect_executor_for_server(state: &AppContext, server_id: &str) -> Res
         .as_deref()
         .and_then(|value| crypto.decrypt(value).ok());
     let ip: String = server.get("ip");
-    let port: i32 = server.get("port");
+    let port: i64 = server.get("port");
     let username: String = server.get("username");
     let auth_type: String = server.get("auth_type");
     let ssh_key_content: Option<String> = server.get("ssh_key_content");
@@ -479,30 +480,44 @@ pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Age
     .fetch_all(&state.db)
     .await?;
 
+    // Build a set of agent IDs that are busy (have active work items)
+    let busy_rows = sqlx::query_scalar!(
+        r#"SELECT DISTINCT assigned_agent_id AS "id!" FROM work_items
+           WHERE status IN ('agent_in_progress','agent_completed') AND assigned_agent_id IS NOT NULL"#
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let busy_set: std::collections::HashSet<String> = busy_rows.into_iter().collect();
+
     let mut agents = rows
         .into_iter()
-        .map(|r| Agent {
-            id: r.id,
-            name: r.name,
-            server_id: r.server_id,
-            git_repo: r.git_repo,
-            git_branch: r.git_branch,
-            git_auth_type: r.git_auth_type,
-            git_username: r.git_username,
-            cli_type: r.cli_type,
-            codex_config_id: r.codex_config_id,
-            agents_md_id: r.agents_md_id,
-            docker_config_id: r.docker_config_id,
-            docker_image: r.docker_image,
-            docker_container_name: r.docker_container_name,
-            container_id: r.container_id,
-            tmux_session: r.tmux_session,
-            workdir: r.workdir,
-            use_docker: r.use_docker,
-            status: r.status,
-            provision_log: r.provision_log,
-            provision_steps: r.provision_steps,
-            created_at: r.created_at.to_string(),
+        .map(|r| {
+            let is_busy = busy_set.contains(&r.id);
+            Agent {
+                id: r.id,
+                name: r.name,
+                server_id: r.server_id,
+                git_repo: r.git_repo,
+                git_branch: r.git_branch,
+                git_auth_type: r.git_auth_type,
+                git_username: r.git_username,
+                cli_type: r.cli_type,
+                codex_config_id: r.codex_config_id,
+                agents_md_id: r.agents_md_id,
+                docker_config_id: r.docker_config_id,
+                docker_image: r.docker_image,
+                docker_container_name: r.docker_container_name,
+                container_id: r.container_id,
+                tmux_session: r.tmux_session,
+                workdir: r.workdir,
+                use_docker: r.use_docker,
+                status: r.status,
+                provision_log: r.provision_log,
+                provision_steps: r.provision_steps,
+                is_busy,
+                created_at: r.created_at.to_string(),
+            }
         })
         .collect::<Vec<_>>();
 
@@ -699,6 +714,7 @@ pub async fn create_agent(
         status: "provisioning".into(),
         provision_log: String::new(),
         provision_steps: serde_json::json!({}),
+        is_busy: false,
         created_at: now.to_string(),
     }))
 }
@@ -1507,6 +1523,7 @@ pub async fn update_agent(
         status: updated.status,
         provision_log: updated.provision_log,
         provision_steps: updated.provision_steps,
+        is_busy: false,
         created_at: updated.created_at.to_string(),
     };
 
@@ -1688,6 +1705,75 @@ pub async fn resume_agent(
     Ok(Json(serde_json::json!({"message": "Resume command sent"})))
 }
 
+pub async fn clone_agent(
+    State(state): State<AppContext>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<Agent>)> {
+    let row = sqlx::query!(
+        r#"SELECT name, server_id, git_repo, git_branch, git_auth_type, git_username,
+           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
+           docker_image, use_docker
+           FROM agents WHERE id = $1"#,
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
+
+    let new_id = Uuid::new_v4().to_string();
+    let name = format!("{} (copy)", row.name);
+    let tmux_session = tmux_session_for_cli(&row.cli_type).to_string();
+    let workdir = if row.use_docker {
+        "/workspace".to_string()
+    } else {
+        format!("~/.codex-fleet/{}/workspace", new_id)
+    };
+    let docker_container_name = if row.use_docker {
+        Some(format!("codex-fleet-{}", &new_id[..8]))
+    } else {
+        None
+    };
+    let now = Utc::now();
+
+    sqlx::query!(
+        r#"INSERT INTO agents (id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
+           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
+           docker_image, docker_container_name, tmux_session, workdir, use_docker,
+           status, provision_log, provision_steps, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'stopped', '', '{}', $18)"#,
+        new_id, name, row.server_id, row.git_repo, row.git_branch, row.git_auth_type, row.git_username,
+        row.git_password_encrypted, row.cli_type, row.codex_config_id, row.agents_md_id, row.docker_config_id,
+        row.docker_image, docker_container_name, tmux_session, workdir, row.use_docker, now
+    )
+    .execute(&state.db)
+    .await?;
+
+    Ok((StatusCode::CREATED, Json(Agent {
+        id: new_id,
+        name,
+        server_id: row.server_id,
+        git_repo: row.git_repo,
+        git_branch: row.git_branch,
+        git_auth_type: row.git_auth_type,
+        git_username: row.git_username,
+        cli_type: row.cli_type,
+        codex_config_id: row.codex_config_id,
+        agents_md_id: row.agents_md_id,
+        docker_config_id: row.docker_config_id,
+        docker_image: row.docker_image,
+        docker_container_name,
+        container_id: None,
+        tmux_session,
+        workdir,
+        use_docker: row.use_docker,
+        status: "stopped".into(),
+        provision_log: String::new(),
+        provision_steps: serde_json::json!({}),
+        is_busy: false,
+        created_at: now.to_string(),
+    })))
+}
+
 #[derive(Serialize)]
 pub struct TerminalCommandResponse {
     pub local_cmd: String,
@@ -1753,6 +1839,68 @@ pub async fn terminal_command(
         } else {
             Some(format!("ssh {}@{} -p {}", server.username, server.ip, server.port))
         }
+    } else {
+        None
+    };
+
+    Ok(Json(TerminalCommandResponse { local_cmd, ssh_cmd }))
+}
+
+#[derive(Deserialize)]
+pub struct ResumeCommandQuery {
+    pub thread_id: String,
+}
+
+pub async fn resume_command(
+    State(state): State<AppContext>,
+    Path(id): Path<String>,
+    Query(params): Query<ResumeCommandQuery>,
+) -> Result<Json<TerminalCommandResponse>> {
+    let agent = sqlx::query(
+        "SELECT server_id, docker_container_name, workdir, use_docker, cli_type FROM agents WHERE id = $1",
+    )
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
+
+    let server_id: String = agent.get("server_id");
+    let docker_container_name: Option<String> = agent.get("docker_container_name");
+    let workdir: String = agent.get("workdir");
+    let use_docker: bool = agent.get("use_docker");
+    let cli_type: String = agent.get("cli_type");
+
+    let resume_cmd = match cli_type.as_str() {
+        "codex" => format!("codex resume {}", params.thread_id),
+        "claude" | "claude_code" => format!("claude resume {}", params.thread_id),
+        _ => format!("codex resume {}", params.thread_id),
+    };
+
+    let (local_cmd, ssh_shell_cmd) = if use_docker {
+        let container = docker_container_name.unwrap_or_default();
+        let inner = format!("cd /workspace && {}", resume_cmd);
+        (
+            format!("docker exec -it {} bash -lc {}", container, shell_quote(&inner)),
+            format!("docker exec -it {} bash -lc {}", container, shell_quote(&inner)),
+        )
+    } else {
+        (
+            format!("cd {} && {}", shell_quote(&workdir), resume_cmd),
+            format!("cd {} && {}", shell_quote(&workdir), resume_cmd),
+        )
+    };
+
+    let ssh_cmd = if let Ok(server) = sqlx::query!(
+        "SELECT ip, port, username FROM servers WHERE id = $1",
+        server_id
+    )
+    .fetch_one(&state.db)
+    .await
+    {
+        Some(format!(
+            "ssh {}@{} -p {} -t \"{}\"",
+            server.username, server.ip, server.port, ssh_shell_cmd
+        ))
     } else {
         None
     };

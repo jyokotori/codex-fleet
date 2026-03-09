@@ -10,7 +10,7 @@ interface TaskLogViewerProps {
 export default function TaskLogViewer({ taskId, className = '' }: TaskLogViewerProps) {
   const [logs, setLogs] = useState('')
   const [threadId, setThreadId] = useState<string | null>(null)
-  const [taskStatus, setTaskStatus] = useState<string>('running')
+  const [taskStatus, setTaskStatus] = useState<string>('agent_in_progress')
   const [copied, setCopied] = useState(false)
   const logRef = useRef<HTMLPreElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -68,14 +68,14 @@ export default function TaskLogViewer({ taskId, className = '' }: TaskLogViewerP
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const statusIcon = taskStatus === 'completed'
+  const statusIcon = taskStatus === 'agent_completed' || taskStatus === 'human_approved'
     ? <CheckCircle size={14} className="text-green-400" />
-    : taskStatus === 'failed'
+    : taskStatus === 'agent_failed' || taskStatus === 'human_rejected'
     ? <XCircle size={14} className="text-red-400" />
     : <Loader size={14} className="text-yellow-400 animate-spin" />
 
-  const statusColor = taskStatus === 'completed' ? 'badge-green'
-    : taskStatus === 'failed' ? 'badge-red'
+  const statusColor = (taskStatus === 'agent_completed' || taskStatus === 'human_approved') ? 'badge-green'
+    : (taskStatus === 'agent_failed' || taskStatus === 'human_rejected') ? 'badge-red'
     : 'badge-yellow'
 
   return (

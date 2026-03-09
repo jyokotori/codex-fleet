@@ -15,6 +15,7 @@ export function getAgentRuntimeAction(agent: Agent): AgentRuntimeAction | null {
 }
 
 export function canDispatchTask(agent: Agent): boolean {
+  if (agent.is_busy) return false
   if (agent.status === 'provisioning' || agent.status === 'error') {
     return false
   }

@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Copy, Send, FileText } from 'lucide-react'
-import { agentsApi, serversApi, tasksApi, type TaskSummary } from '../lib/api'
+import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, Tag, X } from 'lucide-react'
+import { agentsApi, serversApi, tasksApi, workItemsApi, notificationsApi, type TaskSummary } from '../lib/api'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useI18n } from '../hooks/useI18n'
 import Terminal from '../components/Terminal'
@@ -11,7 +11,11 @@ import ProvisionLog from '../components/ProvisionLog'
 import DeleteAgentDialog from '../components/DeleteAgentDialog'
 import { canDispatchTask, getAgentRuntimeAction, type AgentRuntimeAction } from '../lib/agentRuntime'
 
-type TabType = 'terminal' | 'tasks' | 'provision'
+interface ResumeTab {
+  id: string
+  label: string
+  command: string
+}
 
 export default function AgentDetail() {
   const { id } = useParams<{ id: string }>()
@@ -19,16 +23,19 @@ export default function AgentDetail() {
   const [searchParams] = useSearchParams()
   const qc = useQueryClient()
   const { t } = useI18n()
-  const [activeTab, setActiveTab] = useState<TabType>(() => {
+  const [activeTab, setActiveTab] = useState<string>(() => {
     const tab = searchParams.get('tab')
     return (tab === 'terminal' || tab === 'tasks' || tab === 'provision') ? tab : 'tasks'
   })
+  const [resumeTabs, setResumeTabs] = useState<ResumeTab[]>([])
   const [showTaskModal, setShowTaskModal] = useState(false)
+  const [taskTitleInput, setTaskTitleInput] = useState('')
   const [taskInput, setTaskInput] = useState('')
   const [copyToast, setCopyToast] = useState(false)
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(() => searchParams.get('task'))
   const [taskPage, setTaskPage] = useState(1)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [selectedNotifIds, setSelectedNotifIds] = useState<string[]>([])
   const taskPerPage = 20
 
   const { data: agent, isLoading, refetch: refetchAgent } = useQuery({
@@ -46,6 +53,7 @@ export default function AgentDetail() {
   }, [agent?.status])
 
   const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
+  const { data: notifConfigs = [] } = useQuery({ queryKey: ['notifications'], queryFn: notificationsApi.list })
   const { data: tasksData } = useQuery({
     queryKey: ['tasks', id, taskPage],
     queryFn: () => tasksApi.list(id!, taskPage, taskPerPage),
@@ -55,6 +63,15 @@ export default function AgentDetail() {
   const tasks = tasksData?.items ?? []
   const totalTasks = tasksData?.total ?? 0
   const totalPages = Math.ceil(totalTasks / taskPerPage)
+
+  const reviewMutation = useMutation({
+    mutationFn: ({ workItemId, status }: { workItemId: string; status: string }) =>
+      workItemsApi.update(workItemId, { status }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks', id] })
+      qc.invalidateQueries({ queryKey: ['agents'] })
+    },
+  })
 
   const runtimeMutation = useMutation({
     mutationFn: (action: AgentRuntimeAction) => {
@@ -70,12 +87,15 @@ export default function AgentDetail() {
   })
 
   const createTaskMutation = useMutation({
-    mutationFn: (description: string) => tasksApi.create(id!, description),
+    mutationFn: ({ title, description, notification_ids }: { title: string; description: string; notification_ids?: string[] }) =>
+      tasksApi.create(id!, title, description, notification_ids),
     onSuccess: (task) => {
       setTaskPage(1)
       qc.invalidateQueries({ queryKey: ['tasks', id] })
+      setTaskTitleInput('')
       setTaskInput('')
       setShowTaskModal(false)
+      setSelectedNotifIds([])
       setExpandedTaskId(task.id)
       setActiveTab('tasks')
     },
@@ -108,10 +128,26 @@ export default function AgentDetail() {
   const statusMap: Record<string, string> = { running: 'badge-green', stopped: 'badge-gray', error: 'badge-red', provisioning: 'badge-yellow' }
   const statusLabel = t.status[agent.status as keyof typeof t.status] ?? agent.status
 
-  const tabLabels: Record<TabType, string> = {
-    terminal: t.agentDetail.terminal,
-    tasks: t.agentDetail.tasks,
-    provision: t.provision?.title ?? 'Provision',
+  const fixedTabs = [
+    { key: 'tasks', label: t.agentDetail.tasks },
+    { key: 'terminal', label: t.agentDetail.terminal },
+    { key: 'provision', label: t.provision?.title ?? 'Provision' },
+  ]
+
+  function addResumeTab(threadId: string, command: string) {
+    const existing = resumeTabs.find(rt => rt.id === threadId)
+    if (existing) {
+      setActiveTab(`resume-${threadId}`)
+      return
+    }
+    const shortId = threadId.length > 8 ? threadId.slice(-8) : threadId
+    setResumeTabs(prev => [...prev, { id: threadId, label: `Resume ${shortId}`, command }])
+    setActiveTab(`resume-${threadId}`)
+  }
+
+  function closeResumeTab(tabId: string) {
+    setResumeTabs(prev => prev.filter(rt => rt.id !== tabId))
+    if (activeTab === `resume-${tabId}`) setActiveTab('tasks')
   }
 
   const runtimeAction = getAgentRuntimeAction(agent)
@@ -139,6 +175,7 @@ export default function AgentDetail() {
                 <h1 className="font-bold text-gray-900 dark:text-white">{agent.name}</h1>
                 <span className={statusMap[agent.status] ?? 'badge-gray'}>{statusLabel}</span>
                 <span className="badge badge-blue">{agent.cli_type}</span>
+                {agent.is_busy && <span className="badge-yellow">{t.requirements.busy}</span>}
               </div>
               <div className="flex items-center gap-4 text-xs text-gray-500 mt-0.5">
                 <span className="flex items-center gap-1"><Server size={11} />{server?.name ?? agent.server_id}</span>
@@ -191,15 +228,35 @@ export default function AgentDetail() {
       {/* Tabs */}
       <div className="border-b border-gray-100 dark:border-gray-800 px-8">
         <div className="flex gap-1">
-          {(['tasks', 'terminal', 'provision'] as TabType[]).map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === tab ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
-            >
-              {tabLabels[tab]}
-              {tab === 'tasks' && totalTasks > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">{totalTasks}</span>
-              )}
-            </button>
+          {fixedTabs.map((tab, idx) => (
+            <React.Fragment key={tab.key}>
+              <button onClick={() => setActiveTab(tab.key)}
+                className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === tab.key ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+              >
+                {tab.label}
+                {tab.key === 'tasks' && totalTasks > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">{totalTasks}</span>
+                )}
+              </button>
+              {/* Insert resume tabs after the "tasks" tab */}
+              {idx === 0 && resumeTabs.map(rt => {
+                const tabKey = `resume-${rt.id}`
+                return (
+                  <button key={tabKey} onClick={() => setActiveTab(tabKey)}
+                    className={`group px-3 py-2.5 text-sm font-medium transition-colors flex items-center gap-1.5 ${activeTab === tabKey ? 'text-sky-500 border-b-2 border-sky-500' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                  >
+                    <TerminalIcon size={12} />
+                    {rt.label}
+                    <span
+                      onClick={(e) => { e.stopPropagation(); closeResumeTab(rt.id) }}
+                      className="ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X size={11} />
+                    </span>
+                  </button>
+                )
+              })}
+            </React.Fragment>
           ))}
         </div>
       </div>
@@ -207,6 +264,11 @@ export default function AgentDetail() {
       {/* Content */}
       <div className="flex-1 overflow-auto p-8">
         {activeTab === 'terminal' && <Terminal agentId={id!} className="h-full" />}
+        {resumeTabs.map(rt => (
+          activeTab === `resume-${rt.id}` && (
+            <Terminal key={`resume-${rt.id}`} agentId={id!} className="h-full" initialCommand={rt.command} />
+          )
+        ))}
         {activeTab === 'tasks' && (
           <div className="space-y-3">
             {tasks.length === 0 ? (
@@ -220,9 +282,17 @@ export default function AgentDetail() {
                   <div key={task.id}>
                     <TaskCard
                       task={task}
+                      agentId={id!}
                       t={t}
                       expanded={expandedTaskId === task.id}
                       onToggle={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
+                      onApprove={() => {
+                        if (task.work_item_id) reviewMutation.mutate({ workItemId: task.work_item_id, status: 'human_approved' })
+                      }}
+                      onReject={() => {
+                        if (task.work_item_id) reviewMutation.mutate({ workItemId: task.work_item_id, status: 'human_rejected' })
+                      }}
+                      onOpenResumeTerminal={(threadId, cmd) => addResumeTab(threadId, cmd)}
                     />
                     {expandedTaskId === task.id && (
                       <div className="mt-2 ml-4">
@@ -269,25 +339,58 @@ export default function AgentDetail() {
           <div className="bg-white border border-gray-200 rounded-xl w-full max-w-lg dark:bg-gray-900 dark:border-gray-700">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
               <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.dispatchTask}</h3>
-              <button onClick={() => setShowTaskModal(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+              <button onClick={() => { setShowTaskModal(false); setSelectedNotifIds([]) }} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
             </div>
-            <div className="p-6">
-              <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">{t.agents.dispatchTaskDesc}</label>
-              <textarea
-                className="input w-full"
-                rows={5}
-                value={taskInput}
-                onChange={e => setTaskInput(e.target.value)}
-                placeholder={t.agentDetail.taskPlaceholder(agent.cli_type)}
-                autoFocus
-              />
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">{t.agents.dispatchTaskTitle}</label>
+                <input
+                  className="input w-full"
+                  value={taskTitleInput}
+                  onChange={e => setTaskTitleInput(e.target.value)}
+                  placeholder={t.agents.dispatchTaskTitle}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">{t.agents.dispatchTaskDesc}</label>
+                <textarea
+                  className="input w-full"
+                  rows={5}
+                  value={taskInput}
+                  onChange={e => setTaskInput(e.target.value)}
+                  placeholder={t.agentDetail.taskPlaceholder(agent.cli_type)}
+                />
+              </div>
+              {/* Notification configs */}
+              {notifConfigs.filter(n => n.enabled).length > 0 && (
+                <div>
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.selectNotifications}</label>
+                  <div className="space-y-1.5">
+                    {notifConfigs.filter(n => n.enabled).map(n => (
+                      <label key={n.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedNotifIds.includes(n.id)}
+                          onChange={e => {
+                            if (e.target.checked) setSelectedNotifIds(prev => [...prev, n.id])
+                            else setSelectedNotifIds(prev => prev.filter(x => x !== n.id))
+                          }}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className="text-sm text-gray-700 dark:text-gray-300">{n.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               {createTaskMutation.error && (
                 <div className="text-red-500 text-sm mt-2">{String(createTaskMutation.error.message)}</div>
               )}
-              <div className="flex gap-3 justify-end pt-4">
-                <button onClick={() => setShowTaskModal(false)} className="btn-secondary">{t.common.cancel}</button>
+              <div className="flex gap-3 justify-end pt-2">
+                <button onClick={() => { setShowTaskModal(false); setSelectedNotifIds([]) }} className="btn-secondary">{t.common.cancel}</button>
                 <button
-                  onClick={() => { if (taskInput.trim()) createTaskMutation.mutate(taskInput.trim()) }}
+                  onClick={() => { if (taskInput.trim()) createTaskMutation.mutate({ title: taskTitleInput.trim(), description: taskInput.trim(), notification_ids: selectedNotifIds.length > 0 ? selectedNotifIds : undefined }) }}
                   className="btn-primary flex items-center gap-2"
                   disabled={createTaskMutation.isPending || !taskInput.trim()}
                 >
@@ -380,38 +483,102 @@ function ProvisionHistory({ agent, t }: {
   )
 }
 
-function TaskCard({ task, t, expanded, onToggle }: {
+function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, onOpenResumeTerminal }: {
   task: TaskSummary
+  agentId: string
   t: ReturnType<typeof useI18n>['t']
   expanded: boolean
   onToggle: () => void
+  onApprove?: () => void
+  onReject?: () => void
+  onOpenResumeTerminal?: (threadId: string, command: string) => void
 }) {
+  const [resumeCopied, setResumeCopied] = useState(false)
   const statusMap: Record<string, string> = {
-    pending: 'badge-gray', running: 'badge-yellow', completed: 'badge-green',
-    failed: 'badge-red', cancelled: 'badge-gray',
+    waiting: 'badge-gray', agent_in_progress: 'badge-yellow', agent_completed: 'badge-green',
+    agent_failed: 'badge-red', human_approved: 'badge-green', human_rejected: 'badge-red',
+    cancelled: 'badge-gray', closed: 'badge-gray',
   }
+  const isFromWorkItem = !!task.work_item_id
+  const showReviewActions = isFromWorkItem && task.status === 'agent_completed'
+  const agentDone = ['agent_completed', 'agent_failed', 'human_approved', 'human_rejected'].includes(task.status)
+  const canResume = agentDone && !!task.thread_id
+
+  async function handleCopyResumeCommand(e: React.MouseEvent) {
+    e.stopPropagation()
+    try {
+      const { ssh_cmd, local_cmd } = await agentsApi.getResumeCommand(agentId, task.thread_id!)
+      await navigator.clipboard.writeText(ssh_cmd ?? local_cmd)
+      setResumeCopied(true)
+      setTimeout(() => setResumeCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy resume command', err)
+    }
+  }
+
+  function handleOpenResumeTerminal(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (task.thread_id && onOpenResumeTerminal) {
+      onOpenResumeTerminal(task.thread_id, `codex resume ${task.thread_id}`)
+    }
+  }
+
   return (
     <div className="card cursor-pointer" onClick={onToggle}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-700 dark:text-gray-200 break-words">{task.description}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200 break-words">
+              {task.title}
+            </p>
+            {isFromWorkItem && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400 flex-shrink-0">
+                <Tag size={9} />
+                {t.agents.fromWorkItem}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-500 mt-1">{new Date(task.created_at).toLocaleString()}</p>
-          {task.task_dir && (
-            <p className="text-xs text-gray-400 mt-0.5 font-mono">{task.task_dir}</p>
-          )}
           {task.thread_id && (
             <p className="text-xs text-gray-400 mt-0.5 font-mono">thread: {task.thread_id}</p>
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {canResume && (
+            <>
+              <button
+                onClick={handleCopyResumeCommand}
+                className="px-2 py-1 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800"
+                title={t.agents.copyResumeCommand}
+              >
+                {resumeCopied ? t.agents.copied : <Copy size={12} />}
+              </button>
+              <button
+                onClick={handleOpenResumeTerminal}
+                className="px-2 py-1 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800"
+                title={t.agents.openResumeTerminal}
+              >
+                <TerminalIcon size={12} />
+              </button>
+            </>
+          )}
+          {showReviewActions && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); onApprove?.() }}
+                className="px-2 py-1 text-xs font-medium rounded border border-green-300 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/20"
+              >
+                {t.requirements.actionApprove}
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onReject?.() }}
+                className="px-2 py-1 text-xs font-medium rounded border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+              >
+                {t.requirements.actionReject}
+              </button>
+            </>
+          )}
           <span className={statusMap[task.status] ?? 'badge-gray'}>{t.status[task.status as keyof typeof t.status] ?? task.status}</span>
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggle() }}
-            className="btn-secondary btn-sm flex items-center gap-1"
-            title={expanded ? t.agentDetail.hideLogs : t.agentDetail.showLogs}
-          >
-            <FileText size={12} />
-          </button>
         </div>
       </div>
     </div>

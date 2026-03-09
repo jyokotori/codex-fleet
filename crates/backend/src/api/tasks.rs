@@ -108,7 +108,7 @@ pub async fn create_task(
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     sqlx::query!(
-        "INSERT INTO tasks (id, agent_id, description, status, task_dir, created_at, started_at) VALUES ($1, $2, $3, 'running', $4, $5, $5)",
+        "INSERT INTO tasks (id, agent_id, description, status, task_dir, created_at, started_at) VALUES ($1, $2, $3, 'agent_in_progress', $4, $5, $5)",
         id, agent_id, req.description, task_dir, now
     )
     .execute(&state.db)
@@ -118,7 +118,7 @@ pub async fn create_task(
         id,
         agent_id,
         description: req.description,
-        status: "running".into(),
+        status: "agent_in_progress".into(),
         task_dir,
         created_at: now.to_string(),
         started_at: Some(now.to_string()),

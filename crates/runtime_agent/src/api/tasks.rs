@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    Extension, Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -9,17 +9,275 @@ use uuid::Uuid;
 
 use crate::api::agents::{get_server_credentials, sync_agent_status};
 use crate::ssh::terminal::open_exec_channel;
-use shared_kernel::{AppContext, AppError, Result};
+use shared_kernel::{AppContext, AppError, AuthContext, Result};
+
+/// Check if an agent is currently busy (has active work items or running tasks).
+pub async fn is_agent_busy(db: &sqlx::PgPool, agent_id: &str) -> Result<bool> {
+    let busy = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM work_items
+            WHERE assigned_agent_id = $1 AND status IN ('agent_in_progress','agent_completed')
+        ) OR EXISTS(
+            SELECT 1 FROM tasks WHERE agent_id = $1 AND status = 'agent_in_progress'
+        ) AS "busy!""#,
+        agent_id
+    )
+    .fetch_one(db)
+    .await?;
+    Ok(busy)
+}
+
+/// Core task dispatch logic shared by the HTTP handler and the scheduler.
+pub async fn dispatch_task_for_agent(
+    state: &AppContext,
+    agent_id: &str,
+    title: &str,
+    description: &str,
+    work_item_id: Option<String>,
+    notification_ids: Vec<String>,
+    user_id: Option<String>,
+    username: String,
+) -> Result<Task> {
+    let _ = sync_agent_status(state, agent_id).await?;
+    let (creds, agent_info) = get_server_credentials(state, agent_id).await?;
+
+    if agent_info.status == "provisioning" || agent_info.status == "error" {
+        return Err(AppError::Conflict(format!(
+            "Agent is {} and cannot accept tasks",
+            agent_info.status
+        )));
+    }
+
+    if agent_info.use_docker && agent_info.status != "running" {
+        return Err(AppError::Conflict(
+            "Docker agent must be running before dispatching tasks".into(),
+        ));
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now();
+
+    // Build CLI command and task_dir based on cli_type
+    let (cli_cmd, task_dir) = match agent_info.cli_type.as_str() {
+        "codex" => {
+            let dir = task_dir_path(agent_info.use_docker, agent_id, &id, &now);
+            let cmd = format!(
+                "mkdir -p '{}' && codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
+                dir, dir, shell_quote(description)
+            );
+            (cmd, dir)
+        }
+        "claude" | "claude_code" => (format!("claude {}", shell_quote(description)), String::new()),
+        "gemini" | "gemini_cli" => (format!("gemini {}", shell_quote(description)), String::new()),
+        "opencode" => (format!("opencode {}", shell_quote(description)), String::new()),
+        _ => return Err(AppError::BadRequest("Unknown cli_type".into())),
+    };
+
+    // Wrap with docker exec if needed
+    let full_cmd = if agent_info.use_docker {
+        let container = agent_info
+            .docker_container_name
+            .as_deref()
+            .unwrap_or("");
+        format!(
+            "docker exec {} sh -lc {}",
+            container,
+            shell_quote(&format!("cd /workspace && {}", cli_cmd))
+        )
+    } else {
+        format!("cd {} && {}", agent_info.workdir, cli_cmd)
+    };
+
+    // Insert task record
+    let notification_ids_json = serde_json::to_string(&notification_ids).unwrap_or_else(|_| "[]".into());
+    sqlx::query!(
+        "INSERT INTO tasks (id, agent_id, title, description, status, work_item_id, task_log, task_dir, notification_ids, user_id, username, created_at, started_at) VALUES ($1, $2, $3, $4, 'agent_in_progress', $5, '', $6, $7, $8, $9, $10, $11)",
+        id, agent_id, title, description, work_item_id, task_dir, notification_ids_json, user_id, username, now, now
+    )
+    .execute(&state.db)
+    .await?;
+
+    // Create broadcast channel for live streaming
+    let (tx, _) = broadcast::channel::<String>(256);
+    {
+        let mut channels = state.task_channels.lock().await;
+        channels.insert(id.clone(), tx.clone());
+    }
+
+    // Spawn background task for streaming exec
+    let task_id = id.clone();
+    let db = state.db.clone();
+    let task_channels = state.task_channels.clone();
+    let work_item_id_clone = work_item_id.clone();
+    let task_dir_clone = task_dir.clone();
+    let use_docker = agent_info.use_docker;
+    let container_name = agent_info.docker_container_name.clone().unwrap_or_default();
+    let notif_ids = notification_ids.clone();
+    let notif_title = title.to_string();
+    let notif_agent_id = agent_id.to_string();
+    let notif_user_id = user_id.clone();
+    let notif_username = username.clone();
+    tokio::spawn(async move {
+        let result = run_task_exec(
+            &creds.ip,
+            creds.port,
+            &creds.username,
+            &creds.auth_type,
+            creds.password.as_deref(),
+            creds.ssh_key_content.as_deref(),
+            &full_cmd,
+            &task_id,
+            &db,
+            &tx,
+        )
+        .await;
+
+        let (status, completed_at) = match result {
+            Ok(exit_code) => {
+                let s = if exit_code == Some(0) || exit_code.is_none() {
+                    "agent_completed"
+                } else {
+                    "agent_failed"
+                };
+                (s, Some(Utc::now()))
+            }
+            Err(e) => {
+                let err_line = format!("[error] {}\n", e);
+                let _ = sqlx::query!(
+                    "UPDATE tasks SET task_log = task_log || $1 WHERE id = $2",
+                    err_line,
+                    task_id
+                )
+                .execute(&db)
+                .await;
+                let _ = tx.send(err_line);
+                ("agent_failed", Some(Utc::now()))
+            }
+        };
+
+        // Try to read result.md from task_dir if it exists
+        let result_md = if !task_dir_clone.is_empty() && status == "agent_completed" {
+            let cat_cmd = if use_docker {
+                format!(
+                    "docker exec {} cat {}/result.md",
+                    container_name, task_dir_clone
+                )
+            } else {
+                format!("cat {}/result.md", task_dir_clone)
+            };
+            tracing::debug!("Reading result.md for task {}: {}", task_id, cat_cmd);
+            match read_remote_file(
+                &creds.ip, creds.port, &creds.username, &creds.auth_type,
+                creds.password.as_deref(), creds.ssh_key_content.as_deref(),
+                &cat_cmd,
+            ).await {
+                Ok(content) => {
+                    tracing::info!("Read result.md for task {} ({} bytes)", task_id, content.len());
+                    content
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to read result.md for task {}: {e}", task_id);
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        let _ = sqlx::query!(
+            "UPDATE tasks SET status = $1, completed_at = $2, result_md = $3 WHERE id = $4",
+            status,
+            completed_at,
+            result_md,
+            task_id
+        )
+        .execute(&db)
+        .await;
+
+        // Sync work_item status with task status
+        if let Some(ref wi_id) = work_item_id_clone {
+            let wi_status = if status == "agent_completed" { "agent_completed" } else { "agent_failed" };
+            let _ = sqlx::query!(
+                "UPDATE work_items SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'agent_in_progress'",
+                wi_status,
+                wi_id
+            )
+            .execute(&db)
+            .await;
+        }
+
+        // Send webhook notifications
+        if !notif_ids.is_empty() {
+            let mut payload = serde_json::json!({
+                "event": status,
+                "task": {
+                    "id": task_id,
+                    "agent_id": notif_agent_id,
+                    "title": notif_title,
+                    "status": status,
+                    "user_id": notif_user_id,
+                    "username": notif_username,
+                    "created_at": now.to_string(),
+                    "completed_at": completed_at.map(|t| t.to_string()),
+                }
+            });
+            // Attach work_item info if linked
+            if let Some(ref wi_id) = work_item_id_clone.clone() {
+                if let Ok(Some(wi)) = sqlx::query!(
+                    "SELECT id, project_id, title, status, priority, assigned_agent_id FROM work_items WHERE id = $1",
+                    wi_id
+                ).fetch_optional(&db).await {
+                    payload["work_item"] = serde_json::json!({
+                        "id": wi.id,
+                        "project_id": wi.project_id,
+                        "title": wi.title,
+                        "status": wi.status,
+                        "priority": wi.priority,
+                        "assigned_agent_id": wi.assigned_agent_id,
+                    });
+                }
+            }
+            shared_kernel::send_task_notification(&db, &notif_ids, status, payload).await;
+        }
+
+        // Clean up broadcast channel
+        let mut channels = task_channels.lock().await;
+        channels.remove(&task_id);
+    });
+
+    Ok(Task {
+        id,
+        agent_id: agent_id.to_string(),
+        title: title.to_string(),
+        description: description.to_string(),
+        status: "agent_in_progress".into(),
+        work_item_id,
+        task_log: String::new(),
+        task_dir,
+        result_md: String::new(),
+        thread_id: None,
+        notification_ids: notification_ids_json,
+        user_id,
+        username,
+        created_at: now.to_string(),
+        started_at: Some(now.to_string()),
+        completed_at: None,
+    })
+}
 
 /// Lightweight task for list queries (no task_log).
 #[derive(Serialize)]
 pub struct TaskSummary {
     pub id: String,
     pub agent_id: String,
-    pub description: String,
+    pub title: String,
     pub status: String,
+    pub work_item_id: Option<String>,
     pub task_dir: String,
     pub thread_id: Option<String>,
+    pub notification_ids: String,
+    pub user_id: Option<String>,
+    pub username: String,
     pub created_at: String,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
@@ -30,11 +288,17 @@ pub struct TaskSummary {
 pub struct Task {
     pub id: String,
     pub agent_id: String,
+    pub title: String,
     pub description: String,
     pub status: String,
+    pub work_item_id: Option<String>,
     pub task_log: String,
     pub task_dir: String,
+    pub result_md: String,
     pub thread_id: Option<String>,
+    pub notification_ids: String,
+    pub user_id: Option<String>,
+    pub username: String,
     pub created_at: String,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
@@ -63,7 +327,9 @@ fn task_dir_path(use_docker: bool, agent_id: &str, task_id: &str, now: &chrono::
 
 #[derive(Deserialize)]
 pub struct CreateTaskRequest {
+    pub title: Option<String>,
     pub description: String,
+    pub notification_ids: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +344,7 @@ fn shell_quote(value: &str) -> String {
 
 pub async fn create_task(
     State(state): State<AppContext>,
+    Extension(auth): Extension<AuthContext>,
     Path(agent_id): Path<String>,
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<Json<Task>> {
@@ -87,139 +354,18 @@ pub async fn create_task(
         ));
     }
 
-    let _ = sync_agent_status(&state, &agent_id).await?;
-    let (creds, agent_info) = get_server_credentials(&state, &agent_id).await?;
-
-    if agent_info.status == "provisioning" || agent_info.status == "error" {
-        return Err(AppError::Conflict(format!(
-            "Agent is {} and cannot accept tasks",
-            agent_info.status
-        )));
+    // Block dispatch if agent is busy
+    if is_agent_busy(&state.db, &agent_id).await? {
+        return Err(AppError::Conflict("Agent is busy".into()));
     }
 
-    if agent_info.use_docker && agent_info.status != "running" {
-        return Err(AppError::Conflict(
-            "Docker agent must be running before dispatching tasks".into(),
-        ));
-    }
-
-    let id = Uuid::new_v4().to_string();
-    let now = Utc::now();
-
-    // Build CLI command and task_dir based on cli_type
-    let (cli_cmd, task_dir) = match agent_info.cli_type.as_str() {
-        "codex" => {
-            let dir = task_dir_path(agent_info.use_docker, &agent_id, &id, &now);
-            let cmd = format!(
-                "mkdir -p '{}' && codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
-                dir, dir, shell_quote(&req.description)
-            );
-            (cmd, dir)
-        }
-        "claude" | "claude_code" => (format!("claude {}", shell_quote(&req.description)), String::new()),
-        "gemini" | "gemini_cli" => (format!("gemini {}", shell_quote(&req.description)), String::new()),
-        "opencode" => (format!("opencode {}", shell_quote(&req.description)), String::new()),
-        _ => return Err(AppError::BadRequest("Unknown cli_type".into())),
-    };
-
-    // Wrap with docker exec if needed
-    let full_cmd = if agent_info.use_docker {
-        let container = agent_info
-            .docker_container_name
-            .as_deref()
-            .unwrap_or("");
-        format!(
-            "docker exec {} sh -lc {}",
-            container,
-            shell_quote(&format!("cd /workspace && {}", cli_cmd))
-        )
-    } else {
-        format!("cd {} && {}", agent_info.workdir, cli_cmd)
-    };
-
-    // Insert task record
-    sqlx::query!(
-        "INSERT INTO tasks (id, agent_id, description, status, task_log, task_dir, created_at, started_at) VALUES ($1, $2, $3, 'running', '', $4, $5, $6)",
-        id, agent_id, req.description, task_dir, now, now
-    )
-    .execute(&state.db)
-    .await?;
-
-    // Create broadcast channel for live streaming
-    let (tx, _) = broadcast::channel::<String>(256);
-    {
-        let mut channels = state.task_channels.lock().await;
-        channels.insert(id.clone(), tx.clone());
-    }
-
-    // Spawn background task for streaming exec
-    let task_id = id.clone();
-    let db = state.db.clone();
-    let task_channels = state.task_channels.clone();
-    tokio::spawn(async move {
-        let result = run_task_exec(
-            &creds.ip,
-            creds.port,
-            &creds.username,
-            &creds.auth_type,
-            creds.password.as_deref(),
-            creds.ssh_key_content.as_deref(),
-            &full_cmd,
-            &task_id,
-            &db,
-            &tx,
-        )
-        .await;
-
-        let (status, completed_at) = match result {
-            Ok(exit_code) => {
-                let s = if exit_code == Some(0) || exit_code.is_none() {
-                    "completed"
-                } else {
-                    "failed"
-                };
-                (s, Some(Utc::now()))
-            }
-            Err(e) => {
-                let err_line = format!("[error] {}\n", e);
-                let _ = sqlx::query!(
-                    "UPDATE tasks SET task_log = task_log || $1 WHERE id = $2",
-                    err_line,
-                    task_id
-                )
-                .execute(&db)
-                .await;
-                let _ = tx.send(err_line);
-                ("failed", Some(Utc::now()))
-            }
-        };
-
-        let _ = sqlx::query!(
-            "UPDATE tasks SET status = $1, completed_at = $2 WHERE id = $3",
-            status,
-            completed_at,
-            task_id
-        )
-        .execute(&db)
-        .await;
-
-        // Clean up broadcast channel
-        let mut channels = task_channels.lock().await;
-        channels.remove(&task_id);
-    });
-
-    Ok(Json(Task {
-        id,
-        agent_id,
-        description: req.description,
-        status: "running".into(),
-        task_log: String::new(),
-        task_dir,
-        thread_id: None,
-        created_at: now.to_string(),
-        started_at: Some(now.to_string()),
-        completed_at: None,
-    }))
+    let title = req.title.unwrap_or_default();
+    let notification_ids = req.notification_ids.unwrap_or_default();
+    let task = dispatch_task_for_agent(
+        &state, &agent_id, &title, &req.description, None,
+        notification_ids, Some(auth.user_id), auth.display_name,
+    ).await?;
+    Ok(Json(task))
 }
 
 /// Flush accumulated db_buf to DB in a single UPDATE, then clear it.
@@ -239,6 +385,25 @@ async fn flush_log_buf(db: &sqlx::PgPool, task_id: &str, db_buf: &mut String) {
 
 const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const FLUSH_SIZE: usize = 4096;
+
+/// Run a command via SSH and return its stdout as a string.
+async fn read_remote_file(
+    ip: &str, port: u16, username: &str, auth_type: &str,
+    password: Option<&str>, ssh_key_content: Option<&str>,
+    command: &str,
+) -> anyhow::Result<String> {
+    let (mut channel, _handle) =
+        open_exec_channel(ip, port, username, auth_type, password, ssh_key_content, command).await?;
+    let mut output = Vec::new();
+    loop {
+        match channel.wait().await {
+            Some(russh::ChannelMsg::Data { data }) => output.extend_from_slice(&data),
+            Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => break,
+            _ => {}
+        }
+    }
+    Ok(String::from_utf8_lossy(&output).to_string())
+}
 
 async fn run_task_exec(
     ip: &str,
@@ -369,7 +534,7 @@ pub async fn list_tasks(
     .unwrap_or(0);
 
     let rows = sqlx::query!(
-        "SELECT id, agent_id, description, status, task_dir, thread_id, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        "SELECT id, agent_id, title, status, work_item_id, task_dir, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
         agent_id, per_page, offset
     )
     .fetch_all(&state.db)
@@ -380,10 +545,14 @@ pub async fn list_tasks(
         .map(|r| TaskSummary {
             id: r.id,
             agent_id: r.agent_id,
-            description: r.description,
+            title: r.title,
             status: r.status,
+            work_item_id: r.work_item_id,
             task_dir: r.task_dir,
             thread_id: r.thread_id,
+            notification_ids: r.notification_ids,
+            user_id: r.user_id,
+            username: r.username,
             created_at: r.created_at.to_string(),
             started_at: r.started_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
             completed_at: r.completed_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
@@ -398,7 +567,7 @@ pub async fn get_task(
     Path(task_id): Path<String>,
 ) -> Result<Json<Task>> {
     let row = sqlx::query!(
-        "SELECT id, agent_id, description, status, task_log, task_dir, thread_id, created_at, started_at, completed_at FROM tasks WHERE id = $1",
+        "SELECT id, agent_id, title, description, status, work_item_id, task_log, task_dir, result_md, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE id = $1",
         task_id
     )
     .fetch_optional(&state.db)
@@ -408,11 +577,17 @@ pub async fn get_task(
     Ok(Json(Task {
         id: row.id,
         agent_id: row.agent_id,
+        title: row.title,
         description: row.description,
         status: row.status,
+        work_item_id: row.work_item_id,
         task_log: row.task_log,
         task_dir: row.task_dir,
+        result_md: row.result_md,
         thread_id: row.thread_id,
+        notification_ids: row.notification_ids,
+        user_id: row.user_id,
+        username: row.username,
         created_at: row.created_at.to_string(),
         started_at: row.started_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
         completed_at: row.completed_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),

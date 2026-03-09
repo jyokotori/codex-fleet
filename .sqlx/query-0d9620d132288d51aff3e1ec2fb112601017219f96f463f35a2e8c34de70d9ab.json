@@ -1,16 +1,17 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE tasks SET status = $1, completed_at = $2 WHERE id = $3",
+  "query": "UPDATE tasks SET status = $1, completed_at = $2, result_md = $3 WHERE id = $4",
   "describe": {
     "columns": [],
     "parameters": {
       "Left": [
         "Text",
         "Timestamptz",
+        "Text",
         "Text"
       ]
     },
     "nullable": []
   },
-  "hash": "965d8c90a8725756c2284d5d60440e3ae063db456f1ad5df61e11a8cd222f09c"
+  "hash": "0d9620d132288d51aff3e1ec2fb112601017219f96f463f35a2e8c34de70d9ab"
 }

@@ -65,6 +65,9 @@ async fn main() -> anyhow::Result<()> {
     // Static file fallback for SPA
     let static_route = Router::new().fallback(embed::static_handler);
 
+    // Start the work-item scheduler
+    tokio::spawn(runtime_agent::scheduler::run_scheduler(state.clone()));
+
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_api)

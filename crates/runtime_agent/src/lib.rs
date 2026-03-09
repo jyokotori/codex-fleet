@@ -2,6 +2,7 @@ mod api;
 mod application;
 mod domain;
 mod infrastructure;
+pub mod scheduler;
 mod ssh;
 mod ws;
 
@@ -33,6 +34,14 @@ pub fn router() -> Router<AppContext> {
             "/api/agents/{id}/terminal-command",
             get(api::agents::terminal_command),
         )
+        .route(
+            "/api/agents/{id}/resume-command",
+            get(api::agents::resume_command),
+        )
+        .route(
+            "/api/agents/{id}/clone",
+            post(api::agents::clone_agent),
+        )
         .route("/api/agents/{id}/tasks", post(api::tasks::create_task))
         .route("/api/agents/{id}/tasks", get(api::tasks::list_tasks))
         .route("/api/tasks/{id}", get(api::tasks::get_task))
@@ -43,6 +52,7 @@ pub fn router() -> Router<AppContext> {
         .route("/api/projects/{id}", delete(api::requirements::delete_project))
         .route("/api/projects/{id}/work-items", get(api::requirements::list_work_items))
         .route("/api/projects/{id}/work-items", post(api::requirements::create_work_item))
+        .route("/api/work-items/by-execution/{execution_id}", get(api::requirements::get_work_item_by_execution))
         .route("/api/work-items/{id}", get(api::requirements::get_work_item))
         .route("/api/work-items/{id}", put(api::requirements::update_work_item))
         .route("/api/work-items/{id}", delete(api::requirements::delete_work_item))

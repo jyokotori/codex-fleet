@@ -55,7 +55,7 @@ async fn handle_task_logs_socket(mut socket: WebSocket, state: AppContext, task_
     }
 
     // 4. If task is already done, nothing more to stream
-    if status != "running" {
+    if status != "agent_in_progress" {
         let done_msg = serde_json::json!({
             "type": "task_done",
             "status": status,

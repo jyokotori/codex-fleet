@@ -305,6 +305,7 @@ export interface Agent {
   status: string
   provision_log: string
   provision_steps: Record<string, string>
+  is_busy: boolean
   created_at: string
 }
 
@@ -352,23 +353,33 @@ export const agentsApi = {
     request<{ message: string }>(`/api/agents/${id}/resume`, { method: 'POST' }),
   getTerminalCommand: (id: string) =>
     request<TerminalCommandResponse>(`/api/agents/${id}/terminal-command`),
+  getResumeCommand: (id: string, threadId: string) =>
+    request<TerminalCommandResponse>(`/api/agents/${id}/resume-command?thread_id=${encodeURIComponent(threadId)}`),
+  clone: (id: string) =>
+    request<Agent>(`/api/agents/${id}/clone`, { method: 'POST' }),
 }
 
 // Tasks
 export interface TaskSummary {
   id: string
   agent_id: string
-  description: string
+  title: string
   status: string
+  work_item_id?: string
   task_dir: string
   thread_id?: string
+  notification_ids: string
+  user_id?: string
+  username: string
   created_at: string
   started_at?: string
   completed_at?: string
 }
 
 export interface Task extends TaskSummary {
+  description: string
   task_log: string
+  result_md: string
 }
 
 export interface PaginatedTasks {
@@ -381,10 +392,10 @@ export interface PaginatedTasks {
 export const tasksApi = {
   list: (agentId: string, page = 1, perPage = 20) =>
     request<PaginatedTasks>(`/api/agents/${agentId}/tasks?page=${page}&per_page=${perPage}`),
-  create: (agentId: string, description: string) =>
+  create: (agentId: string, title: string, description: string, notification_ids?: string[]) =>
     request<Task>(`/api/agents/${agentId}/tasks`, {
       method: 'POST',
-      body: JSON.stringify({ description }),
+      body: JSON.stringify({ title, description, notification_ids }),
     }),
   get: (taskId: string) => request<Task>(`/api/tasks/${taskId}`),
 }
@@ -410,7 +421,9 @@ export interface WorkItem {
   priority: string
   assigned_agent_id?: string
   assigned_user_id?: string
+  assigned_username: string
   execution_id?: string
+  notification_ids: string
   created_at: string
   updated_at: string
 }
@@ -442,16 +455,18 @@ export const projectsApi = {
     return request<WorkItem[]>(`/api/projects/${projectId}/work-items${query}`)
   },
   createWorkItem: (projectId: string, data: {
-    parent_id?: string; type: string; title: string; description?: string; priority?: string; assigned_user_id?: string
+    parent_id?: string; type: string; title: string; description?: string; priority?: string; assigned_agent_id?: string; assigned_user_id?: string; notification_ids?: string[]
   }) =>
     request<WorkItem>(`/api/projects/${projectId}/work-items`, { method: 'POST', body: JSON.stringify(data) }),
 }
 
 export const workItemsApi = {
   get: (id: string) => request<WorkItem>(`/api/work-items/${id}`),
+  getByExecutionId: (executionId: string) =>
+    request<WorkItem>(`/api/work-items/by-execution/${executionId}`),
   update: (id: string, data: {
     title?: string; description?: string; priority?: string; status?: string;
-    assigned_agent_id?: string; assigned_user_id?: string; execution_id?: string
+    assigned_agent_id?: string; assigned_user_id?: string; execution_id?: string; notification_ids?: string[]
   }) =>
     request<WorkItem>(`/api/work-items/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
