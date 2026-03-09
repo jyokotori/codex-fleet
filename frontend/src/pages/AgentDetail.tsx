@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Play, Square, RotateCcw, Trash2, ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, Tag, X } from 'lucide-react'
+import { ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, Tag, X } from 'lucide-react'
 import { agentsApi, serversApi, tasksApi, workItemsApi, notificationsApi, type TaskSummary } from '../lib/api'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useI18n } from '../hooks/useI18n'
 import Terminal from '../components/Terminal'
 import TaskLogViewer from '../components/TaskLogViewer'
 import ProvisionLog from '../components/ProvisionLog'
-import DeleteAgentDialog from '../components/DeleteAgentDialog'
-import { canDispatchTask, getAgentRuntimeAction, type AgentRuntimeAction } from '../lib/agentRuntime'
+import { canDispatchTask } from '../lib/agentRuntime'
 
 interface ResumeTab {
   id: string
@@ -35,7 +34,6 @@ export default function AgentDetail() {
   const [copyToast, setCopyToast] = useState(false)
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(() => searchParams.get('task'))
   const [taskPage, setTaskPage] = useState(1)
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [selectedNotifIds, setSelectedNotifIds] = useState<string[]>([])
   const [resumeConfirm, setResumeConfirm] = useState<{ threadId: string; command: string; title: string } | null>(null)
   const [closeConfirm, setCloseConfirm] = useState<string | null>(null)
@@ -95,19 +93,6 @@ export default function AgentDetail() {
       qc.invalidateQueries({ queryKey: ['tasks', id] })
       qc.invalidateQueries({ queryKey: ['agents'] })
     },
-  })
-
-  const runtimeMutation = useMutation({
-    mutationFn: (action: AgentRuntimeAction) => {
-      if (action === 'start') return agentsApi.start(id!)
-      if (action === 'pause') return agentsApi.stop(id!)
-      return agentsApi.restart(id!)
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
-  })
-  const deleteMutation = useMutation({
-    mutationFn: () => agentsApi.delete(id!),
-    onSuccess: () => navigate('/agents'),
   })
 
   const createTaskMutation = useMutation({
@@ -199,14 +184,6 @@ export default function AgentDetail() {
     setCloseConfirm(null)
   }
 
-  const runtimeAction = getAgentRuntimeAction(agent)
-  const RuntimeIcon = runtimeAction === 'start' ? Play : runtimeAction === 'pause' ? Square : RotateCcw
-  const runtimeLabel = runtimeAction === 'start'
-    ? t.agents.start
-    : runtimeAction === 'pause'
-      ? t.agents.pause
-      : t.agents.restart
-
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -256,20 +233,6 @@ export default function AgentDetail() {
                 {copyToast ? t.agents.copied : t.agents.copyCommand}
               </button>
             </div>
-
-            {runtimeAction && (
-              <button
-                onClick={() => runtimeMutation.mutate(runtimeAction)}
-                className="btn-secondary btn-sm flex items-center gap-1"
-                disabled={runtimeMutation.isPending}
-              >
-                <RuntimeIcon size={13} />
-                {runtimeLabel}
-              </button>
-            )}
-            <button onClick={() => setShowDeleteDialog(true)} className="btn-danger btn-sm">
-              <Trash2 size={13} />
-            </button>
           </div>
         </div>
       </div>
@@ -516,14 +479,6 @@ export default function AgentDetail() {
           </div>
         </div>
       )}
-
-      <DeleteAgentDialog
-        agent={agent}
-        open={showDeleteDialog}
-        pending={deleteMutation.isPending}
-        onClose={() => setShowDeleteDialog(false)}
-        onConfirm={(_agent) => deleteMutation.mutate()}
-      />
     </div>
   )
 }

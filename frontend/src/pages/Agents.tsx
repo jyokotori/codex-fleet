@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy } from 'lucide-react'
+import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
   agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi,
@@ -81,6 +81,8 @@ export default function Agents() {
   const [dispatchAgent, setDispatchAgent] = useState<Agent | null>(null)
   const [dispatchInput, setDispatchInput] = useState('')
   const [deleteAgent, setDeleteAgent] = useState<Agent | null>(null)
+  const [copySourceName, setCopySourceName] = useState<string | null>(null)
+  const [runtimeConfirm, setRuntimeConfirm] = useState<{ agent: Agent; action: Exclude<AgentRuntimeAction, 'start'> } | null>(null)
 
   const { data: agents = [], isLoading } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
   const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
@@ -109,8 +111,7 @@ export default function Agents() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
-      setShowModal(false)
-      setForm(defaultForm)
+      resetCreateModal()
     },
   })
 
@@ -150,12 +151,10 @@ export default function Agents() {
       if (action === 'pause') return agentsApi.stop(id)
       return agentsApi.restart(id)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
-  })
-
-  const cloneMutation = useMutation({
-    mutationFn: (id: string) => agentsApi.clone(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      setRuntimeConfirm(null)
+    },
   })
 
   const [dispatchTitle, setDispatchTitle] = useState('')
@@ -177,7 +176,49 @@ export default function Agents() {
     createMutation.mutate(form)
   }
 
+  function resetCreateModal() {
+    createMutation.reset()
+    setShowModal(false)
+    setForm(defaultForm)
+    setCopySourceName(null)
+  }
+
+  function handleCreateOpen() {
+    createMutation.reset()
+    setForm(defaultForm)
+    setCopySourceName(null)
+    setShowModal(true)
+  }
+
+  function handleCopyOpen(agent: Agent) {
+    const useGit = Boolean(agent.git_repo)
+    const gitAuthType = useGit && ['passwordless', 'https_password', 'ssh_key'].includes(agent.git_auth_type)
+      ? agent.git_auth_type
+      : defaultForm.git_auth_type
+
+    createMutation.reset()
+    setForm({
+      name: t.agents.copyName(agent.name),
+      server_id: agent.server_id,
+      use_docker: agent.use_docker,
+      use_git: useGit,
+      git_repo: agent.git_repo,
+      git_branch: agent.git_branch || defaultForm.git_branch,
+      git_auth_type: gitAuthType,
+      git_username: agent.git_username ?? '',
+      git_password: '',
+      cli_type: agent.cli_type,
+      codex_config_id: agent.codex_config_id ?? '',
+      agents_md_id: agent.agents_md_id ?? '',
+      docker_config_id: agent.docker_config_id ?? '',
+      docker_image: agent.docker_image || defaultForm.docker_image,
+    })
+    setCopySourceName(agent.name)
+    setShowModal(true)
+  }
+
   function handleEditOpen(agent: Agent) {
+    updateMutation.reset()
     setEditAgent(agent)
     setEditForm({
       name: agent.name,
@@ -198,7 +239,11 @@ export default function Agents() {
   function handleRuntimeAction(agent: Agent) {
     const action = getAgentRuntimeAction(agent)
     if (!action) return
-    runtimeMutation.mutate({ id: agent.id, action })
+    if (action === 'start') {
+      runtimeMutation.mutate({ id: agent.id, action })
+      return
+    }
+    setRuntimeConfirm({ agent, action })
   }
 
   return (
@@ -208,7 +253,7 @@ export default function Agents() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t.agents.title}</h1>
           <p className="text-gray-500 mt-1">{t.agents.subtitle}</p>
         </div>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
+        <button onClick={handleCreateOpen} className="btn-primary flex items-center gap-2">
           <Plus size={16} />{t.agents.newAgent}
         </button>
       </div>
@@ -228,7 +273,7 @@ export default function Agents() {
               onRuntimeAction={() => handleRuntimeAction(agent)}
               onEdit={() => handleEditOpen(agent)}
               onDispatch={() => { setDispatchAgent(agent); setDispatchTitle(''); setDispatchInput('') }}
-              onClone={() => cloneMutation.mutate(agent.id)}
+              onCopy={() => handleCopyOpen(agent)}
               onDelete={() => setDeleteAgent(agent)}
               runtimePending={runtimeMutation.isPending}
             />
@@ -241,10 +286,17 @@ export default function Agents() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-200 rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto dark:bg-gray-900 dark:border-gray-700">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-900 z-10">
-              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.newAgent}</h3>
-              <button onClick={() => { setShowModal(false); setForm(defaultForm) }} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">
+                {copySourceName ? t.agents.copyAgentTitle(copySourceName) : t.agents.newAgent}
+              </h3>
+              <button onClick={resetCreateModal} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              {copySourceName && form.use_git && form.git_auth_type === 'https_password' && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                  {t.agents.copyPasswordHint}
+                </div>
+              )}
 
               {/* Agent Name + Server */}
               <div className="grid grid-cols-2 gap-4">
@@ -298,7 +350,7 @@ export default function Agents() {
                     <option value="">{t.agents.noConfig}</option>
                     {codexConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
-                  <button type="button" title="Open config page" onClick={() => window.open('/configs/config-files/codex', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
+                  <button type="button" title={t.agents.openCodexConfigPage} onClick={() => window.open('/configs/config-files/codex', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
                   <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['codex-configs'] })} className="btn-secondary btn-sm px-2.5"><RefreshCw size={13} /></button>
                 </div>
               </div>
@@ -310,7 +362,7 @@ export default function Agents() {
                     <option value="">{t.agents.noConfig}</option>
                     {agentsMdConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
-                  <button type="button" title="Open AGENTS.md page" onClick={() => window.open('/configs/agents-md', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
+                  <button type="button" title={t.agents.openAgentsMdPage} onClick={() => window.open('/configs/agents-md', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
                   <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['configs', 'agents_md'] })} className="btn-secondary btn-sm px-2.5"><RefreshCw size={13} /></button>
                 </div>
               </div>
@@ -421,7 +473,7 @@ export default function Agents() {
                         <option value="">{t.agents.noConfig}</option>
                         {dockerConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
-                      <button type="button" title="Open Docker config page" onClick={() => window.open('/configs/docker', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
+                      <button type="button" title={t.agents.openDockerConfigPage} onClick={() => window.open('/configs/docker', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
                       <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['docker-configs'] })} className="btn-secondary btn-sm px-2.5"><RefreshCw size={13} /></button>
                     </div>
                   </div>
@@ -432,7 +484,7 @@ export default function Agents() {
                 <div className="text-red-500 dark:text-red-400 text-sm">{String(createMutation.error.message)}</div>
               )}
               <div className="flex gap-3 justify-end pt-2">
-                <button type="button" onClick={() => { setShowModal(false); setForm(defaultForm) }} className="btn-secondary">{t.common.cancel}</button>
+                <button type="button" onClick={resetCreateModal} className="btn-secondary">{t.common.cancel}</button>
                 <button type="submit" className="btn-primary" disabled={createMutation.isPending}>
                   {createMutation.isPending ? t.agents.creating : t.agents.createAgent}
                 </button>
@@ -447,7 +499,7 @@ export default function Agents() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-200 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto dark:bg-gray-900 dark:border-gray-700">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-900 z-10">
-              <h3 className="font-semibold text-gray-800 dark:text-gray-100">Edit Agent: {editAgent.name}</h3>
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.editAgentTitle(editAgent.name)}</h3>
               <button onClick={() => { setEditAgent(null); setGitRepoConfirm(false) }} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
             </div>
             <form onSubmit={e => handleEditSubmit(e)} className="p-6 space-y-4">
@@ -455,21 +507,21 @@ export default function Agents() {
               {/* Read-only fields */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">Server</label>
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.server}</label>
                   <input
                     className="input bg-gray-50 dark:bg-gray-800 cursor-not-allowed opacity-70"
                     value={servers.find(s => s.id === editAgent.server_id)?.name ?? editAgent.server_id}
                     disabled
-                    title="Cannot be changed — delete and recreate agent"
+                    title={t.agents.recreateToChangeHint}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">Docker Image</label>
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.dockerImage}</label>
                   <input
                     className="input bg-gray-50 dark:bg-gray-800 cursor-not-allowed opacity-70"
                     value={editAgent.docker_image}
                     disabled
-                    title="Cannot be changed — delete and recreate agent"
+                    title={t.agents.recreateToChangeHint}
                   />
                 </div>
               </div>
@@ -527,7 +579,7 @@ export default function Agents() {
               {gitRepoConfirm && (
                 <div className="rounded-lg border border-orange-400 bg-orange-50 dark:bg-orange-900/20 p-4">
                   <p className="text-sm text-orange-700 dark:text-orange-300 font-medium mb-3">
-                    Changing the Git repo URL will clear /workspace and re-clone. Are you sure?
+                    {t.agents.gitRepoChangeWarning}
                   </p>
                   <div className="flex gap-2">
                     <button
@@ -535,9 +587,9 @@ export default function Agents() {
                       onClick={e => handleEditSubmit(e as unknown as React.FormEvent, true)}
                       className="btn-primary btn-sm"
                     >
-                      Confirm Re-clone
+                      {t.agents.confirmReclone}
                     </button>
-                    <button type="button" onClick={() => setGitRepoConfirm(false)} className="btn-secondary btn-sm">Cancel</button>
+                    <button type="button" onClick={() => setGitRepoConfirm(false)} className="btn-secondary btn-sm">{t.common.cancel}</button>
                   </div>
                 </div>
               )}
@@ -548,7 +600,7 @@ export default function Agents() {
               <div className="flex gap-3 justify-end pt-2">
                 <button type="button" onClick={() => { setEditAgent(null); setGitRepoConfirm(false) }} className="btn-secondary">{t.common.cancel}</button>
                 <button type="submit" className="btn-primary" disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? t.common.loading : t.common.save ?? 'Save'}
+                  {updateMutation.isPending ? t.common.loading : t.common.save}
                 </button>
               </div>
             </form>
@@ -610,18 +662,51 @@ export default function Agents() {
         onClose={() => setDeleteAgent(null)}
         onConfirm={(agent) => deleteMutation.mutate(agent.id)}
       />
+
+      {runtimeConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl w-full max-w-md dark:bg-gray-900 dark:border-gray-700">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">
+                {runtimeConfirm.action === 'pause'
+                  ? t.agents.stopAgentTitle(runtimeConfirm.agent.name)
+                  : t.agents.restartAgentTitle(runtimeConfirm.agent.name)}
+              </h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {runtimeConfirm.action === 'pause'
+                  ? t.agents.stopAgentConfirmMessage
+                  : t.agents.restartAgentConfirmMessage}
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setRuntimeConfirm(null)} className="btn-secondary">
+                  {t.common.cancel}
+                </button>
+                <button
+                  onClick={() => runtimeMutation.mutate({ id: runtimeConfirm.agent.id, action: runtimeConfirm.action })}
+                  className={runtimeConfirm.action === 'pause' ? 'btn-danger' : 'btn-primary'}
+                  disabled={runtimeMutation.isPending}
+                >
+                  {runtimeConfirm.action === 'pause' ? t.agents.confirmStop : t.agents.confirmRestart}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onClone, onDelete, runtimePending }: {
+function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCopy, onDelete, runtimePending }: {
   agent: Agent
   servers: Server[]
   t: ReturnType<typeof useI18n>['t']
   onRuntimeAction: () => void
   onEdit: () => void
   onDispatch: () => void
-  onClone: () => void
+  onCopy: () => void
   onDelete: () => void
   runtimePending: boolean
 }) {
@@ -681,9 +766,18 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCl
             {runtimeLabel}
           </button>
         )}
-        <button onClick={onClone} className="btn-secondary btn-sm" title={t.requirements.clone}><Copy size={13} /></button>
-        <button onClick={onEdit} className="btn-secondary btn-sm">{t.common.edit}</button>
-        <button onClick={onDelete} className="btn-danger btn-sm"><Trash2 size={13} /></button>
+        <button onClick={onCopy} className="btn-secondary btn-sm flex items-center gap-1.5" title={t.common.copy}>
+          <Copy size={13} />
+          {t.common.copy}
+        </button>
+        <button onClick={onEdit} className="btn-secondary btn-sm flex items-center gap-1.5" title={t.common.edit}>
+          <Pencil size={13} />
+          {t.common.edit}
+        </button>
+        <button onClick={onDelete} className="btn-danger btn-sm flex items-center gap-1.5" title={t.common.delete}>
+          <Trash2 size={13} />
+          {t.common.delete}
+        </button>
       </div>
     </div>
   )

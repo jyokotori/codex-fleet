@@ -68,8 +68,9 @@ Each agent has its own:
 - **Codex Config** — attach a `config.toml` + `auth.json` bundle so the agent has its credentials and settings ready
 - **AGENTS.md** — inject shared project instructions into the agent's workspace
 - **Docker Config** — customize port mappings, env vars, volume mounts, and init scripts
-- **Runtime controls** — Docker agents expose a single state-aware action button (`Stop`, `Start`, or `Restart`); non-Docker agents do not expose runtime start/stop controls in the UI
+- **Runtime controls** — Docker agents expose a single state-aware action button (`Stop`, `Start`, or `Restart`) in the list view; `Stop` and `Restart` require explicit confirmation, while `Start` runs immediately. The agent detail header keeps only `Dispatch Task` and `Copy command`
 - **Status sync** — the UI still reads a single persisted agent status (`provisioning`, `running`, `stopped`, `error`), while the backend periodically syncs Docker runtime state back into that field
+- **Copy as new** — the list view copy action opens the create dialog with copied server, CLI, Git, Docker, and config settings so you can adjust them before creating a new agent; passwords/tokens are not copied
 - **Delete confirmation** — deleting any agent removes `~/.codex-fleet/{agent_id}` and the database record after explicit confirmation; Docker agents also remove the container
 
 ### Tasks

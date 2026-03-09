@@ -51,59 +51,25 @@ pub async fn create_task(
     let (executor, agent_info) = get_executor(&state, &agent_id).await?;
 
     let container_name = agent_info.docker_container_name.unwrap_or_default();
-    let tmux_session = agent_info.tmux_session;
 
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
     let escaped_desc = req.description.replace('\'', "'\\''");
 
-    let (cli_cmd, task_dir) = match agent_info.cli_type.as_str() {
-        "codex" => {
-            let dir = task_dir_path(agent_info.use_docker, &agent_id, &id, &now);
-            let cmd = format!(
-                "set -o pipefail; mkdir -p '{}' && cd /workspace && codex --yolo -o '{}/result.md' '{}' 2>&1 | tee '{}/task.log'",
-                dir, dir, escaped_desc, dir
-            );
-            (cmd, dir)
-        }
-        "claude" | "claude_code" => {
-            (format!("claude '{}'", escaped_desc), String::new())
-        }
-        "gemini" | "gemini_cli" => {
-            (format!("gemini '{}'", escaped_desc), String::new())
-        }
-        "opencode" => {
-            (format!("opencode '{}'", escaped_desc), String::new())
-        }
-        _ => return Err(AppError::BadRequest("Unknown cli_type".into())),
-    };
-
-    // Ensure session exists
-    let ensure_session = format!(
-        "docker exec {} tmux new-session -d -s {} 2>/dev/null || true",
-        container_name, tmux_session
+    let task_dir = task_dir_path(agent_info.use_docker, &agent_id, &id, &now);
+    let cli_cmd = format!(
+        "set -o pipefail; mkdir -p '{}' && cd /workspace && codex --yolo -o '{}/result.md' '{}' 2>&1 | tee '{}/task.log'",
+        task_dir, task_dir, escaped_desc, task_dir
     );
-    let _ = executor.execute(&ensure_session).await;
 
-    // Create a new window for this task
-    let tmux_window = format!("task-{}", &id[..8]);
-    let new_window_cmd = format!(
-        "docker exec {} tmux new-window -t {} -n {}",
-        container_name, tmux_session, tmux_window
+    // Execute task command via docker exec
+    let exec_cmd = format!(
+        "docker exec -d {} sh -lc '{}'",
+        container_name, cli_cmd.replace('\'', "'\\''")
     );
     executor
-        .execute(&new_window_cmd)
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to create tmux window: {}", e)))?;
-
-    // Send command to that window
-    let send_cmd = format!(
-        "docker exec {} tmux send-keys -t '{}:{}' '{}' Enter",
-        container_name, tmux_session, tmux_window, cli_cmd
-    );
-    executor
-        .execute(&send_cmd)
+        .execute(&exec_cmd)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 

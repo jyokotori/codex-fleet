@@ -28,23 +28,11 @@ impl Executor {
     }
 }
 
-fn cli_config_dir(cli_type: &str) -> &str {
-    match cli_type {
+fn cli_config_dir(_cli_type: &str) -> &str {
+    // Currently only codex is supported
+    match _cli_type {
         "codex" => "/root/.codex",
-        "claude" | "claude_code" => "/root/.claude",
-        "gemini" | "gemini_cli" => "/root/.gemini",
-        "opencode" => "/root/.opencode",
         _ => "/root/.config/cli",
-    }
-}
-
-fn tmux_session_for_cli(cli_type: &str) -> &str {
-    match cli_type {
-        "codex" => "codex",
-        "claude" | "claude_code" => "claude",
-        "gemini" | "gemini_cli" => "gemini",
-        "opencode" => "opencode",
-        _ => "main",
     }
 }
 
@@ -64,7 +52,6 @@ pub struct Agent {
     pub docker_image: String,
     pub docker_container_name: Option<String>,
     pub container_id: Option<String>,
-    pub tmux_session: String,
     pub workdir: String,
     pub use_docker: bool,
     pub status: String,
@@ -115,7 +102,7 @@ pub async fn list_agents(State(state): State<AppState>) -> Result<Json<Vec<Agent
         r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
-           tmux_session, workdir, use_docker, status, provision_log, created_at
+           workdir, use_docker, status, provision_log, created_at
            FROM agents ORDER BY created_at DESC"#
     )
     .fetch_all(&state.db)
@@ -138,7 +125,6 @@ pub async fn list_agents(State(state): State<AppState>) -> Result<Json<Vec<Agent
             docker_image: r.docker_image,
             docker_container_name: r.docker_container_name,
             container_id: r.container_id,
-            tmux_session: r.tmux_session,
             workdir: r.workdir,
             use_docker: r.use_docker,
             status: r.status,
@@ -183,7 +169,6 @@ pub async fn create_agent(
     let id = Uuid::new_v4().to_string();
     let git_branch = req.git_branch.unwrap_or_else(|| "main".into());
     let docker_image = req.docker_image.unwrap_or_else(|| "ubuntu:24.04".into());
-    let tmux_session = tmux_session_for_cli(&req.cli_type).to_string();
     let workdir = if use_docker {
         "/workspace".to_string()
     } else {
@@ -209,11 +194,11 @@ pub async fn create_agent(
     sqlx::query!(
         r#"INSERT INTO agents (id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
-           docker_image, docker_container_name, tmux_session, workdir, use_docker, status, provision_log, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'provisioning', '', $18)"#,
+           docker_image, docker_container_name, workdir, use_docker, status, provision_log, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'provisioning', '', $17)"#,
         id, req.name, req.server_id, git_repo, git_branch, git_auth_type, req.git_username,
         git_password_encrypted, req.cli_type, req.codex_config_id, req.agents_md_id,
-        req.docker_config_id, docker_image, container_name_db, tmux_session, workdir,
+        req.docker_config_id, docker_image, container_name_db, workdir,
         use_docker, now
     )
     .execute(&state.db)
@@ -315,7 +300,6 @@ pub async fn create_agent(
         docker_image,
         docker_container_name,
         container_id: None,
-        tmux_session,
         workdir,
         use_docker,
         status: "provisioning".into(),
@@ -639,7 +623,7 @@ pub async fn update_agent(
         r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
-           tmux_session, workdir, use_docker, status, provision_log, created_at
+           workdir, use_docker, status, provision_log, created_at
            FROM agents WHERE id = $1"#,
         id
     )
@@ -814,7 +798,7 @@ pub async fn update_agent(
         r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
            cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, container_id,
-           tmux_session, workdir, use_docker, status, provision_log, created_at
+           workdir, use_docker, status, provision_log, created_at
            FROM agents WHERE id = $1"#,
         id
     )
@@ -836,7 +820,6 @@ pub async fn update_agent(
         docker_image: updated.docker_image,
         docker_container_name: updated.docker_container_name,
         container_id: updated.container_id,
-        tmux_session: updated.tmux_session,
         workdir: updated.workdir,
         use_docker: updated.use_docker,
         status: updated.status,
@@ -879,29 +862,10 @@ pub async fn start_agent(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     let (executor, agent_info) = get_executor(&state, &id).await?;
-    let tmux_session = agent_info.tmux_session;
 
     if agent_info.use_docker {
         let container_name = agent_info.docker_container_name.unwrap_or_default();
         let _ = executor.execute(&format!("docker start {}", container_name)).await;
-        let tmux_cmd = format!(
-            "docker exec {} tmux new-session -d -s {} 2>/dev/null || true",
-            container_name, tmux_session
-        );
-        executor
-            .execute(&tmux_cmd)
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-    } else {
-        let workdir = agent_info.workdir;
-        let tmux_cmd = format!(
-            "tmux new-session -d -s {} -c {} 2>/dev/null || true",
-            tmux_session, workdir
-        );
-        executor
-            .execute(&tmux_cmd)
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
     }
 
     sqlx::query!("UPDATE agents SET status = 'running' WHERE id = $1", id)
@@ -923,11 +887,6 @@ pub async fn stop_agent(
             .execute(&format!("docker stop {}", container_name))
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
-    } else {
-        let tmux_session = agent_info.tmux_session;
-        let _ = executor
-            .execute(&format!("tmux kill-session -t {} 2>/dev/null; true", tmux_session))
-            .await;
     }
 
     sqlx::query!("UPDATE agents SET status = 'stopped' WHERE id = $1", id)
@@ -935,40 +894,6 @@ pub async fn stop_agent(
         .await?;
 
     Ok(Json(serde_json::json!({"message": "Agent stopped", "status": "stopped"})))
-}
-
-pub async fn resume_agent(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>> {
-    let (executor, agent_info) = get_executor(&state, &id).await?;
-    let tmux_session = agent_info.tmux_session;
-
-    let resume_cmd = match agent_info.cli_type.as_str() {
-        "claude" | "claude_code" => "claude --resume",
-        "codex" => "codex --resume",
-        _ => return Err(AppError::BadRequest("CLI type not supported for resume".into())),
-    };
-
-    let cmd = if agent_info.use_docker {
-        let container_name = agent_info.docker_container_name.unwrap_or_default();
-        format!(
-            "docker exec {} tmux send-keys -t {} '{}' Enter",
-            container_name, tmux_session, resume_cmd
-        )
-    } else {
-        format!(
-            "tmux send-keys -t {} '{}' Enter",
-            tmux_session, resume_cmd
-        )
-    };
-
-    executor
-        .execute(&cmd)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(Json(serde_json::json!({"message": "Resume command sent"})))
 }
 
 #[derive(Serialize)]
@@ -982,26 +907,23 @@ pub async fn terminal_command(
     Path(id): Path<String>,
 ) -> Result<Json<TerminalCommandResponse>> {
     let agent = sqlx::query!(
-        "SELECT server_id, docker_container_name, tmux_session, use_docker FROM agents WHERE id = $1",
+        "SELECT server_id, docker_container_name, workdir, use_docker FROM agents WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
 
-    let session = agent.tmux_session;
-    let use_docker = agent.use_docker;
-
-    let (local_cmd, ssh_attach_cmd) = if use_docker {
+    let (local_cmd, ssh_attach_cmd) = if agent.use_docker {
         let container = agent.docker_container_name.unwrap_or_default();
         (
-            format!("docker exec -it {} tmux attach -t {}", container, session),
-            format!("docker exec -it {} tmux attach -t {}", container, session),
+            format!("docker exec -it {} bash -c 'cd /workspace && exec bash'", container),
+            format!("docker exec -it {} bash -c 'cd /workspace && exec bash'", container),
         )
     } else {
         (
-            format!("tmux attach -t {}", session),
-            format!("tmux attach -t {}", session),
+            format!("cd {} && bash", agent.workdir),
+            format!("cd {} && bash", agent.workdir),
         )
     };
 
@@ -1024,7 +946,6 @@ pub async fn terminal_command(
 }
 
 pub struct AgentRow {
-    pub tmux_session: String,
     pub docker_container_name: Option<String>,
     pub cli_type: String,
     pub workdir: String,
@@ -1037,7 +958,7 @@ pub async fn get_executor(
     agent_id: &str,
 ) -> Result<(Executor, AgentRow)> {
     let agent = sqlx::query!(
-        "SELECT id, server_id, tmux_session, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = $1",
+        "SELECT id, server_id, docker_container_name, cli_type, workdir, use_docker FROM agents WHERE id = $1",
         agent_id
     )
     .fetch_optional(&state.db)
@@ -1045,7 +966,6 @@ pub async fn get_executor(
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", agent_id)))?;
 
     let agent_row = AgentRow {
-        tmux_session: agent.tmux_session,
         docker_container_name: agent.docker_container_name,
         cli_type: agent.cli_type,
         workdir: agent.workdir,

@@ -57,21 +57,11 @@ pub async fn dispatch_task_for_agent(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
-    // Build CLI command and task_dir based on cli_type
-    let (cli_cmd, task_dir) = match agent_info.cli_type.as_str() {
-        "codex" => {
-            let dir = task_dir_path(agent_info.use_docker, agent_id, &id, &now);
-            let cmd = format!(
-                "mkdir -p '{}' && codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
-                dir, dir, shell_quote(description)
-            );
-            (cmd, dir)
-        }
-        "claude" | "claude_code" => (format!("claude {}", shell_quote(description)), String::new()),
-        "gemini" | "gemini_cli" => (format!("gemini {}", shell_quote(description)), String::new()),
-        "opencode" => (format!("opencode {}", shell_quote(description)), String::new()),
-        _ => return Err(AppError::BadRequest("Unknown cli_type".into())),
-    };
+    let task_dir = task_dir_path(agent_info.use_docker, agent_id, &id, &now);
+    let cli_cmd = format!(
+        "mkdir -p '{}' && codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
+        task_dir, task_dir, shell_quote(description)
+    );
 
     // Wrap with docker exec if needed
     let full_cmd = if agent_info.use_docker {

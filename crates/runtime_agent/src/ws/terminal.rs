@@ -102,7 +102,7 @@ async fn handle_terminal_socket(
     // Build pgrep command and kill prefix for resume process tracking
     let (pgrep_cmd, kill_prefix) = if let Some(ref tid) = resume_thread_id {
         let pattern = format!(
-            "[c]odex resume {tid}|[c]laude resume {tid}|[g]emini resume {tid}|[o]pencode resume {tid}"
+            "[c]odex resume {tid}"
         );
         if agent_info.use_docker {
             let container = agent_info.docker_container_name.as_deref().unwrap_or("");

@@ -29,7 +29,6 @@ pub fn router() -> Router<AppContext> {
         .route("/api/agents/{id}/start", post(api::agents::start_agent))
         .route("/api/agents/{id}/stop", post(api::agents::stop_agent))
         .route("/api/agents/{id}/restart", post(api::agents::restart_agent))
-        .route("/api/agents/{id}/resume", post(api::agents::resume_agent))
         .route(
             "/api/agents/{id}/terminal-command",
             get(api::agents::terminal_command),

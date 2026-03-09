@@ -2,4 +2,3 @@
 
 pub mod client;
 pub mod terminal;
-pub mod tmux;

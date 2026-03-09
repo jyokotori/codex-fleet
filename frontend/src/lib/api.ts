@@ -299,7 +299,6 @@ export interface Agent {
   docker_image: string
   docker_container_name?: string
   container_id?: string
-  tmux_session: string
   workdir: string
   use_docker: boolean
   status: string
@@ -349,8 +348,6 @@ export const agentsApi = {
     request<{ message: string; status: string }>(`/api/agents/${id}/stop`, { method: 'POST' }),
   restart: (id: string) =>
     request<{ message: string; status: string }>(`/api/agents/${id}/restart`, { method: 'POST' }),
-  resume: (id: string) =>
-    request<{ message: string }>(`/api/agents/${id}/resume`, { method: 'POST' }),
   getTerminalCommand: (id: string) =>
     request<TerminalCommandResponse>(`/api/agents/${id}/terminal-command`),
   getResumeCommand: (id: string, threadId: string) =>

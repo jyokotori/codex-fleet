@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, container_id,\n           tmux_session, workdir, use_docker, status, provision_log, provision_steps, created_at\n           FROM agents WHERE id = $1",
+  "query": "SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, container_id,\n           workdir, use_docker, status, provision_log, provision_steps, created_at\n           FROM agents ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -75,44 +75,37 @@
       },
       {
         "ordinal": 14,
-        "name": "tmux_session",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 15,
         "name": "workdir",
         "type_info": "Text"
       },
       {
-        "ordinal": 16,
+        "ordinal": 15,
         "name": "use_docker",
         "type_info": "Bool"
       },
       {
-        "ordinal": 17,
+        "ordinal": 16,
         "name": "status",
         "type_info": "Text"
       },
       {
-        "ordinal": 18,
+        "ordinal": 17,
         "name": "provision_log",
         "type_info": "Text"
       },
       {
-        "ordinal": 19,
+        "ordinal": 18,
         "name": "provision_steps",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 20,
+        "ordinal": 19,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": [
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -134,9 +127,8 @@
       false,
       false,
       false,
-      false,
       false
     ]
   },
-  "hash": "3dd4efbad8940a64d5b00f974da3abc10b14b666e527db095605bd56962ac6a1"
+  "hash": "f1553f10cce69e7654d48b18e4f0aab19f33c1ccb977591ad43aa09c531e82f6"
 }
