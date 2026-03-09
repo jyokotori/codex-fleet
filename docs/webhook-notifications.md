@@ -8,8 +8,10 @@ Codex Fleet can send webhook notifications when task statuses change. You config
 
 1. Navigate to **Notifications** in the sidebar.
 2. Click **Add Webhook**.
-3. Enter a name, webhook URL, and select which events should trigger the webhook.
-4. Save. The config is now available for association with tasks and work items.
+3. Enter a name and webhook URL.
+4. (Optional) Click **+ Add Header** to attach custom HTTP headers (e.g. `Authorization: Bearer ...`).
+5. Select which events should trigger the webhook.
+6. Save. The config is now available for association with tasks and work items.
 
 ## Associating Notifications
 
@@ -98,19 +100,11 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
 
 ## Custom Headers
 
-You can configure custom HTTP headers in the notification config's `config_json`:
+Custom headers can be configured directly in the notification create/edit modal via the **Custom Headers** section. Click **+ Add Header** to add key-value pairs. These headers are sent with every webhook POST request.
 
-```json
-{
-  "url": "https://hooks.example.com/webhook",
-  "headers": {
-    "Authorization": "Bearer my-secret-token",
-    "X-Custom-Header": "value"
-  }
-}
-```
-
-These headers are sent with every webhook POST request.
+Common use cases:
+- `Authorization: Bearer <token>` — authenticate with the receiving service
+- `X-Webhook-Secret: <secret>` — verify request origin on the receiver side
 
 ## Error Handling
 
