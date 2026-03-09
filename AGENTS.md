@@ -27,7 +27,8 @@ docker compose logs -f app
 ### Backend (local)
 
 ```bash
-export DATABASE_URL=postgres://codexfleet:codexfleet@localhost:5432/codexfleet
+cp .env.example .env
+docker compose up postgres -d
 cargo run -p backend
 ```
 
@@ -45,7 +46,7 @@ npm run dev
 - `crates/shared_kernel`: Shared context, error model, auth context, shared config
 - `crates/iam`: Authentication, authorization, user lifecycle, audit logs
 - `crates/config_center`: `company_configs`, `codex_configs`, `docker_configs`
-- `crates/runtime_agent`: `servers`, `agents`, `tasks`, `ws`, SSH runtime orchestration
+- `crates/runtime_agent`: `servers`, `agents`, `tasks`, `projects`, `work_items`, `ws`, SSH runtime orchestration
 - `crates/notification_center`: Notification configs and delivery
 
 Cross-module usage must go through public APIs/traits.
@@ -66,35 +67,6 @@ Rules:
 - `application` should not depend on frontend DTOs
 - `domain` should not depend on axum/sqlx
 - `infrastructure` should not leak low-level implementation details upward
-
-## Route Ownership
-
-- `iam`
-  - `POST /api/auth/login`
-  - `POST /api/auth/refresh`
-  - `POST /api/auth/logout`
-  - `GET /api/me`
-  - `PUT /api/me/password`
-  - `GET /api/admin/users`
-  - `POST /api/admin/users`
-  - `POST /api/admin/users/{id}/reset-password`
-  - `PATCH /api/admin/users/{id}/status`
-  - `POST /api/admin/users/{id}/unlock`
-- `config_center`
-  - `GET/POST/PUT/DELETE /api/configs...`
-  - `GET/POST/PUT/DELETE /api/codex-configs...`
-  - `GET/POST/PUT/DELETE /api/docker-configs...`
-- `runtime_agent`
-  - `GET/POST/PUT/DELETE /api/servers...`
-  - `GET/POST/PUT/DELETE /api/agents...`
-  - `GET/POST /api/agents/{id}/tasks`
-  - `GET /api/tasks/{id}`
-  - `GET /ws/agents/{id}/logs|terminal|provision`
-  - `GET/POST/PUT/DELETE /api/projects...`
-  - `GET/POST /api/projects/{id}/work-items`
-  - `GET/PUT/DELETE /api/work-items/{id}`
-- `notification_center`
-  - `GET/POST/PUT/DELETE /api/notifications...`
 
 ## Key Paths
 

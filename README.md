@@ -8,12 +8,13 @@ A web dashboard for managing multiple AI coding agents (Codex etc.) running acro
 
 ---
 
-## TODO List
+## Planned
 
 1. Support skill/MCP configuration from multiple sources.
-2. Improve the notification module (standalone notifications + third-party integrations).
-3. Add a requirement menu and dispatch requirements to agents (standalone or integrated with Jira).
-4. Build a simple web IDE with `codex: app server`.
+2. Support more CLI tools with a modular configuration model.
+3. Improve the requirements workflow.
+4. Parse structured JSON output from Codex.
+5. General polish.
 
 > Note: Rust is used because Codex is built with Rust, and this project is also for learning it. Development speed depends on how fast my token refreshes (lol).
 
@@ -38,6 +39,9 @@ Default admin login: **`codex` / `codex`**
 ## Local Development
 
 ```bash
+# 0. Copy env once (if you haven't already)
+cp .env.example .env
+
 # 1. Start postgres only
 docker compose up postgres -d
 
@@ -52,7 +56,7 @@ Frontend dev server: **http://localhost:5173** (proxies `/api` and `/ws` to back
 
 ---
 
-## What can it do
+## Current
 
 ### Servers
 Add your remote VMs and test SSH connectivity with one click. Supports passwordless SSH, password auth, and SSH key. Once connected, all agents on that server run through it automatically.
@@ -76,6 +80,9 @@ Each agent has its own:
 ### Tasks
 Open an agent, type a task, hit Send. The task goes straight into the agent's tmux session. You can see all past tasks and their status on the same page.
 Docker agents can dispatch tasks only while their synced status is `running`; non-Docker agents can dispatch while `running` or `stopped`.
+
+### Requirements
+Create projects and work items, assign them to agents or users, link them to agent executions, and review agent results from the requirement detail page.
 
 ### Live Logs & Terminal
 - **Logs tab** — real-time output from the agent's tmux session, auto-scrolling
@@ -116,8 +123,7 @@ After changing any SQL queries, regenerate the `.sqlx/` cache so Docker builds w
 
 ```bash
 cargo install sqlx-cli --no-default-features --features native-tls,postgres
-docker compose up postgres -d
-cargo sqlx prepare --workspace
+./scripts/prepare-sqlx.sh
 ```
 
 ---
