@@ -1,1 +1,0 @@
-ALTER TABLE agents DROP COLUMN IF EXISTS tmux_session;

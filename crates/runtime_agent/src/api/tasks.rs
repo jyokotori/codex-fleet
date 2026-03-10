@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::api::agents::{get_server_credentials, sync_agent_status};
+use crate::api::agents::{codex_home_prefix, get_server_credentials, sync_agent_status, HOST_ENV_SETUP};
 use crate::ssh::terminal::open_exec_channel;
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
 
@@ -57,10 +57,11 @@ pub async fn dispatch_task_for_agent(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
-    let task_dir = task_dir_path(agent_info.use_docker, agent_id, &id, &now);
+    let task_dir = task_dir_path(agent_info.use_docker, &agent_info.workdir, &id, &now);
+    let env_prefix = codex_home_prefix(agent_info.use_docker, &agent_info.workdir);
     let cli_cmd = format!(
-        "mkdir -p '{}' && codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
-        task_dir, task_dir, shell_quote(description)
+        "mkdir -p '{}' && {}codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
+        task_dir, env_prefix, task_dir, shell_quote(description)
     );
 
     // Wrap with docker exec if needed
@@ -75,7 +76,7 @@ pub async fn dispatch_task_for_agent(
             shell_quote(&format!("cd /workspace && {}", cli_cmd))
         )
     } else {
-        format!("cd {} && {}", agent_info.workdir, cli_cmd)
+        format!("{}cd {} && {}", HOST_ENV_SETUP, agent_info.workdir, cli_cmd)
     };
 
     // Insert task record
@@ -306,13 +307,14 @@ pub struct PaginatedTasks {
 
 /// Compute date-partitioned task directory path (codex only).
 /// Docker: `/agent/task-codex-fleet/logs/YYYY/M/D/{task_id}/`
-/// Non-Docker: `~/.codex-fleet/{agent_id}/agent/task-codex-fleet/logs/YYYY/M/D/{task_id}/`
-fn task_dir_path(use_docker: bool, agent_id: &str, task_id: &str, now: &chrono::DateTime<Utc>) -> String {
+/// Non-Docker: `{workdir}/../agent/task-codex-fleet/logs/YYYY/M/D/{task_id}/`
+fn task_dir_path(use_docker: bool, workdir: &str, task_id: &str, now: &chrono::DateTime<Utc>) -> String {
     let date_part = format!("{}/{}/{}", now.format("%Y"), now.format("%-m"), now.format("%-d"));
     if use_docker {
         format!("/agent/task-codex-fleet/logs/{}/{}", date_part, task_id)
     } else {
-        format!("~/.codex-fleet/{}/agent/task-codex-fleet/logs/{}/{}", agent_id, date_part, task_id)
+        let base = workdir.trim_end_matches("/workspace");
+        format!("{}/agent/task-codex-fleet/logs/{}/{}", base, date_part, task_id)
     }
 }
 
@@ -389,7 +391,8 @@ async fn read_remote_file(
     loop {
         match channel.wait().await {
             Some(russh::ChannelMsg::Data { data }) => output.extend_from_slice(&data),
-            Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => break,
+            Some(russh::ChannelMsg::Eof) => {} // wait for Close
+            Some(russh::ChannelMsg::Close) | None => break,
             _ => {}
         }
     }
@@ -484,7 +487,8 @@ async fn run_task_exec(
             Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
                 exit_code = Some(exit_status);
             }
-            Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => break,
+            Some(russh::ChannelMsg::Eof) => {} // wait for ExitStatus/Close
+            Some(russh::ChannelMsg::Close) | None => break,
             _ => {}
         }
     }

@@ -1,6 +1,9 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- IAM (v2)
+-- ============================================================
+-- IAM
+-- ============================================================
+
 CREATE TABLE users (
     id TEXT NOT NULL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
@@ -63,7 +66,10 @@ CREATE TABLE audit_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Config center
+-- ============================================================
+-- Config Center
+-- ============================================================
+
 CREATE TABLE company_configs (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -95,7 +101,10 @@ CREATE TABLE docker_configs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Runtime agent
+-- ============================================================
+-- Runtime Agent
+-- ============================================================
+
 CREATE TABLE servers (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -126,7 +135,6 @@ CREATE TABLE agents (
     docker_image TEXT NOT NULL DEFAULT 'ubuntu:24.04',
     docker_container_name TEXT,
     container_id TEXT,
-    tmux_session TEXT NOT NULL DEFAULT 'main',
     workdir TEXT NOT NULL DEFAULT '/workspace',
     use_docker BOOLEAN NOT NULL DEFAULT TRUE,
     status TEXT NOT NULL DEFAULT 'stopped',
@@ -135,32 +143,85 @@ CREATE TABLE agents (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE projects (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+    notification_ids TEXT NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE tasks (
     id TEXT NOT NULL PRIMARY KEY,
     agent_id TEXT NOT NULL REFERENCES agents(id),
+    title TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    tmux_window TEXT,
+    status TEXT NOT NULL DEFAULT 'waiting',
+    work_item_id TEXT,
+    task_dir TEXT NOT NULL DEFAULT '',
+    task_log TEXT NOT NULL DEFAULT '',
+    result_md TEXT NOT NULL DEFAULT '',
+    thread_id TEXT,
+    notification_ids TEXT NOT NULL DEFAULT '[]',
+    user_id TEXT,
+    username TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ
 );
 
--- Notification center
+CREATE TABLE work_items (
+    id TEXT NOT NULL PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES work_items(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('epic', 'story', 'task')),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'waiting'
+        CHECK (status IN ('waiting','agent_in_progress','agent_completed','agent_failed',
+                          'human_approved','human_rejected','cancelled','closed')),
+    priority TEXT NOT NULL DEFAULT 'medium'
+        CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+    assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    assigned_username TEXT NOT NULL DEFAULT '',
+    execution_id TEXT,
+    notification_ids TEXT NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- Notification Center
+-- ============================================================
+
 CREATE TABLE notification_configs (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     config_json TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    events_json TEXT NOT NULL DEFAULT '["task_completed","task_failed"]',
+    events_json TEXT NOT NULL DEFAULT '["agent_completed","agent_failed"]',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ============================================================
 -- Indexes
+-- ============================================================
+
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_status ON users(status);
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_exp ON refresh_tokens(expires_at);
 CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
+
+CREATE INDEX idx_work_items_project ON work_items(project_id);
+CREATE INDEX idx_work_items_parent ON work_items(parent_id);
+CREATE INDEX idx_work_items_agent ON work_items(assigned_agent_id);
+CREATE INDEX idx_work_items_user ON work_items(assigned_user_id);
+CREATE INDEX idx_work_items_scheduler
+    ON work_items (assigned_agent_id, status, priority, created_at)
+    WHERE status = 'waiting' AND assigned_agent_id IS NOT NULL;

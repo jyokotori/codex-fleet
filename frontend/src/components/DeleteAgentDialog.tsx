@@ -7,23 +7,25 @@ interface DeleteAgentDialogProps {
   agent: Agent | null
   open: boolean
   pending?: boolean
+  error?: string | null
   onClose: () => void
-  onConfirm: (agent: Agent) => void
+  onConfirm: (agent: Agent, cleanup: boolean) => void
 }
 
 export default function DeleteAgentDialog({
   agent,
   open,
   pending = false,
+  error,
   onClose,
   onConfirm,
 }: DeleteAgentDialogProps) {
   const { t } = useI18n()
-  const [confirmed, setConfirmed] = useState(false)
+  const [cleanup, setCleanup] = useState(true)
 
   useEffect(() => {
     if (open) {
-      setConfirmed(false)
+      setCleanup(true)
     }
   }, [open, agent?.id])
 
@@ -35,9 +37,6 @@ export default function DeleteAgentDialog({
   const description = agent.use_docker
     ? t.agents.deleteDialogDescriptionDocker
     : t.agents.deleteDialogDescriptionHost
-  const confirmLabel = agent.use_docker
-    ? t.agents.deleteDialogConfirmDocker
-    : t.agents.deleteDialogConfirmHost
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -73,8 +72,8 @@ export default function DeleteAgentDialog({
           <label className="flex items-start gap-3 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 cursor-pointer">
             <input
               type="checkbox"
-              checked={confirmed}
-              onChange={(e) => setConfirmed(e.target.checked)}
+              checked={cleanup}
+              onChange={(e) => setCleanup(e.target.checked)}
               className="mt-0.5 rounded border-gray-300 dark:border-gray-600"
             />
             <span className="text-sm text-gray-700 dark:text-gray-300">
@@ -82,17 +81,31 @@ export default function DeleteAgentDialog({
             </span>
           </label>
 
+          {!cleanup && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+              {t.agents.deleteDialogRecordOnly}
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-lg border border-red-300 bg-red-100 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/60 dark:text-red-200">
+              {error}
+            </div>
+          )}
+
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={onClose} disabled={pending} className="btn-secondary">
               {t.common.cancel}
             </button>
             <button
-              onClick={() => onConfirm(agent)}
-              disabled={pending || !confirmed}
+              onClick={() => onConfirm(agent, cleanup)}
+              disabled={pending}
               className="btn-danger flex items-center gap-2 disabled:opacity-60"
             >
               <Trash2 size={14} />
-              {confirmLabel}
+              {cleanup
+                ? (agent.use_docker ? t.agents.deleteDialogConfirmDocker : t.agents.deleteDialogConfirmHost)
+                : t.agents.deleteDialogConfirmRecordOnly}
             </button>
           </div>
         </div>

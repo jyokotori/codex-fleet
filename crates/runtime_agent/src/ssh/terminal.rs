@@ -4,7 +4,7 @@ use russh::client::{self, Handle, Msg};
 use russh::keys::key;
 use russh::Channel;
 
-pub(crate) struct ClientHandler;
+pub struct ClientHandler;
 
 #[async_trait::async_trait]
 impl client::Handler for ClientHandler {
@@ -18,7 +18,7 @@ impl client::Handler for ClientHandler {
     }
 }
 
-async fn connect_russh(
+pub async fn connect_russh(
     ip: &str,
     port: u16,
     username: &str,

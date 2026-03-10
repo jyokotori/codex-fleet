@@ -11,10 +11,11 @@
 ## 计划中
 
 1. 支持 skill/MCP 配置（多来源）。
-2. 支持更多 CLI，并做成模块化配置。
-3. 完善需求流程。
-4. 解析 Codex 的结构化 JSON 输出。
-5. 其他体验优化。
+2. 需求改成linear那种瀑布式可左右拖动的。
+3. 支持更多 CLI，并做成模块化配置。
+4. 增加AI自动跑测试用例的菜单。
+5. 解析 Codex 的结构化 JSON 输出。
+6. 其他体验优化。
 
 > 备注：用 Rust 是因为 Codex 本身用 Rust，也刚好借这个项目学一学。开发速度取决于我的 token 刷新速度（lol）。
 
@@ -52,7 +53,7 @@ cargo run -p backend
 cd frontend && npm install && npm run dev
 ```
 
-前端开发地址：**http://localhost:5173**（`/api` 和 `/ws` 会自动代理到后端）
+前端开发地址：**http://localhost:5173** （`/api` 和 `/ws` 会自动代理到后端）
 
 ---
 
@@ -78,14 +79,13 @@ cd frontend && npm install && npm run dev
 - **删除确认** — 删除任意 Agent 前都需要显式确认；实际会删除 `~/.codex-fleet/{agent_id}` 和数据库记录，Docker Agent 还会额外删除容器
 
 ### 任务下发
-打开一个 Agent 详情页，输入任务，点发送，任务直接进入 Agent 的 tmux 会话。同一页面可以看到所有历史任务和状态。
 Docker Agent 只有在同步后的状态为 `running` 时允许派发任务；非 Docker Agent 在 `running` 或 `stopped` 时都允许派发任务。
 
 ### 需求管理
 可以创建项目和工作项，把工作项分配给 Agent 或用户，关联 Agent 执行结果，并在需求详情页对 Agent 结果做审核处理。
 
 ### 实时日志 & 终端
-- **日志标签** — 实时显示 Agent tmux 会话的输出，自动滚动
+- **日志标签** — 实时显示 Agent 会话的输出，自动滚动
 - **终端标签** — 完整的交互式终端，可以直接在运行环境里敲命令（容器或宿主机）
 - **复制命令** — 非 Docker Agent 复制直连宿主机的 SSH 命令；Docker Agent 复制 SSH 后进入容器 shell 的命令
 

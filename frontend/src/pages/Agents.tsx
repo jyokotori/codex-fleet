@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
-  agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi,
+  agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi,
   type Agent, type Server,
 } from '../lib/api'
 import { useI18n } from '../hooks/useI18n'
@@ -80,7 +80,9 @@ export default function Agents() {
   const [gitRepoConfirm, setGitRepoConfirm] = useState(false)
   const [dispatchAgent, setDispatchAgent] = useState<Agent | null>(null)
   const [dispatchInput, setDispatchInput] = useState('')
+  const [dispatchNotifIds, setDispatchNotifIds] = useState<string[]>([])
   const [deleteAgent, setDeleteAgent] = useState<Agent | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copySourceName, setCopySourceName] = useState<string | null>(null)
   const [runtimeConfirm, setRuntimeConfirm] = useState<{ agent: Agent; action: Exclude<AgentRuntimeAction, 'start'> } | null>(null)
 
@@ -92,6 +94,7 @@ export default function Agents() {
     queryFn: () => configsApi.list({ category: 'agents_md' }),
   })
   const { data: dockerConfigs = [] } = useQuery({ queryKey: ['docker-configs'], queryFn: dockerConfigsApi.list })
+  const { data: notifConfigs = [] } = useQuery({ queryKey: ['notifications'], queryFn: notificationsApi.list })
 
   const createMutation = useMutation({
     mutationFn: (data: AgentFormData) => agentsApi.create({
@@ -109,9 +112,10 @@ export default function Agents() {
       docker_image: data.use_docker ? data.docker_image.trim() : undefined,
       use_docker: data.use_docker,
     }),
-    onSuccess: () => {
+    onSuccess: (agent) => {
       qc.invalidateQueries({ queryKey: ['agents'] })
       resetCreateModal()
+      navigate(`/agents/${agent.id}?tab=provision`)
     },
   })
 
@@ -139,10 +143,14 @@ export default function Agents() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: agentsApi.delete,
+    mutationFn: ({ id, cleanup }: { id: string; cleanup: boolean }) => agentsApi.delete(id, cleanup),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
       setDeleteAgent(null)
+      setDeleteError(null)
+    },
+    onError: (err: any) => {
+      setDeleteError(err?.message || String(err))
     },
   })
   const runtimeMutation = useMutation({
@@ -160,12 +168,13 @@ export default function Agents() {
   const [dispatchTitle, setDispatchTitle] = useState('')
 
   const dispatchMutation = useMutation({
-    mutationFn: ({ agentId, title, desc }: { agentId: string; title: string; desc: string }) =>
-      tasksApi.create(agentId, title, desc),
+    mutationFn: ({ agentId, title, desc, notifIds }: { agentId: string; title: string; desc: string; notifIds?: string[] }) =>
+      tasksApi.create(agentId, title, desc, notifIds),
     onSuccess: (task) => {
       qc.invalidateQueries({ queryKey: ['agents'] })
       setDispatchAgent(null)
       setDispatchInput('')
+      setDispatchNotifIds([])
       // Navigate to agent detail with the new task expanded
       navigate(`/agents/${task.agent_id}?tab=tasks&task=${task.id}`)
     },
@@ -614,7 +623,7 @@ export default function Agents() {
           <div className="bg-white border border-gray-200 rounded-xl w-full max-w-lg dark:bg-gray-900 dark:border-gray-700">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
               <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.dispatchTask} — {dispatchAgent.name}</h3>
-              <button onClick={() => setDispatchAgent(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+              <button onClick={() => { setDispatchAgent(null); setDispatchNotifIds([]) }} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
             </div>
             <div className="p-6 space-y-4">
               <div>
@@ -637,13 +646,37 @@ export default function Agents() {
                   placeholder={t.agentDetail.taskPlaceholder(dispatchAgent.cli_type)}
                 />
               </div>
+              {notifConfigs.length > 0 && (
+                <div>
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.selectNotifications}</label>
+                  <div className="space-y-1.5">
+                    {notifConfigs.map(n => (
+                      <label key={n.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={dispatchNotifIds.includes(n.id)}
+                          onChange={e => {
+                            if (e.target.checked) setDispatchNotifIds(prev => [...prev, n.id])
+                            else setDispatchNotifIds(prev => prev.filter(x => x !== n.id))
+                          }}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className={`text-sm ${n.enabled ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>
+                          {n.name}
+                          {!n.enabled && <span className="ml-1 text-xs">({t.common.disabled})</span>}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               {dispatchMutation.error && (
                 <div className="text-red-500 text-sm mt-2">{String(dispatchMutation.error.message)}</div>
               )}
               <div className="flex gap-3 justify-end pt-2">
-                <button onClick={() => setDispatchAgent(null)} className="btn-secondary">{t.common.cancel}</button>
+                <button onClick={() => { setDispatchAgent(null); setDispatchNotifIds([]) }} className="btn-secondary">{t.common.cancel}</button>
                 <button
-                  onClick={() => { if (dispatchInput.trim()) dispatchMutation.mutate({ agentId: dispatchAgent.id, title: dispatchTitle.trim(), desc: dispatchInput.trim() }) }}
+                  onClick={() => { if (dispatchInput.trim()) dispatchMutation.mutate({ agentId: dispatchAgent.id, title: dispatchTitle.trim(), desc: dispatchInput.trim(), notifIds: dispatchNotifIds.length > 0 ? dispatchNotifIds : undefined }) }}
                   className="btn-primary flex items-center gap-2"
                   disabled={dispatchMutation.isPending || !dispatchInput.trim()}
                 >
@@ -659,8 +692,12 @@ export default function Agents() {
         agent={deleteAgent}
         open={!!deleteAgent}
         pending={deleteMutation.isPending}
-        onClose={() => setDeleteAgent(null)}
-        onConfirm={(agent) => deleteMutation.mutate(agent.id)}
+        error={deleteError}
+        onClose={() => { setDeleteAgent(null); setDeleteError(null) }}
+        onConfirm={(agent, cleanup) => {
+          setDeleteError(null)
+          deleteMutation.mutate({ id: agent.id, cleanup })
+        }}
       />
 
       {runtimeConfirm && (
@@ -725,6 +762,7 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCo
     stopped: 'badge-gray',
     error: 'badge-red',
     provisioning: 'badge-yellow',
+    provision_failed: 'badge-red',
   }
 
   return (

@@ -1,1 +1,0 @@
-ALTER TABLE tasks ADD COLUMN result_md TEXT NOT NULL DEFAULT '';

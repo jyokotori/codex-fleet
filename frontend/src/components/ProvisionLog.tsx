@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -25,17 +25,28 @@ function makeSteps(): StepState[] {
   }))
 }
 
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return s > 0 ? `${m}m${s}s` : `${m}m`
+}
+
 export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
   const { t } = useI18n()
   const [steps, setSteps] = useState<StepState[]>(makeSteps())
   const [done, setDone] = useState(false)
   const [doneStatus, setDoneStatus] = useState('')
   const [runningStep, setRunningStep] = useState<number | null>(null)
+  const [substeps, setSubsteps] = useState<Record<number, string>>({})
+  const [elapsed, setElapsed] = useState(0)
+  const [stepDurations, setStepDurations] = useState<Record<number, number>>({})
 
   const termRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const doneRef = useRef(false)
+  const stepStartTimeRef = useRef<Record<number, number>>({})
 
   // xterm setup
   useEffect(() => {
@@ -72,11 +83,26 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
     }
   }, [])
 
-  const writeToTerm = (text: string, color?: string) => {
+  // Elapsed timer: ticks every second while a step is running
+  useEffect(() => {
+    if (runningStep == null || done) {
+      setElapsed(0)
+      return
+    }
+    const tick = () => {
+      const start = stepStartTimeRef.current[runningStep]
+      if (start) setElapsed(Math.floor((Date.now() - start) / 1000))
+    }
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [runningStep, done])
+
+  const writeToTerm = useCallback((text: string, color?: string) => {
     if (!xtermRef.current) return
     const colored = color ? `${color}${text}\x1b[0m\r\n` : `${text}\r\n`
     xtermRef.current.write(colored)
-  }
+  }, [])
 
   const updateStep = (stepNum: number, patch: Partial<StepState>) => {
     setSteps(prev =>
@@ -117,7 +143,13 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
             status: (stepsMap[String(s.stepNum)] ?? 'pending') as StepState['status'],
           })))
           const runningEntry = Object.entries(stepsMap).find(([, v]) => v === 'running')
-          setRunningStep(runningEntry ? parseInt(runningEntry[0]) : null)
+          if (runningEntry) {
+            const rStep = parseInt(runningEntry[0])
+            setRunningStep(rStep)
+            stepStartTimeRef.current[rStep] = Date.now()
+          } else {
+            setRunningStep(null)
+          }
           break
         }
 
@@ -125,6 +157,15 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
           if (step != null) {
             updateStep(step, { status: 'running' })
             setRunningStep(step)
+            stepStartTimeRef.current[step] = Date.now()
+            setSubsteps(prev => ({ ...prev, [step]: '' }))
+          }
+          break
+
+        case 'substep':
+          if (step != null) {
+            setSubsteps(prev => ({ ...prev, [step]: text }))
+            writeToTerm(`▶ ${text}`, '\x1b[36m')
           }
           break
 
@@ -140,6 +181,9 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
           if (step != null) {
             updateStep(step, { status: 'ok' })
             if (runningStep === step) setRunningStep(null)
+            setSubsteps(prev => { const n = { ...prev }; delete n[step]; return n })
+            const start = stepStartTimeRef.current[step]
+            if (start) setStepDurations(prev => ({ ...prev, [step]: Math.floor((Date.now() - start) / 1000) }))
           }
           break
 
@@ -147,6 +191,7 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
           if (step != null) {
             updateStep(step, { status: 'skipped' })
             if (runningStep === step) setRunningStep(null)
+            setSubsteps(prev => { const n = { ...prev }; delete n[step]; return n })
           }
           break
 
@@ -154,7 +199,10 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
           if (step != null) {
             updateStep(step, { status: 'failed', error: text })
             if (runningStep === step) setRunningStep(null)
+            setSubsteps(prev => { const n = { ...prev }; delete n[step]; return n })
             writeToTerm(text, '\x1b[31m')
+            const start = stepStartTimeRef.current[step]
+            if (start) setStepDurations(prev => ({ ...prev, [step]: Math.floor((Date.now() - start) / 1000) }))
           }
           break
 
@@ -210,13 +258,16 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
       <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
         {steps.map((step, idx) => {
           const isLast = idx === steps.length - 1
+          const isRunning = step.status === 'running'
+          const sub = substeps[step.stepNum]
+          const duration = stepDurations[step.stepNum]
           return (
             <div
               key={step.stepNum}
               className={[
-                'flex items-center gap-3 px-4 py-2.5 text-sm',
+                'px-4 py-2.5 text-sm',
                 !isLast && 'border-b border-gray-100 dark:border-gray-800',
-                step.status === 'running'
+                isRunning
                   ? 'bg-yellow-50 dark:bg-yellow-900/10'
                   : step.status === 'ok'
                   ? 'bg-green-50/40 dark:bg-green-900/10'
@@ -225,27 +276,47 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
                   : 'bg-white dark:bg-gray-900',
               ].filter(Boolean).join(' ')}
             >
-              <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                <StepIcon status={step.status} />
-              </div>
-              <span
-                className={[
-                  'flex-1 font-mono',
-                  step.status === 'pending' ? 'text-gray-400 dark:text-gray-600' : '',
-                  step.status === 'running' ? 'text-yellow-700 dark:text-yellow-300 font-medium' : '',
-                  step.status === 'ok' ? 'text-green-700 dark:text-green-400' : '',
-                  step.status === 'failed' ? 'text-red-600 dark:text-red-400' : '',
-                  step.status === 'skipped' ? 'text-gray-400 dark:text-gray-600 line-through' : '',
-                ].filter(Boolean).join(' ')}
-              >
-                <span className="text-gray-400 dark:text-gray-600 mr-1">{step.stepNum}.</span>
-                {stepName(step.stepNum)}
-                {step.status === 'skipped' && (
-                  <span className="ml-2 text-xs no-underline" style={{ textDecoration: 'none' }}>
-                    ({t.provision.status.skipped})
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                  <StepIcon status={step.status} />
+                </div>
+                <span
+                  className={[
+                    'flex-1 font-mono',
+                    step.status === 'pending' ? 'text-gray-400 dark:text-gray-600' : '',
+                    isRunning ? 'text-yellow-700 dark:text-yellow-300 font-medium' : '',
+                    step.status === 'ok' ? 'text-green-700 dark:text-green-400' : '',
+                    step.status === 'failed' ? 'text-red-600 dark:text-red-400' : '',
+                    step.status === 'skipped' ? 'text-gray-400 dark:text-gray-600 line-through' : '',
+                  ].filter(Boolean).join(' ')}
+                >
+                  <span className="text-gray-400 dark:text-gray-600 mr-1">{step.stepNum}.</span>
+                  {stepName(step.stepNum)}
+                  {step.status === 'skipped' && (
+                    <span className="ml-2 text-xs no-underline" style={{ textDecoration: 'none' }}>
+                      ({t.provision.status.skipped})
+                    </span>
+                  )}
+                </span>
+                {/* Elapsed timer for running step */}
+                {isRunning && runningStep === step.stepNum && elapsed > 0 && (
+                  <span className="text-xs text-yellow-500/70 font-mono tabular-nums flex-shrink-0">
+                    {formatElapsed(elapsed)}
                   </span>
                 )}
-              </span>
+                {/* Duration for completed/failed steps */}
+                {(step.status === 'ok' || step.status === 'failed') && duration != null && duration > 0 && (
+                  <span className="text-xs text-gray-400 dark:text-gray-500 font-mono tabular-nums flex-shrink-0">
+                    {formatElapsed(duration)}
+                  </span>
+                )}
+              </div>
+              {/* Substep indicator */}
+              {isRunning && sub && (
+                <div className="text-xs text-gray-400 dark:text-gray-500 font-mono pl-7 mt-1 truncate">
+                  ▶ {sub}
+                </div>
+              )}
             </div>
           )
         })}

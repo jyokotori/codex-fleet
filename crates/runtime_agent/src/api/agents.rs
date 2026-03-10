@@ -15,7 +15,9 @@ use uuid::Uuid;
 use crate::{
     infrastructure::crypto::Crypto,
     ssh::client::{SshClient, SshClientPool},
+    ssh::terminal::{connect_russh, ClientHandler},
 };
+use russh::client::Handle;
 use shared_kernel::{AppContext, AppError, Result};
 
 /// Unified command executor: SSH connection only (local exec removed).
@@ -35,11 +37,28 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Shell environment preamble for non-docker SSH exec (loads nvm etc.)
+pub const HOST_ENV_SETUP: &str = r#"export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; "#;
+
+
 fn target_shell_command(use_docker: bool, container_name: &str, cmd: &str) -> String {
     if use_docker {
         format!("docker exec {} sh -lc {}", container_name, shell_quote(cmd))
     } else {
-        cmd.to_string()
+        format!("{}{}", HOST_ENV_SETUP, cmd)
+    }
+}
+
+/// Return `export CODEX_HOME=<base>/agent && ` prefix for non-docker mode.
+/// Docker mode uses a symlink so no prefix is needed.
+/// `workdir` should be the agent's absolute workspace path (e.g. `/home/demo/.codex-fleet/{id}/workspace`).
+pub fn codex_home_prefix(use_docker: bool, workdir: &str) -> String {
+    if use_docker {
+        String::new()
+    } else {
+        // workdir = /home/user/.codex-fleet/{id}/workspace → base = /home/user/.codex-fleet/{id}
+        let base = workdir.trim_end_matches("/workspace");
+        format!("export CODEX_HOME={}/agent && ", base)
     }
 }
 
@@ -123,6 +142,9 @@ fn ev_warn(step: u8, text: &str) -> Value {
 }
 fn ev_provision_done(status: &str) -> Value {
     json!({"t":"provision_done","status":status,"ts":unix_now()})
+}
+fn ev_substep(step: u8, text: &str) -> Value {
+    json!({"t":"substep","step":step,"text":text,"ts":unix_now()})
 }
 
 const DOCKER_UNAVAILABLE_MARKER: &str = "__docker_unavailable__";
@@ -273,7 +295,7 @@ async fn sync_docker_agent_status_with_executor(
     executor: &Executor,
     agent_info: &AgentRow,
 ) -> Result<String> {
-    if !agent_info.use_docker || agent_info.status == "provisioning" {
+    if !agent_info.use_docker || agent_info.status == "provisioning" || agent_info.status == "provision_failed" {
         return Ok(agent_info.status.clone());
     }
 
@@ -307,35 +329,46 @@ async fn sync_docker_agent_status_with_executor(
     Ok(next_status)
 }
 
-async fn sync_docker_statuses(state: &AppContext, agents: &mut [Agent]) {
-    let mut targets_by_server: HashMap<String, Vec<(usize, DockerSyncTarget)>> = HashMap::new();
+async fn sync_agent_statuses(state: &AppContext, agents: &mut [Agent]) {
+    let mut docker_targets_by_server: HashMap<String, Vec<(usize, DockerSyncTarget)>> =
+        HashMap::new();
+    // Non-docker agents grouped by server_id for SSH check
+    let mut host_agents_by_server: HashMap<String, Vec<(usize, String)>> = HashMap::new();
 
     for (index, agent) in agents.iter().enumerate() {
-        if !agent.use_docker || agent.status == "provisioning" {
+        if agent.status == "provisioning" || agent.status == "provision_failed" {
             continue;
         }
 
-        if let Some(container_name) = agent
-            .docker_container_name
-            .as_ref()
-            .filter(|name| !name.is_empty())
-        {
-            targets_by_server
+        if agent.use_docker {
+            if let Some(container_name) = agent
+                .docker_container_name
+                .as_ref()
+                .filter(|name| !name.is_empty())
+            {
+                docker_targets_by_server
+                    .entry(agent.server_id.clone())
+                    .or_default()
+                    .push((
+                        index,
+                        DockerSyncTarget {
+                            agent_id: agent.id.clone(),
+                            container_name: container_name.clone(),
+                        },
+                    ));
+            }
+        } else {
+            host_agents_by_server
                 .entry(agent.server_id.clone())
                 .or_default()
-                .push((
-                    index,
-                    DockerSyncTarget {
-                        agent_id: agent.id.clone(),
-                        container_name: container_name.clone(),
-                    },
-                ));
+                .push((index, agent.id.clone()));
         }
     }
 
     let mut updates = Vec::new();
 
-    for (server_id, targets) in targets_by_server {
+    // Sync docker agents
+    for (server_id, targets) in docker_targets_by_server {
         let executor = match connect_executor_for_server(state, &server_id).await {
             Ok(executor) => executor,
             Err(err) => {
@@ -378,6 +411,19 @@ async fn sync_docker_statuses(state: &AppContext, agents: &mut [Agent]) {
         }
     }
 
+    // Sync non-docker agents: SSH reachable = running, unreachable = stopped
+    for (server_id, agent_indices) in host_agents_by_server {
+        let ssh_ok = connect_executor_for_server(state, &server_id).await.is_ok();
+        let next_status = if ssh_ok { "running" } else { "stopped" };
+
+        for (index, agent_id) in agent_indices {
+            if agents[index].status != next_status {
+                agents[index].status = next_status.to_string();
+                updates.push((agent_id, next_status.to_string()));
+            }
+        }
+    }
+
     for (agent_id, status) in updates {
         if let Err(err) = sqlx::query("UPDATE agents SET status = $1 WHERE id = $2")
             .bind(&status)
@@ -391,8 +437,31 @@ async fn sync_docker_statuses(state: &AppContext, agents: &mut [Agent]) {
 }
 
 pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<String> {
-    let (executor, agent_info) = get_executor(state, agent_id).await?;
-    sync_docker_agent_status_with_executor(state, agent_id, &executor, &agent_info).await
+    match get_executor(state, agent_id).await {
+        Ok((executor, agent_info)) => {
+            if agent_info.use_docker {
+                sync_docker_agent_status_with_executor(state, agent_id, &executor, &agent_info)
+                    .await
+            } else {
+                // Non-docker: SSH connected successfully → running
+                if agent_info.status != "running" {
+                    let _ = sqlx::query("UPDATE agents SET status = 'running' WHERE id = $1")
+                        .bind(agent_id)
+                        .execute(&state.db)
+                        .await;
+                }
+                Ok("running".into())
+            }
+        }
+        Err(_) => {
+            // SSH failed → stopped
+            let _ = sqlx::query("UPDATE agents SET status = 'stopped' WHERE id = $1")
+                .bind(agent_id)
+                .execute(&state.db)
+                .await;
+            Ok("stopped".into())
+        }
+    }
 }
 
 fn docker_container_name(agent_info: &AgentRow) -> Result<&str> {
@@ -435,6 +504,133 @@ async fn emit(db: &sqlx::PgPool, agent_id: &str, tx: &broadcast::Sender<String>,
     }
 
     let _ = tx.send(line);
+}
+
+/// Fail provision at a given step, updating DB and broadcasting events.
+async fn fail_provision(
+    db: &sqlx::PgPool,
+    agent_id: &str,
+    tx: &broadcast::Sender<String>,
+    step: u8,
+    err: &str,
+) {
+    emit(db, agent_id, tx, ev_step_failed(step, err)).await;
+    emit(db, agent_id, tx, ev_provision_done("provision_failed")).await;
+    let _ = sqlx::query!("UPDATE agents SET status = 'provision_failed' WHERE id = $1", agent_id)
+        .execute(db)
+        .await;
+}
+
+const PROVISION_FLUSH_SIZE: usize = 4096;
+const PROVISION_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+async fn flush_provision_log(db: &sqlx::PgPool, agent_id: &str, buf: &mut String) {
+    if buf.is_empty() {
+        return;
+    }
+    let _ = sqlx::query!(
+        "UPDATE agents SET provision_log = provision_log || $1 WHERE id = $2",
+        *buf,
+        agent_id
+    )
+    .execute(db)
+    .await;
+    buf.clear();
+}
+
+/// Run a single command via SSH exec channel, streaming output as provision JSONL events.
+/// Returns the process exit code (0 = success).
+async fn stream_cmd(
+    handle: &Handle<ClientHandler>,
+    cmd: &str,
+    display_cmd: &str,
+    db: &sqlx::PgPool,
+    agent_id: &str,
+    tx: &broadcast::Sender<String>,
+    step: u8,
+) -> anyhow::Result<u32> {
+    // Echo the command being run
+    emit(db, agent_id, tx, ev_step_output(step, &format!("$ {}", display_cmd))).await;
+
+    let mut channel = handle.channel_open_session().await?;
+    channel.exec(true, cmd).await?;
+
+    let mut exit_code: u32 = 0;
+    let mut byte_buf = Vec::new();
+    let mut db_buf = String::new();
+    let mut last_flush = tokio::time::Instant::now();
+
+    loop {
+        let msg = tokio::select! {
+            msg = channel.wait() => msg,
+            _ = tokio::time::sleep_until(last_flush + PROVISION_FLUSH_INTERVAL), if !db_buf.is_empty() => {
+                flush_provision_log(db, agent_id, &mut db_buf).await;
+                last_flush = tokio::time::Instant::now();
+                continue;
+            }
+        };
+
+        let chunk = match msg {
+            Some(russh::ChannelMsg::Data { data }) => Some(data),
+            Some(russh::ChannelMsg::ExtendedData { data, .. }) => Some(data),
+            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                exit_code = exit_status;
+                None
+            }
+            // Don't break on Eof — ExitStatus may arrive after Eof but before Close.
+            Some(russh::ChannelMsg::Eof) => None,
+            Some(russh::ChannelMsg::Close) | None => break,
+            _ => None,
+        };
+
+        if let Some(data) = chunk {
+            byte_buf.extend_from_slice(&data);
+
+            while let Some(pos) = byte_buf.iter().position(|&b| b == b'\n') {
+                let line_bytes: Vec<u8> = byte_buf.drain(..=pos).collect();
+                let line = String::from_utf8_lossy(&line_bytes).trim_end().to_string();
+                let event = ev_step_output(step, &line);
+                let json_line = serde_json::to_string(&event).unwrap_or_default() + "\n";
+                let _ = tx.send(json_line.clone());
+                db_buf.push_str(&json_line);
+            }
+
+            if db_buf.len() >= PROVISION_FLUSH_SIZE {
+                flush_provision_log(db, agent_id, &mut db_buf).await;
+                last_flush = tokio::time::Instant::now();
+            }
+        }
+    }
+
+    // Flush remaining byte buffer
+    if !byte_buf.is_empty() {
+        let remaining = String::from_utf8_lossy(&byte_buf).trim_end().to_string();
+        if !remaining.is_empty() {
+            let event = ev_step_output(step, &remaining);
+            let json_line = serde_json::to_string(&event).unwrap_or_default() + "\n";
+            let _ = tx.send(json_line.clone());
+            db_buf.push_str(&json_line);
+        }
+    }
+    flush_provision_log(db, agent_id, &mut db_buf).await;
+
+    Ok(exit_code)
+}
+
+/// Run a quick command and capture its output (no streaming to provision log).
+async fn quick_exec(handle: &Handle<ClientHandler>, cmd: &str) -> anyhow::Result<String> {
+    let mut channel = handle.channel_open_session().await?;
+    channel.exec(true, cmd).await?;
+    let mut output = Vec::new();
+    loop {
+        match channel.wait().await {
+            Some(russh::ChannelMsg::Data { data }) => output.extend_from_slice(&data),
+            Some(russh::ChannelMsg::Eof) => {} // wait for Close
+            Some(russh::ChannelMsg::Close) | None => break,
+            _ => {}
+        }
+    }
+    Ok(String::from_utf8_lossy(&output).trim().to_string())
 }
 
 pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Agent>>> {
@@ -488,7 +684,7 @@ pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Age
         })
         .collect::<Vec<_>>();
 
-    sync_docker_statuses(&state, &mut agents).await;
+    sync_agent_statuses(&state, &mut agents).await;
 
     Ok(Json(agents))
 }
@@ -603,7 +799,7 @@ pub async fn create_agent(
         let password = ssh_password_enc
             .as_deref()
             .and_then(|p| crypto.decrypt(p).ok());
-        let executor = match SshClientPool::connect(
+        let handle = match connect_russh(
             &ssh_ip,
             ssh_port as u16,
             &ssh_username,
@@ -613,7 +809,7 @@ pub async fn create_agent(
         )
         .await
         {
-            Ok(client) => Executor::Ssh(client),
+            Ok(h) => h,
             Err(e) => {
                 emit(
                     &db,
@@ -622,8 +818,8 @@ pub async fn create_agent(
                     ev_step_failed(0, &format!("SSH connect failed: {}", e)),
                 )
                 .await;
-                emit(&db, &agent_id, &tx, ev_provision_done("error")).await;
-                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
+                emit(&db, &agent_id, &tx, ev_provision_done("provision_failed")).await;
+                let _ = sqlx::query!("UPDATE agents SET status = 'provision_failed' WHERE id = $1", agent_id)
                     .execute(&db)
                     .await;
                 provision_channels.lock().await.remove(&agent_id);
@@ -632,7 +828,7 @@ pub async fn create_agent(
         };
 
         match provision_agent(
-            &executor,
+            &handle,
             &db,
             &agent_id,
             &tx,
@@ -686,7 +882,7 @@ pub async fn create_agent(
 
 #[allow(clippy::too_many_arguments)]
 async fn provision_agent(
-    executor: &Executor,
+    handle: &Handle<ClientHandler>,
     db: &sqlx::PgPool,
     agent_id: &str,
     tx: &broadcast::Sender<String>,
@@ -701,44 +897,59 @@ async fn provision_agent(
     master_key: &str,
     use_docker: bool,
 ) -> anyhow::Result<()> {
+    // Resolve remote home directory for non-docker mode
+    let remote_home = if use_docker {
+        String::new()
+    } else {
+        let mut ch = handle.channel_open_session().await?;
+        ch.exec(true, "echo $HOME").await?;
+        let mut buf = Vec::new();
+        loop {
+            match ch.wait().await {
+                Some(russh::ChannelMsg::Data { data }) => buf.extend_from_slice(&data),
+                Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => break,
+                _ => {}
+            }
+        }
+        String::from_utf8_lossy(&buf).trim().to_string()
+    };
+    let base_dir = if use_docker {
+        format!("/root/.codex-fleet/{}", agent_id)
+    } else {
+        format!("{}/.codex-fleet/{}", remote_home, agent_id)
+    };
     let workspace_dir = if use_docker {
         "/workspace".to_string()
     } else {
-        format!("$HOME/.codex-fleet/{}/workspace", agent_id)
+        format!("{}/workspace", base_dir)
     };
 
-    // Step 1: Create dirs + write config files
-    emit(
-        db,
-        agent_id,
-        tx,
-        ev_step_start(1, "Create dirs & write configs"),
-    )
-    .await;
-    let dir_cmd = format!(
-        "mkdir -p $HOME/.codex-fleet/{id}/agent $HOME/.codex-fleet/{id}/workspace",
-        id = agent_id
-    );
-    match executor.execute(&dir_cmd).await {
-        Ok(out) => {
-            if !out.trim().is_empty() {
-                emit(db, agent_id, tx, ev_step_output(1, out.trim())).await;
-            }
-            emit(
-                db,
-                agent_id,
-                tx,
-                ev_step_output(1, &format!("Created: ~/.codex-fleet/{}/", agent_id)),
-            )
+    // Update workdir in DB with absolute path
+    if !use_docker {
+        let _ = sqlx::query("UPDATE agents SET workdir = $1 WHERE id = $2")
+            .bind(&workspace_dir)
+            .bind(agent_id)
+            .execute(db)
             .await;
+    }
+
+    // Step 1: Create dirs + write config files
+    emit(db, agent_id, tx, ev_step_start(1, "Create dirs & write configs")).await;
+    emit(db, agent_id, tx, ev_substep(1, "Creating directories")).await;
+    let dir_cmd = format!(
+        "mkdir -p {base}/agent {base}/workspace",
+        base = base_dir
+    );
+    match stream_cmd(handle, &dir_cmd, &dir_cmd, db, agent_id, tx, 1).await {
+        Ok(0) => {}
+        Ok(code) => {
+            let err = format!("Step 1 failed (exit code {})", code);
+            fail_provision(db, agent_id, tx, 1, &err).await;
+            return Err(anyhow::anyhow!(err));
         }
         Err(e) => {
             let err = format!("Step 1 failed: {}", e);
-            emit(db, agent_id, tx, ev_step_failed(1, &err)).await;
-            emit(db, agent_id, tx, ev_provision_done("error")).await;
-            let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
-                .execute(db)
-                .await;
+            fail_provision(db, agent_id, tx, 1, &err).await;
             return Err(anyhow::anyhow!(err));
         }
     }
@@ -762,40 +973,40 @@ async fn provision_agent(
             };
 
             if !row.config_toml.is_empty() {
+                emit(db, agent_id, tx, ev_substep(1, "Writing config.toml")).await;
                 let b64 = BASE64.encode(row.config_toml.as_bytes());
                 let cmd = format!(
-                    "echo '{}' | base64 -d > $HOME/.codex-fleet/{}/agent/config.toml",
-                    b64, agent_id
+                    "echo '{}' | base64 -d > {}/agent/config.toml",
+                    b64, base_dir
                 );
-                if let Err(e) = executor.execute(&cmd).await {
-                    emit(
-                        db,
-                        agent_id,
-                        tx,
-                        ev_warn(1, &format!("config.toml write failed: {}", e)),
-                    )
-                    .await;
-                } else {
-                    emit(db, agent_id, tx, ev_step_output(1, "Wrote config.toml")).await;
+                let display = format!("Writing ~/.codex-fleet/{}/agent/config.toml", agent_id);
+                match stream_cmd(handle, &cmd, &display, db, agent_id, tx, 1).await {
+                    Ok(0) => {}
+                    Ok(code) => {
+                        emit(db, agent_id, tx, ev_warn(1, &format!("config.toml write failed (exit {})", code))).await;
+                    }
+                    Err(e) => {
+                        emit(db, agent_id, tx, ev_warn(1, &format!("config.toml write failed: {}", e))).await;
+                    }
                 }
             }
 
             if !auth_json_content.is_empty() {
+                emit(db, agent_id, tx, ev_substep(1, "Writing auth.json")).await;
                 let b64 = BASE64.encode(auth_json_content.as_bytes());
                 let cmd = format!(
-                    "echo '{}' | base64 -d > $HOME/.codex-fleet/{}/agent/auth.json",
-                    b64, agent_id
+                    "echo '{}' | base64 -d > {}/agent/auth.json",
+                    b64, base_dir
                 );
-                if let Err(e) = executor.execute(&cmd).await {
-                    emit(
-                        db,
-                        agent_id,
-                        tx,
-                        ev_warn(1, &format!("auth.json write failed: {}", e)),
-                    )
-                    .await;
-                } else {
-                    emit(db, agent_id, tx, ev_step_output(1, "Wrote auth.json")).await;
+                let display = format!("Writing ~/.codex-fleet/{}/agent/auth.json", agent_id);
+                match stream_cmd(handle, &cmd, &display, db, agent_id, tx, 1).await {
+                    Ok(0) => {}
+                    Ok(code) => {
+                        emit(db, agent_id, tx, ev_warn(1, &format!("auth.json write failed (exit {})", code))).await;
+                    }
+                    Err(e) => {
+                        emit(db, agent_id, tx, ev_warn(1, &format!("auth.json write failed: {}", e))).await;
+                    }
                 }
             }
         }
@@ -807,21 +1018,21 @@ async fn provision_agent(
             .await
         {
             if !row.content.is_empty() {
+                emit(db, agent_id, tx, ev_substep(1, "Writing AGENTS.md")).await;
                 let b64 = BASE64.encode(row.content.as_bytes());
                 let cmd = format!(
-                    "echo '{}' | base64 -d > $HOME/.codex-fleet/{}/agent/AGENTS.md",
-                    b64, agent_id
+                    "echo '{}' | base64 -d > {}/agent/AGENTS.md",
+                    b64, base_dir
                 );
-                if let Err(e) = executor.execute(&cmd).await {
-                    emit(
-                        db,
-                        agent_id,
-                        tx,
-                        ev_warn(1, &format!("AGENTS.md write failed: {}", e)),
-                    )
-                    .await;
-                } else {
-                    emit(db, agent_id, tx, ev_step_output(1, "Wrote AGENTS.md")).await;
+                let display = format!("Writing ~/.codex-fleet/{}/agent/AGENTS.md", agent_id);
+                match stream_cmd(handle, &cmd, &display, db, agent_id, tx, 1).await {
+                    Ok(0) => {}
+                    Ok(code) => {
+                        emit(db, agent_id, tx, ev_warn(1, &format!("AGENTS.md write failed (exit {})", code))).await;
+                    }
+                    Err(e) => {
+                        emit(db, agent_id, tx, ev_warn(1, &format!("AGENTS.md write failed: {}", e))).await;
+                    }
                 }
             }
         }
@@ -832,18 +1043,17 @@ async fn provision_agent(
     if use_docker {
         emit(db, agent_id, tx, ev_step_start(2, "Docker setup")).await;
 
-        let _ = executor
-            .execute(&format!(
-                "docker rm -f {} 2>/dev/null || true",
-                container_name
-            ))
-            .await;
+        emit(db, agent_id, tx, ev_substep(2, "Removing old container")).await;
+        let rm_cmd = format!("docker rm -f {} 2>/dev/null || true", container_name);
+        let _ = stream_cmd(handle, &rm_cmd, &rm_cmd, db, agent_id, tx, 2).await;
+
+        emit(db, agent_id, tx, ev_substep(2, "Starting container (docker run)")).await;
         let mut docker_run = format!(
             "docker run -d --name {container} --workdir /workspace \
-             -v $HOME/.codex-fleet/{id}/agent:/agent \
-             -v $HOME/.codex-fleet/{id}/workspace:/workspace",
+             -v {base}/agent:/agent \
+             -v {base}/workspace:/workspace",
             container = container_name,
-            id = agent_id,
+            base = base_dir,
         );
 
         if let Some(dc_id) = docker_config_id {
@@ -885,9 +1095,7 @@ async fn provision_agent(
                         }
                         if env_count > 0 {
                             emit(
-                                db,
-                                agent_id,
-                                tx,
+                                db, agent_id, tx,
                                 ev_step_output(2, &format!("Injecting {} env var(s)", env_count)),
                             )
                             .await;
@@ -916,41 +1124,49 @@ async fn provision_agent(
         }
 
         docker_run.push_str(&format!(" {} tail -f /dev/null", shell_quote(docker_image)));
-        emit(
-            db,
-            agent_id,
-            tx,
-            ev_step_output(2, &format!("$ {}", docker_run)),
-        )
-        .await;
 
-        match executor.execute(&docker_run).await {
-            Ok(container_id_raw) => {
-                let cid = container_id_raw.trim().to_string();
-                emit(
-                    db,
-                    agent_id,
-                    tx,
-                    ev_step_output(2, &format!("Container ID: {}", &cid[..cid.len().min(12)])),
-                )
-                .await;
-                let _ = sqlx::query!(
-                    "UPDATE agents SET container_id = $1 WHERE id = $2",
-                    cid,
-                    agent_id
-                )
-                .execute(db)
-                .await;
+        match stream_cmd(handle, &docker_run, &docker_run, db, agent_id, tx, 2).await {
+            Ok(0) => {}
+            Ok(code) => {
+                let err = format!("Step 2 failed (docker run, exit code {})", code);
+                fail_provision(db, agent_id, tx, 2, &err).await;
+                return Err(anyhow::anyhow!(err));
             }
             Err(e) => {
                 let err = format!("Step 2 failed (docker run): {}", e);
-                emit(db, agent_id, tx, ev_step_failed(2, &err)).await;
-                emit(db, agent_id, tx, ev_provision_done("error")).await;
-                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
-                    .execute(db)
-                    .await;
+                fail_provision(db, agent_id, tx, 2, &err).await;
                 return Err(anyhow::anyhow!(err));
             }
+        }
+
+        // Verify container is actually running (docker run -d can exit 0 but container may die immediately)
+        let container_state = quick_exec(handle, &format!(
+            "docker inspect --format '{{{{.State.Status}}}}|{{{{.Id}}}}' {} 2>/dev/null || echo 'missing|'",
+            container_name
+        )).await.unwrap_or_default();
+        let mut parts = container_state.splitn(2, '|');
+        let state = parts.next().unwrap_or("missing");
+        let cid = parts.next().unwrap_or("").trim();
+        if state != "running" {
+            // Try to get error logs from the container
+            let logs = quick_exec(handle, &format!("docker logs --tail 10 {} 2>&1", container_name))
+                .await.unwrap_or_default();
+            let err = if logs.is_empty() {
+                format!("Container is not running (state: {})", state)
+            } else {
+                format!("Container is not running (state: {})\n{}", state, logs)
+            };
+            fail_provision(db, agent_id, tx, 2, &err).await;
+            return Err(anyhow::anyhow!(err));
+        }
+        if !cid.is_empty() {
+            emit(db, agent_id, tx, ev_step_output(2, &format!("Container ID: {}", &cid[..cid.len().min(12)]))).await;
+            let _ = sqlx::query!(
+                "UPDATE agents SET container_id = $1 WHERE id = $2",
+                cid, agent_id
+            )
+            .execute(db)
+            .await;
         }
 
         // Run init_script if configured
@@ -963,22 +1179,16 @@ async fn provision_agent(
             .await
             {
                 if !dc.init_script.is_empty() {
+                    emit(db, agent_id, tx, ev_substep(2, "Running init script")).await;
                     let cmd = target_shell_command(true, container_name, &dc.init_script);
-                    match executor.execute(&cmd).await {
-                        Ok(out) => {
-                            if !out.trim().is_empty() {
-                                emit(db, agent_id, tx, ev_step_output(2, out.trim())).await;
-                            }
+                    match stream_cmd(handle, &cmd, "Running init script", db, agent_id, tx, 2).await {
+                        Ok(code) if code != 0 => {
+                            emit(db, agent_id, tx, ev_warn(2, &format!("init_script failed (exit {})", code))).await;
                         }
                         Err(e) => {
-                            emit(
-                                db,
-                                agent_id,
-                                tx,
-                                ev_warn(2, &format!("init_script failed: {}", e)),
-                            )
-                            .await;
+                            emit(db, agent_id, tx, ev_warn(2, &format!("init_script failed: {}", e))).await;
                         }
+                        _ => {}
                     }
                 }
             }
@@ -989,16 +1199,26 @@ async fn provision_agent(
     }
 
     // Step 3: Install CLI + git (inside docker if use_docker)
-    emit(
-        db,
-        agent_id,
-        tx,
-        ev_step_start(3, "Install CLI & environment"),
-    )
-    .await;
+    emit(db, agent_id, tx, ev_step_start(3, "Install CLI & environment")).await;
 
     if cli_type == "codex" {
-        let ensure_npm_script = r#"if command -v npm >/dev/null 2>&1; then
+        // Non-docker: check if codex is already installed first; skip npm + install if so
+        let mut codex_found = false;
+        if !use_docker {
+            emit(db, agent_id, tx, ev_substep(3, "Checking codex on host")).await;
+            let check_cmd = format!("{}command -v codex && codex --version 2>/dev/null || true", HOST_ENV_SETUP);
+            match stream_cmd(handle, &check_cmd, "command -v codex", db, agent_id, tx, 3).await {
+                Ok(0) => {
+                    emit(db, agent_id, tx, ev_substep(3, "codex already installed, skipping install")).await;
+                    codex_found = true;
+                }
+                _ => {}
+            }
+        }
+
+        if !codex_found {
+            emit(db, agent_id, tx, ev_substep(3, "Checking npm")).await;
+            let ensure_npm_script = r#"if command -v npm >/dev/null 2>&1; then
   echo "npm already installed"
   exit 0
 fi
@@ -1020,25 +1240,23 @@ else
   echo "npm not found and no supported package manager"
   exit 1
 fi"#;
-        let ensure_npm_cmd = target_shell_command(use_docker, container_name, ensure_npm_script);
-        match executor.execute(&ensure_npm_cmd).await {
-            Ok(out) => {
-                if !out.trim().is_empty() {
-                    emit(db, agent_id, tx, ev_step_output(3, out.trim())).await;
+            let ensure_npm_cmd = target_shell_command(use_docker, container_name, ensure_npm_script);
+            match stream_cmd(handle, &ensure_npm_cmd, "Checking/installing npm", db, agent_id, tx, 3).await {
+                Ok(0) => {}
+                Ok(code) => {
+                    let err = format!("Step 3 failed: npm check/install (exit code {})", code);
+                    fail_provision(db, agent_id, tx, 3, &err).await;
+                    return Err(anyhow::anyhow!(err));
+                }
+                Err(e) => {
+                    let err = format!("Step 3 failed: npm check/install: {}", e);
+                    fail_provision(db, agent_id, tx, 3, &err).await;
+                    return Err(anyhow::anyhow!(err));
                 }
             }
-            Err(e) => {
-                let err = format!("Step 3 failed (npm check/install): {}", e);
-                emit(db, agent_id, tx, ev_step_failed(3, &err)).await;
-                emit(db, agent_id, tx, ev_provision_done("error")).await;
-                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
-                    .execute(db)
-                    .await;
-                return Err(anyhow::anyhow!(err));
-            }
-        }
 
-        let install_codex_script = r#"if npm i -g @openai/codex@latest; then
+            emit(db, agent_id, tx, ev_substep(3, "Installing @openai/codex (may take a few minutes)")).await;
+            let install_codex_script = r#"if npm i -g @openai/codex@latest; then
   exit 0
 fi
 if command -v sudo >/dev/null 2>&1; then
@@ -1046,55 +1264,49 @@ if command -v sudo >/dev/null 2>&1; then
 else
   exit 1
 fi"#;
-        let install_codex_cmd =
-            target_shell_command(use_docker, container_name, install_codex_script);
-        match executor.execute(&install_codex_cmd).await {
-            Ok(out) => {
-                if !out.trim().is_empty() {
-                    emit(db, agent_id, tx, ev_step_output(3, out.trim())).await;
+            let install_codex_cmd = target_shell_command(use_docker, container_name, install_codex_script);
+            match stream_cmd(handle, &install_codex_cmd, "npm i -g @openai/codex@latest", db, agent_id, tx, 3).await {
+                Ok(0) => {}
+                Ok(code) => {
+                    let err = format!("Step 3 failed: codex install (exit code {})", code);
+                    fail_provision(db, agent_id, tx, 3, &err).await;
+                    return Err(anyhow::anyhow!(err));
                 }
-            }
-            Err(e) => {
-                let err = format!("Step 3 failed (codex install): {}", e);
-                emit(db, agent_id, tx, ev_step_failed(3, &err)).await;
-                emit(db, agent_id, tx, ev_provision_done("error")).await;
-                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
-                    .execute(db)
-                    .await;
-                return Err(anyhow::anyhow!(err));
+                Err(e) => {
+                    let err = format!("Step 3 failed: codex install: {}", e);
+                    fail_provision(db, agent_id, tx, 3, &err).await;
+                    return Err(anyhow::anyhow!(err));
+                }
             }
         }
 
         if use_docker {
+            emit(db, agent_id, tx, ev_substep(3, "Linking config directory")).await;
             let link_cmd = target_shell_command(
                 true,
                 container_name,
                 "mkdir -p /root && ln -sfn /agent /root/.codex",
             );
-            if let Err(e) = executor.execute(&link_cmd).await {
-                emit(
-                    db,
-                    agent_id,
-                    tx,
-                    ev_warn(3, &format!("link /agent -> /root/.codex failed: {}", e)),
-                )
-                .await;
+            match stream_cmd(handle, &link_cmd, "ln -sfn /agent /root/.codex", db, agent_id, tx, 3).await {
+                Ok(code) if code != 0 => {
+                    emit(db, agent_id, tx, ev_warn(3, &format!("link /agent -> /root/.codex failed (exit {})", code))).await;
+                }
+                Err(e) => {
+                    emit(db, agent_id, tx, ev_warn(3, &format!("link /agent -> /root/.codex failed: {}", e))).await;
+                }
+                _ => {}
             }
         }
     } else {
         emit(
-            db,
-            agent_id,
-            tx,
-            ev_step_output(
-                3,
-                &format!("(cli_type={}, skipping codex install)", cli_type),
-            ),
+            db, agent_id, tx,
+            ev_step_output(3, &format!("(cli_type={}, skipping codex install)", cli_type)),
         )
         .await;
     }
 
     // Install git (check first)
+    emit(db, agent_id, tx, ev_substep(3, "Checking git")).await;
     let ensure_git_script = r#"if command -v git >/dev/null 2>&1; then
   echo "git already installed"
   exit 0
@@ -1118,30 +1330,27 @@ else
   exit 1
 fi"#;
     let ensure_git_cmd = target_shell_command(use_docker, container_name, ensure_git_script);
-    match executor.execute(&ensure_git_cmd).await {
-        Ok(out) => {
-            if !out.trim().is_empty() {
-                emit(db, agent_id, tx, ev_step_output(3, out.trim())).await;
-            }
+    match stream_cmd(handle, &ensure_git_cmd, "Checking/installing git", db, agent_id, tx, 3).await {
+        Ok(0) => {
             emit(db, agent_id, tx, ev_step_done(3)).await;
+        }
+        Ok(code) => {
+            if git_repo.is_empty() {
+                emit(db, agent_id, tx, ev_warn(3, &format!("git install failed (exit {})", code))).await;
+                emit(db, agent_id, tx, ev_step_done(3)).await;
+            } else {
+                let err = format!("Step 3 failed: git install (exit code {})", code);
+                fail_provision(db, agent_id, tx, 3, &err).await;
+                return Err(anyhow::anyhow!(err));
+            }
         }
         Err(e) => {
             if git_repo.is_empty() {
-                emit(
-                    db,
-                    agent_id,
-                    tx,
-                    ev_warn(3, &format!("git install failed: {}", e)),
-                )
-                .await;
+                emit(db, agent_id, tx, ev_warn(3, &format!("git install failed: {}", e))).await;
                 emit(db, agent_id, tx, ev_step_done(3)).await;
             } else {
-                let err = format!("Step 3 failed (git install): {}", e);
-                emit(db, agent_id, tx, ev_step_failed(3, &err)).await;
-                emit(db, agent_id, tx, ev_provision_done("error")).await;
-                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
-                    .execute(db)
-                    .await;
+                let err = format!("Step 3 failed: git install: {}", e);
+                fail_provision(db, agent_id, tx, 3, &err).await;
                 return Err(anyhow::anyhow!(err));
             }
         }
@@ -1150,6 +1359,7 @@ fi"#;
     // Step 4: Git clone / sync (skip if no git_repo)
     if !git_repo.is_empty() {
         emit(db, agent_id, tx, ev_step_start(4, "Git clone / sync")).await;
+        emit(db, agent_id, tx, ev_substep(4, "Cloning / syncing repository")).await;
         let branch = if git_branch.trim().is_empty() {
             "main"
         } else {
@@ -1170,41 +1380,38 @@ fi"#,
             branch = shell_quote(branch),
         );
         let git_sync_cmd = target_shell_command(use_docker, container_name, &git_sync_script);
-        match executor.execute(&git_sync_cmd).await {
-            Ok(out) => {
-                if !out.trim().is_empty() {
-                    emit(db, agent_id, tx, ev_step_output(4, out.trim())).await;
-                }
+        let git_display = format!("git clone/sync {}", git_repo);
+        match stream_cmd(handle, &git_sync_cmd, &git_display, db, agent_id, tx, 4).await {
+            Ok(0) => {
                 emit(db, agent_id, tx, ev_step_done(4)).await;
+            }
+            Ok(code) => {
+                let err = format!("Step 4 failed (exit code {})", code);
+                fail_provision(db, agent_id, tx, 4, &err).await;
+                return Err(anyhow::anyhow!(err));
             }
             Err(e) => {
                 let err = format!("Step 4 failed: {}", e);
-                emit(db, agent_id, tx, ev_step_failed(4, &err)).await;
-                emit(db, agent_id, tx, ev_provision_done("error")).await;
-                let _ = sqlx::query!("UPDATE agents SET status = 'error' WHERE id = $1", agent_id)
-                    .execute(db)
-                    .await;
+                fail_provision(db, agent_id, tx, 4, &err).await;
                 return Err(anyhow::anyhow!(err));
             }
         }
     } else {
         emit(
-            db,
-            agent_id,
-            tx,
+            db, agent_id, tx,
             ev_step_skipped(4, "no git repo configured"),
         )
         .await;
     }
 
-    // Done
-    emit(db, agent_id, tx, ev_provision_done("stopped")).await;
-    let _ = sqlx::query!(
-        "UPDATE agents SET status = 'stopped' WHERE id = $1",
-        agent_id
-    )
-    .execute(db)
-    .await;
+    // Done — non-docker agents are "running" once SSH was verified during provisioning
+    let final_status = if use_docker { "stopped" } else { "running" };
+    emit(db, agent_id, tx, ev_provision_done(final_status)).await;
+    let _ = sqlx::query("UPDATE agents SET status = $1 WHERE id = $2")
+        .bind(final_status)
+        .bind(agent_id)
+        .execute(db)
+        .await;
 
     Ok(())
 }
@@ -1283,8 +1490,11 @@ pub async fn update_agent(
         let ssh_key_content = server.ssh_key_content;
         let new_codex_config_id = codex_config_id.clone();
         let new_agents_md_id = agents_md_id.clone();
+        let agent_workdir = existing.workdir.clone();
 
         tokio::spawn(async move {
+            // Derive base_dir from workdir for file paths
+            let base_dir = agent_workdir.trim_end_matches("/workspace");
             let crypto = Crypto::new(&master_key);
             let password = ssh_password_enc
                 .as_deref()
@@ -1327,16 +1537,16 @@ pub async fn update_agent(
                         if !row.config_toml.is_empty() {
                             let b64 = BASE64.encode(row.config_toml.as_bytes());
                             let cmd = format!(
-                                "echo '{}' | base64 -d > $HOME/.codex-fleet/{}/agent/config.toml",
-                                b64, agent_id
+                                "echo '{}' | base64 -d > {}/agent/config.toml",
+                                b64, base_dir
                             );
                             let _ = executor.execute(&cmd).await;
                         }
                         if !auth_json_content.is_empty() {
                             let b64 = BASE64.encode(auth_json_content.as_bytes());
                             let cmd = format!(
-                                "echo '{}' | base64 -d > $HOME/.codex-fleet/{}/agent/auth.json",
-                                b64, agent_id
+                                "echo '{}' | base64 -d > {}/agent/auth.json",
+                                b64, base_dir
                             );
                             let _ = executor.execute(&cmd).await;
                         }
@@ -1352,8 +1562,8 @@ pub async fn update_agent(
                         if !row.content.is_empty() {
                             let b64 = BASE64.encode(row.content.as_bytes());
                             let cmd = format!(
-                                "echo '{}' | base64 -d > $HOME/.codex-fleet/{}/agent/AGENTS.md",
-                                b64, agent_id
+                                "echo '{}' | base64 -d > {}/agent/AGENTS.md",
+                                b64, base_dir
                             );
                             let _ = executor.execute(&cmd).await;
                         }
@@ -1396,7 +1606,7 @@ pub async fn update_agent(
                         }
                     }
                 } else {
-                    let workdir = format!("$HOME/.codex-fleet/{}/workspace", agent_id);
+                    let workdir = agent_workdir.clone();
                     let clear_cmd = format!("rm -rf {}/*", workdir);
                     let _ = executor.execute(&clear_cmd).await;
                     let clone_cmd = format!(
@@ -1454,28 +1664,45 @@ pub async fn update_agent(
     Ok((StatusCode::OK, Json(serde_json::to_value(agent).unwrap())))
 }
 
+#[derive(Deserialize)]
+pub struct DeleteAgentQuery {
+    #[serde(default)]
+    pub cleanup: Option<bool>,
+}
+
 pub async fn delete_agent(
     State(state): State<AppContext>,
     Path(id): Path<String>,
+    Query(params): Query<DeleteAgentQuery>,
 ) -> Result<Json<serde_json::Value>> {
-    let (executor, agent_info) = get_executor(&state, &id).await?;
-    let use_docker = agent_info.use_docker;
+    let cleanup = params.cleanup.unwrap_or(false);
 
-    if use_docker {
-        let container = agent_info.docker_container_name.unwrap_or_default();
-        if !container.is_empty() {
-            let _ = executor
-                .execute(&format!(
-                    "docker stop {} 2>/dev/null; docker rm {} 2>/dev/null",
-                    container, container
-                ))
-                .await;
+    if cleanup {
+        match get_executor(&state, &id).await {
+            Ok((executor, agent_info)) => {
+                if agent_info.use_docker {
+                    let container = agent_info.docker_container_name.unwrap_or_default();
+                    if !container.is_empty() {
+                        let _ = executor
+                            .execute(&format!(
+                                "docker stop {} 2>/dev/null; docker rm {} 2>/dev/null",
+                                container, container
+                            ))
+                            .await;
+                    }
+                }
+                let base = agent_info.workdir.trim_end_matches("/workspace");
+                let _ = executor
+                    .execute(&format!("rm -rf {}/", base))
+                    .await;
+            }
+            Err(_) => {
+                return Err(AppError::Conflict(
+                    "Server unreachable, cannot clean up remote data. You can delete the database record only by unchecking the cleanup option.".into(),
+                ));
+            }
         }
     }
-
-    let _ = executor
-        .execute(&format!("rm -rf $HOME/.codex-fleet/{}/", id))
-        .await;
 
     sqlx::query!("DELETE FROM agents WHERE id = $1", id)
         .execute(&state.db)
@@ -1505,6 +1732,7 @@ pub async fn start_agent(
             )));
         }
     }
+    // Non-docker: SSH connected successfully in get_executor → running
 
     sqlx::query!("UPDATE agents SET status = 'running' WHERE id = $1", id)
         .execute(&state.db)
@@ -1603,7 +1831,7 @@ pub async fn clone_agent(
     let workdir = if row.use_docker {
         "/workspace".to_string()
     } else {
-        format!("~/.codex-fleet/{}/workspace", new_id)
+        format!("$HOME/.codex-fleet/{}/workspace", new_id)
     };
     let docker_container_name = if row.use_docker {
         Some(format!("codex-fleet-{}", &new_id[..8]))
@@ -1673,50 +1901,45 @@ pub async fn terminal_command(
     let workdir: String = agent.get("workdir");
     let use_docker: bool = agent.get("use_docker");
 
-    let (local_cmd, ssh_shell_cmd) = if use_docker {
+    let (local_cmd, ssh_cmd) = if use_docker {
         let container = docker_container_name.unwrap_or_default();
-        (
-            format!(
-                "docker exec -it {} bash -lc {}",
-                container,
-                shell_quote("cd /workspace && exec bash")
-            ),
-            format!(
-                "docker exec -it {} bash -lc {}",
-                container,
-                shell_quote("cd /workspace && exec bash")
-            ),
+        let inner = shell_quote("cd /workspace && exec bash");
+        let local = format!("docker exec -it {} bash -lc {}", container, inner);
+        let ssh = if let Ok(server) = sqlx::query!(
+            "SELECT ip, port, username FROM servers WHERE id = $1",
+            server_id
         )
-    } else {
-        (
-            format!(
-                "cd {} && exec \"${{SHELL:-bash}}\" -l",
-                shell_quote(&workdir)
-            ),
-            format!(
-                "cd {} && exec \"${{SHELL:-bash}}\" -l",
-                shell_quote(&workdir)
-            ),
-        )
-    };
-
-    let ssh_cmd = if let Ok(server) = sqlx::query!(
-        "SELECT ip, port, username FROM servers WHERE id = $1",
-        server_id
-    )
-    .fetch_one(&state.db)
-    .await
-    {
-        if use_docker {
+        .fetch_one(&state.db)
+        .await
+        {
             Some(format!(
                 "ssh {}@{} -p {} -t \"{}\"",
-                server.username, server.ip, server.port, ssh_shell_cmd
+                server.username, server.ip, server.port, local
             ))
         } else {
-            Some(format!("ssh {}@{} -p {}", server.username, server.ip, server.port))
-        }
+            None
+        };
+        (local, ssh)
     } else {
-        None
+        let local = format!(
+            "cd {} && exec \"${{SHELL:-bash}}\" -l",
+            shell_quote(&workdir)
+        );
+        let ssh = if let Ok(server) = sqlx::query!(
+            "SELECT ip, port, username FROM servers WHERE id = $1",
+            server_id
+        )
+        .fetch_one(&state.db)
+        .await
+        {
+            Some(format!(
+                "ssh {}@{} -p {} -t 'cd {} && exec bash -l'",
+                server.username, server.ip, server.port, shell_quote(&workdir)
+            ))
+        } else {
+            None
+        };
+        (local, ssh)
     };
 
     Ok(Json(TerminalCommandResponse { local_cmd, ssh_cmd }))
@@ -1745,35 +1968,46 @@ pub async fn resume_command(
     let workdir: String = agent.get("workdir");
     let use_docker: bool = agent.get("use_docker");
 
-    let resume_cmd = format!("codex resume {}", params.thread_id);
+    let env_prefix = codex_home_prefix(use_docker, &workdir);
+    let resume_cmd = format!("{}codex resume {}", env_prefix, params.thread_id);
 
-    let (local_cmd, ssh_shell_cmd) = if use_docker {
+    let (local_cmd, ssh_cmd) = if use_docker {
         let container = docker_container_name.unwrap_or_default();
         let inner = format!("cd /workspace && {}", resume_cmd);
-        (
-            format!("docker exec -it {} bash -lc {}", container, shell_quote(&inner)),
-            format!("docker exec -it {} bash -lc {}", container, shell_quote(&inner)),
+        let local = format!("docker exec -it {} bash -lc {}", container, shell_quote(&inner));
+        let ssh = if let Ok(server) = sqlx::query!(
+            "SELECT ip, port, username FROM servers WHERE id = $1",
+            server_id
         )
+        .fetch_one(&state.db)
+        .await
+        {
+            Some(format!(
+                "ssh {}@{} -p {} -t \"{}\"",
+                server.username, server.ip, server.port, local
+            ))
+        } else {
+            None
+        };
+        (local, ssh)
     } else {
-        (
-            format!("cd {} && {}", shell_quote(&workdir), resume_cmd),
-            format!("cd {} && {}", shell_quote(&workdir), resume_cmd),
+        let inner = format!("cd {} && {}{}", shell_quote(&workdir), HOST_ENV_SETUP, resume_cmd);
+        let local = inner.clone();
+        let ssh = if let Ok(server) = sqlx::query!(
+            "SELECT ip, port, username FROM servers WHERE id = $1",
+            server_id
         )
-    };
-
-    let ssh_cmd = if let Ok(server) = sqlx::query!(
-        "SELECT ip, port, username FROM servers WHERE id = $1",
-        server_id
-    )
-    .fetch_one(&state.db)
-    .await
-    {
-        Some(format!(
-            "ssh {}@{} -p {} -t \"{}\"",
-            server.username, server.ip, server.port, ssh_shell_cmd
-        ))
-    } else {
-        None
+        .fetch_one(&state.db)
+        .await
+        {
+            Some(format!(
+                "ssh {}@{} -p {} -t {}",
+                server.username, server.ip, server.port, shell_quote(&inner)
+            ))
+        } else {
+            None
+        };
+        (local, ssh)
     };
 
     Ok(Json(TerminalCommandResponse { local_cmd, ssh_cmd }))
@@ -1884,7 +2118,7 @@ pub async fn get_server_credentials(
     ))
 }
 
-/// Get an Executor (SSH) and agent row info for an agent.
+/// Get an Executor (SSH or Local) and agent row info for an agent.
 pub async fn get_executor(state: &AppContext, agent_id: &str) -> Result<(Executor, AgentRow)> {
     let agent = sqlx::query(
         "SELECT server_id, docker_container_name, workdir, use_docker, status FROM agents WHERE id = $1",

@@ -67,9 +67,9 @@ export default function AgentDetail() {
     refetchInterval: 5000,
   })
 
-  // Auto-select provision tab when agent is provisioning
+  // Auto-select provision tab when agent is provisioning or provision failed
   useEffect(() => {
-    if (agent?.status === 'provisioning') {
+    if (agent?.status === 'provisioning' || agent?.status === 'provision_failed') {
       setActiveTab('provision')
     }
   }, [agent?.status])
@@ -134,15 +134,18 @@ export default function AgentDetail() {
   if (!agent) return <div className="p-8 text-gray-500">{t.agentDetail.notFound}</div>
 
   const isProvisioning = agent.status === 'provisioning'
+  const provisionFailed = agent.status === 'provision_failed'
   const server = servers.find(s => s.id === agent.server_id)
-  const statusMap: Record<string, string> = { running: 'badge-green', stopped: 'badge-gray', error: 'badge-red', provisioning: 'badge-yellow' }
+  const statusMap: Record<string, string> = { running: 'badge-green', stopped: 'badge-gray', error: 'badge-red', provisioning: 'badge-yellow', provision_failed: 'badge-red' }
   const statusLabel = t.status[agent.status as keyof typeof t.status] ?? agent.status
 
-  const fixedTabs = [
-    { key: 'tasks', label: t.agentDetail.tasks },
-    { key: 'terminal', label: t.agentDetail.terminal },
-    { key: 'provision', label: t.provision?.title ?? 'Provision' },
-  ]
+  const fixedTabs = (isProvisioning || provisionFailed)
+    ? [{ key: 'provision', label: t.provision?.title ?? 'Provision' }]
+    : [
+        { key: 'tasks', label: t.agentDetail.tasks },
+        { key: 'terminal', label: t.agentDetail.terminal },
+        { key: 'provision', label: t.provision?.title ?? 'Provision' },
+      ]
 
   async function handleResumeRequest(threadId: string, command: string, title: string) {
     // Part 1: Reuse existing tab
@@ -345,9 +348,7 @@ export default function AgentDetail() {
           </div>
         )}
         {activeTab === 'provision' && (
-          isProvisioning
-            ? <ProvisionLog agentId={id!} onDone={handleProvisionDone} />
-            : <ProvisionHistory agent={agent} t={t} />
+          <ProvisionLog agentId={id!} onDone={isProvisioning ? handleProvisionDone : undefined} />
         )}
       </div>
 
@@ -486,76 +487,6 @@ export default function AgentDetail() {
   )
 }
 
-function ProvisionHistory({ agent, t }: {
-  agent: { provision_steps: Record<string, string>; provision_log: string }
-  t: ReturnType<typeof useI18n>['t']
-}) {
-  const [showRawLog, setShowRawLog] = useState(false)
-  const steps = Object.entries(agent.provision_steps ?? {}).sort(([a], [b]) => Number(a) - Number(b))
-  const stepName = (n: number) => t.provision?.steps?.[n] ?? `Step ${n}`
-
-  const statusIcon = (status: string) => {
-    if (status === 'ok') return <span className="text-green-400">✓</span>
-    if (status === 'failed') return <span className="text-red-400">✗</span>
-    if (status === 'skipped') return <span className="text-gray-500">–</span>
-    return <span className="text-gray-500">○</span>
-  }
-
-  return (
-    <div className="space-y-4">
-      {steps.length === 0 ? (
-        <div className="text-center py-12 card">
-          <p className="text-gray-500">{t.agentDetail.provisionHistoryEmpty}</p>
-        </div>
-      ) : (
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-          {steps.map(([num, status], idx) => (
-            <div
-              key={num}
-              className={[
-                'flex items-center gap-3 px-4 py-2.5 text-sm',
-                idx < steps.length - 1 && 'border-b border-gray-100 dark:border-gray-800',
-                status === 'ok' ? 'bg-green-50/40 dark:bg-green-900/10' :
-                status === 'failed' ? 'bg-red-50/40 dark:bg-red-900/10' :
-                'bg-white dark:bg-gray-900',
-              ].filter(Boolean).join(' ')}
-            >
-              <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                {statusIcon(status)}
-              </div>
-              <span className="flex-1 font-mono text-gray-700 dark:text-gray-300">
-                <span className="text-gray-400 dark:text-gray-600 mr-1">{num}.</span>
-                {stepName(Number(num))}
-              </span>
-              <span className={`text-xs font-mono ${
-                status === 'ok' ? 'text-green-600 dark:text-green-400' :
-                status === 'failed' ? 'text-red-600 dark:text-red-400' :
-                'text-gray-500'
-              }`}>{status}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {agent.provision_log && (
-        <div>
-          <button
-            onClick={() => setShowRawLog(v => !v)}
-            className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-400 font-mono"
-          >
-            {showRawLog ? `▼ ${t.agentDetail.hideRawLog}` : `▶ ${t.agentDetail.showRawLog}`}
-          </button>
-          {showRawLog && (
-            <pre className="mt-2 p-4 rounded-lg bg-black text-gray-300 text-xs font-mono overflow-auto max-h-96 border border-gray-700">
-              {agent.provision_log}
-            </pre>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, onOpenResumeTerminal }: {
   task: TaskSummary
   agentId: string
@@ -589,10 +520,15 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
     }
   }
 
-  function handleOpenResumeTerminal(e: React.MouseEvent) {
+  async function handleOpenResumeTerminal(e: React.MouseEvent) {
     e.stopPropagation()
     if (task.thread_id && onOpenResumeTerminal) {
-      onOpenResumeTerminal(task.thread_id, `codex resume ${task.thread_id}`, task.title)
+      try {
+        const { local_cmd } = await agentsApi.getResumeCommand(agentId, task.thread_id)
+        onOpenResumeTerminal(task.thread_id, local_cmd, task.title)
+      } catch {
+        onOpenResumeTerminal(task.thread_id, `codex resume ${task.thread_id}`, task.title)
+      }
     }
   }
 

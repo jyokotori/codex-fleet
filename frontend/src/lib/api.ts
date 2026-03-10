@@ -340,8 +340,8 @@ export const agentsApi = {
     docker_config_id?: string
   }) =>
     request<Agent>(`/api/agents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  delete: (id: string) =>
-    request<{ message: string }>(`/api/agents/${id}`, { method: 'DELETE' }),
+  delete: (id: string, cleanup = false) =>
+    request<{ message: string }>(`/api/agents/${id}?cleanup=${cleanup}`, { method: 'DELETE' }),
   start: (id: string) =>
     request<{ message: string; status: string }>(`/api/agents/${id}/start`, { method: 'POST' }),
   stop: (id: string) =>
