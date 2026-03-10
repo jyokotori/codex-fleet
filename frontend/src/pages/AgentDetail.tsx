@@ -527,8 +527,8 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
     e.stopPropagation()
     if (task.thread_id && onOpenResumeTerminal) {
       try {
-        const { local_cmd } = await agentsApi.getResumeCommand(agentId, task.thread_id)
-        onOpenResumeTerminal(task.thread_id, local_cmd, task.title)
+        const { terminal_input_cmd, local_cmd } = await agentsApi.getResumeCommand(agentId, task.thread_id)
+        onOpenResumeTerminal(task.thread_id, terminal_input_cmd ?? local_cmd, task.title)
       } catch {
         onOpenResumeTerminal(task.thread_id, `codex resume ${task.thread_id}`, task.title)
       }

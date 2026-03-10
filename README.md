@@ -6,6 +6,10 @@ A web control plane for managing multiple AI coding agents (Codex, etc.). Agents
 
 [中文文档 →](./README_CN.md)
 
+## UI Preview
+
+![Codex Fleet UI overview](./docs/.screenshots/app-overview.png)
+
 ---
 
 ## Planned
@@ -63,7 +67,7 @@ Frontend dev server: **http://localhost:5173** (`/api` and `/ws` are proxied to 
 Add remote servers and test SSH connectivity with one click. Supports passwordless SSH, password authentication, and SSH keys. Once added, all agents on that server automatically use that connection.
 
 ### Agent Management
-When creating an agent, choose a remote server, select the CLI tool (currently Codex only), and optionally attach a Git repository. Docker is optional.
+When creating an agent, choose a remote server, select the CLI tool (currently Codex only), and optionally enable Docker. Git setup in the create dialog is currently shown as WIP for both Docker and non-Docker modes.
 Provisioning always creates two directories on the server:
 - `~/.codex-fleet/{agent_id}/agent`: stores agent configuration
 - `~/.codex-fleet/{agent_id}/workspace`: project working directory
@@ -75,7 +79,7 @@ Each agent can be configured independently:
 - **Docker Config** — customize port mappings, environment variables, volume mounts, and init scripts
 - **Runtime controls** — Docker agents show a single action button in the list view that changes with container state (`Stop`, `Start`, or `Restart`); `Stop` and `Restart` require confirmation, while `Start` runs immediately. Non-Docker agents do not expose Start/Stop/Restart buttons. The agent detail header keeps only `Dispatch Task` and `Copy command`
 - **Status sync** — the frontend still reads a single persisted agent status (`provisioning`, `running`, `stopped`, `error`), but the backend syncs the real Docker runtime state back into that field; non-Docker agents are synced to `running` / `stopped` based on SSH reachability
-- **Copy as new agent** — the copy action in the list opens the create dialog with server, CLI, Git, Docker, and config settings prefilled so you can adjust them before creating a new agent; passwords and tokens are not copied
+- **Copy as new agent** — the copy action in the list opens the create dialog with server, CLI, Docker, and config settings prefilled so you can adjust them before creating a new agent; Git setup remains WIP in the create flow and is not copied
 - **Delete confirmation** — deleting any agent requires explicit confirmation; it removes `~/.codex-fleet/{agent_id}` and the database record, and Docker agents also remove the container
 
 ### Task Dispatch

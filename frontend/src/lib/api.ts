@@ -311,6 +311,7 @@ export interface Agent {
 export interface TerminalCommandResponse {
   local_cmd: string
   ssh_cmd?: string
+  terminal_input_cmd?: string
 }
 
 export const agentsApi = {

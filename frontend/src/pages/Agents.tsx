@@ -100,11 +100,11 @@ export default function Agents() {
     mutationFn: (data: AgentFormData) => agentsApi.create({
       name: data.name.trim(),
       server_id: data.server_id,
-      git_repo: data.use_git ? data.git_repo.trim() : '',
-      git_branch: data.git_branch.trim(),
-      git_auth_type: data.use_git ? data.git_auth_type : 'none',
-      git_username: data.git_username.trim() || undefined,
-      git_password: data.git_password || undefined,
+      git_repo: '',
+      git_branch: defaultForm.git_branch,
+      git_auth_type: 'none',
+      git_username: undefined,
+      git_password: undefined,
       cli_type: data.cli_type,
       codex_config_id: data.codex_config_id || undefined,
       agents_md_id: data.agents_md_id || undefined,
@@ -200,21 +200,16 @@ export default function Agents() {
   }
 
   function handleCopyOpen(agent: Agent) {
-    const useGit = Boolean(agent.git_repo)
-    const gitAuthType = useGit && ['passwordless', 'https_password', 'ssh_key'].includes(agent.git_auth_type)
-      ? agent.git_auth_type
-      : defaultForm.git_auth_type
-
     createMutation.reset()
     setForm({
       name: t.agents.copyName(agent.name),
       server_id: agent.server_id,
       use_docker: agent.use_docker,
-      use_git: useGit,
-      git_repo: agent.git_repo,
-      git_branch: agent.git_branch || defaultForm.git_branch,
-      git_auth_type: gitAuthType,
-      git_username: agent.git_username ?? '',
+      use_git: false,
+      git_repo: '',
+      git_branch: defaultForm.git_branch,
+      git_auth_type: defaultForm.git_auth_type,
+      git_username: '',
       git_password: '',
       cli_type: agent.cli_type,
       codex_config_id: agent.codex_config_id ?? '',
@@ -395,60 +390,15 @@ export default function Agents() {
               </div>
 
               {/* Git section */}
-              <SectionDivider label={t.agents.gitSection} />
+              <SectionDivider label={t.agents.gitSectionWip} />
 
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="rounded border-gray-300 dark:border-gray-600"
-                    checked={form.use_git}
-                    onChange={e => setForm(f => ({ ...f, use_git: e.target.checked }))}
-                  />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{t.agents.enableGit}</span>
-                </label>
+              <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/80 px-4 py-4 dark:border-amber-700 dark:bg-amber-950/20">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-amber-900 dark:text-amber-200">{t.agents.gitRepo}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">WIP</span>
+                </div>
+                <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{t.agents.gitCreateWip}</p>
               </div>
-
-              {form.use_git && (
-                <>
-                  <div>
-                    <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.gitRepo}</label>
-                    <input
-                      className="input"
-                      value={form.git_repo}
-                      onChange={e => setForm(f => ({ ...f, git_repo: e.target.value }))}
-                      placeholder="https://github.com/org/repo.git"
-                      required={form.use_git}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.branch}</label>
-                      <input className="input" value={form.git_branch} onChange={e => setForm(f => ({ ...f, git_branch: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.gitAuth}</label>
-                      <select className="input" value={form.git_auth_type} onChange={e => setForm(f => ({ ...f, git_auth_type: e.target.value }))}>
-                        <option value="passwordless">{t.agents.gitAuthPasswordless}</option>
-                        <option value="https_password">{t.agents.gitAuthHttps}</option>
-                        <option value="ssh_key">{t.agents.gitAuthSsh}</option>
-                      </select>
-                    </div>
-                  </div>
-                  {form.git_auth_type === 'https_password' && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.gitUsername}</label>
-                        <input className="input" value={form.git_username} onChange={e => setForm(f => ({ ...f, git_username: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.gitPasswordToken}</label>
-                        <input type="password" className="input" value={form.git_password} onChange={e => setForm(f => ({ ...f, git_password: e.target.value }))} />
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
 
               {/* Docker section */}
               <SectionDivider label={t.agents.dockerSection} />

@@ -6,6 +6,10 @@
 
 [English →](./README.md)
 
+## 界面预览
+
+![Codex Fleet 界面总览](./docs/.screenshots/app-overview.png)
+
 ---
 
 ## 计划中
@@ -63,7 +67,7 @@ cd frontend && npm install && npm run dev
 添加远程服务器，一键测试 SSH 连通性。支持免密 SSH、密码认证、SSH Key。添加好之后，该服务器上的所有 Agent 都自动走这套连接。
 
 ### Agent 管理
-创建 Agent 时，选择一台远程服务器，选好 CLI 工具（目前仅支持 Codex），可以选择关联一个 Git 仓库。Docker 可选。
+创建 Agent 时，选择一台远程服务器，选好 CLI 工具（目前仅支持 Codex），并按需启用 Docker。新建弹窗里的 Git 配置当前显示为 WIP，Docker 和非 Docker 两种模式都暂不开放。
 初始化时会先在服务器上固定创建两类目录：
 - `~/.codex-fleet/{agent_id}/agent`：存放 Agent 配置
 - `~/.codex-fleet/{agent_id}/workspace`：项目工作目录
@@ -75,7 +79,7 @@ cd frontend && npm install && npm run dev
 - **Docker 配置** — 自定义端口映射、环境变量、目录挂载、初始化脚本
 - **运行时控制** — Docker Agent 在列表页只显示一个随容器状态变化的动作按钮（`停止`、`启动` 或 `重启`）；其中 `停止` 和 `重启` 需要二次确认，`启动` 直接执行。非 Docker Agent 不提供 Start/Stop/Restart 按钮。Agent 详情页头部只保留 `派发任务` 和 `复制命令`
 - **状态同步** — 前端仍然只读取数据库中的 Agent 状态（`provisioning`、`running`、`stopped`、`error`），但后端会把 Docker 实际运行状态同步回这个字段；非 Docker Agent 则按 SSH 是否可达同步为 `running` / `stopped`
-- **复制为新 Agent** — 列表页的复制操作会打开新建弹窗，并带入服务器、CLI、Git、Docker 和配置等参数，允许你调整后再创建；密码和 Token 不会被复制
+- **复制为新 Agent** — 列表页的复制操作会打开新建弹窗，并带入服务器、CLI、Docker 和配置等参数，允许你调整后再创建；Git 在新建流程里仍为 WIP，因此不会被复制
 - **删除确认** — 删除任意 Agent 前都需要显式确认；实际会删除 `~/.codex-fleet/{agent_id}` 和数据库记录，Docker Agent 还会额外删除容器
 
 ### 任务下发

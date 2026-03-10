@@ -91,9 +91,17 @@ pub fn codex_home_prefix(use_docker: bool, workdir: &str) -> String {
     }
 }
 
+fn resume_terminal_input_command(use_docker: bool, workdir: &str, thread_id: &str) -> String {
+    format!(
+        "{}codex resume {}",
+        codex_home_prefix(use_docker, workdir),
+        thread_id
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{agent_base_dir_from_workdir, agent_workspace_dir};
+    use super::{agent_base_dir_from_workdir, agent_workspace_dir, resume_terminal_input_command};
 
     #[test]
     fn derives_base_dir_from_host_workspace() {
@@ -117,6 +125,26 @@ mod tests {
         assert_eq!(
             agent_workspace_dir("test-agent"),
             "$HOME/.codex-fleet/test-agent/workspace"
+        );
+    }
+
+    #[test]
+    fn builds_resume_command_for_host_terminal() {
+        assert_eq!(
+            resume_terminal_input_command(
+                false,
+                "/home/demo/.codex-fleet/test-agent/workspace",
+                "thread-123"
+            ),
+            "export CODEX_HOME=/home/demo/.codex-fleet/test-agent/agent && codex resume thread-123"
+        );
+    }
+
+    #[test]
+    fn builds_resume_command_for_docker_terminal() {
+        assert_eq!(
+            resume_terminal_input_command(true, "/workspace", "thread-123"),
+            "codex resume thread-123"
         );
     }
 }
@@ -2119,6 +2147,8 @@ pub async fn clone_agent(
 pub struct TerminalCommandResponse {
     pub local_cmd: String,
     pub ssh_cmd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_input_cmd: Option<String>,
 }
 
 pub async fn terminal_command(
@@ -2182,7 +2212,11 @@ pub async fn terminal_command(
         (local, ssh)
     };
 
-    Ok(Json(TerminalCommandResponse { local_cmd, ssh_cmd }))
+    Ok(Json(TerminalCommandResponse {
+        local_cmd,
+        ssh_cmd,
+        terminal_input_cmd: None,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -2208,12 +2242,11 @@ pub async fn resume_command(
     let workdir: String = agent.get("workdir");
     let use_docker: bool = agent.get("use_docker");
 
-    let env_prefix = codex_home_prefix(use_docker, &workdir);
-    let resume_cmd = format!("{}codex resume {}", env_prefix, params.thread_id);
+    let terminal_input_cmd = resume_terminal_input_command(use_docker, &workdir, &params.thread_id);
 
     let (local_cmd, ssh_cmd) = if use_docker {
         let container = docker_container_name.unwrap_or_default();
-        let inner = format!("cd /workspace && {}", resume_cmd);
+        let inner = format!("cd /workspace && {}", terminal_input_cmd);
         let local = format!(
             "docker exec -it {} bash -lc {}",
             container,
@@ -2239,7 +2272,7 @@ pub async fn resume_command(
             "cd {} && {}{}",
             shell_quote(&workdir),
             HOST_ENV_SETUP,
-            resume_cmd
+            terminal_input_cmd
         );
         let local = inner.clone();
         let ssh = if let Ok(server) = sqlx::query!(
@@ -2262,7 +2295,11 @@ pub async fn resume_command(
         (local, ssh)
     };
 
-    Ok(Json(TerminalCommandResponse { local_cmd, ssh_cmd }))
+    Ok(Json(TerminalCommandResponse {
+        local_cmd,
+        ssh_cmd,
+        terminal_input_cmd: Some(terminal_input_cmd),
+    }))
 }
 
 #[derive(Serialize)]
