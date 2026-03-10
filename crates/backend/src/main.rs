@@ -3,9 +3,9 @@ mod embed;
 
 use axum::{middleware, routing::get, Router};
 use shared_kernel::{AppConfig, AppContext};
+use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
-use std::net::SocketAddr;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;

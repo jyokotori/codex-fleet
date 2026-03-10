@@ -73,13 +73,13 @@ cd frontend && npm install && npm run dev
 - **Codex Config** — 绑定一组 `config.toml` + `auth.json`，让 Agent 启动就有认证信息和配置
 - **AGENTS.md** — 把共享的项目说明文件注入 Agent 工作区
 - **Docker 配置** — 自定义端口映射、环境变量、目录挂载、初始化脚本
-- **运行时控制** — Docker Agent 在列表页只显示一个随容器状态变化的动作按钮（`停止`、`启动` 或 `重启`）；其中 `停止` 和 `重启` 需要二次确认，`启动` 直接执行。Agent 详情页头部只保留 `派发任务` 和 `复制命令`
-- **状态同步** — 前端仍然只读取数据库中的 Agent 状态（`provisioning`、`running`、`stopped`、`error`），但后端会把 Docker 实际运行状态同步回这个字段
+- **运行时控制** — Docker Agent 在列表页只显示一个随容器状态变化的动作按钮（`停止`、`启动` 或 `重启`）；其中 `停止` 和 `重启` 需要二次确认，`启动` 直接执行。非 Docker Agent 不提供 Start/Stop/Restart 按钮。Agent 详情页头部只保留 `派发任务` 和 `复制命令`
+- **状态同步** — 前端仍然只读取数据库中的 Agent 状态（`provisioning`、`running`、`stopped`、`error`），但后端会把 Docker 实际运行状态同步回这个字段；非 Docker Agent 则按 SSH 是否可达同步为 `running` / `stopped`
 - **复制为新 Agent** — 列表页的复制操作会打开新建弹窗，并带入服务器、CLI、Git、Docker 和配置等参数，允许你调整后再创建；密码和 Token 不会被复制
 - **删除确认** — 删除任意 Agent 前都需要显式确认；实际会删除 `~/.codex-fleet/{agent_id}` 和数据库记录，Docker Agent 还会额外删除容器
 
 ### 任务下发
-Docker Agent 只有在同步后的状态为 `running` 时允许派发任务；非 Docker Agent 在 `running` 或 `stopped` 时都允许派发任务。
+手动派发前，Agent 必须处于空闲状态，且同步后的状态必须为 `running`。这条规则对 Docker 和非 Docker Agent 都一样；后端在真正执行前会再同步一次状态。调度器只会把 `waiting` 状态的工作项自动派发给 `running` 且空闲的 Agent。
 
 ### 需求管理
 可以创建项目和工作项，把工作项分配给 Agent 或用户，关联 Agent 执行结果，并在需求详情页对 Agent 结果做审核处理。

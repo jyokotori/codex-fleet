@@ -121,7 +121,9 @@ pub async fn create_project(
     }
     let id = Uuid::new_v4().to_string();
     let description = req.description.unwrap_or_default();
-    let notification_ids_json = req.notification_ids.as_ref()
+    let notification_ids_json = req
+        .notification_ids
+        .as_ref()
         .map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into()))
         .unwrap_or_else(|| "[]".into());
     let now = Utc::now();
@@ -295,7 +297,9 @@ pub async fn create_work_item(
     let now = Utc::now();
 
     let status = "waiting";
-    let notification_ids_json = req.notification_ids.as_ref()
+    let notification_ids_json = req
+        .notification_ids
+        .as_ref()
         .map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into()))
         .unwrap_or_else(|| "[]".into());
 
@@ -416,7 +420,8 @@ pub async fn update_work_item(
         };
         if !valid {
             return Err(AppError::BadRequest(format!(
-                "Invalid status transition: {} -> {}", old_status, new_status
+                "Invalid status transition: {} -> {}",
+                old_status, new_status
             )));
         }
     }
@@ -495,11 +500,13 @@ pub async fn update_work_item(
             .await?;
 
             // Send webhook notifications for the linked task
-            if let Ok(Some(task_row)) = sqlx::query!(
-                "SELECT notification_ids FROM tasks WHERE id = $1",
-                exec_id
-            ).fetch_optional(&state.db).await {
-                let task_notif_ids: Vec<String> = serde_json::from_str(&task_row.notification_ids).unwrap_or_default();
+            if let Ok(Some(task_row)) =
+                sqlx::query!("SELECT notification_ids FROM tasks WHERE id = $1", exec_id)
+                    .fetch_optional(&state.db)
+                    .await
+            {
+                let task_notif_ids: Vec<String> =
+                    serde_json::from_str(&task_row.notification_ids).unwrap_or_default();
                 if !task_notif_ids.is_empty() {
                     let status_clone = status.clone();
                     let payload = serde_json::json!({
@@ -519,7 +526,13 @@ pub async fn update_work_item(
                     });
                     let db = state.db.clone();
                     tokio::spawn(async move {
-                        shared_kernel::send_task_notification(&db, &task_notif_ids, &status_clone, payload).await;
+                        shared_kernel::send_task_notification(
+                            &db,
+                            &task_notif_ids,
+                            &status_clone,
+                            payload,
+                        )
+                        .await;
                     });
                 }
             }

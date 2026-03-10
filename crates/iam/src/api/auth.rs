@@ -349,9 +349,7 @@ pub struct SimpleUser {
     pub display_name: String,
 }
 
-pub async fn list_users_simple(
-    State(state): State<AppContext>,
-) -> Result<Json<Vec<SimpleUser>>> {
+pub async fn list_users_simple(State(state): State<AppContext>) -> Result<Json<Vec<SimpleUser>>> {
     let rows = sqlx::query(
         "SELECT id, username, display_name FROM users WHERE status = 'active' ORDER BY display_name ASC",
     )

@@ -67,11 +67,20 @@ async fn tick(state: &AppContext) -> anyhow::Result<()> {
         }
 
         // Dispatch task (this uses the main db pool, not the transaction)
-        let notif_ids: Vec<String> = serde_json::from_str(&item.notification_ids).unwrap_or_default();
+        let notif_ids: Vec<String> =
+            serde_json::from_str(&item.notification_ids).unwrap_or_default();
         match dispatch_task_for_agent(
-            state, &agent_id, &item.title, &item.description, Some(item.id.clone()),
-            notif_ids, item.assigned_user_id.clone(), item.assigned_username.clone(),
-        ).await {
+            state,
+            &agent_id,
+            &item.title,
+            &item.description,
+            Some(item.id.clone()),
+            notif_ids,
+            item.assigned_user_id.clone(),
+            item.assigned_username.clone(),
+        )
+        .await
+        {
             Ok(task) => {
                 // Update work item: status = agent_in_progress, link execution_id
                 sqlx::query!(
@@ -82,11 +91,19 @@ async fn tick(state: &AppContext) -> anyhow::Result<()> {
                 .execute(&mut *tx)
                 .await?;
                 tx.commit().await?;
-                tracing::info!("Scheduler dispatched work item {} to agent {}", item.id, agent_id);
+                tracing::info!(
+                    "Scheduler dispatched work item {} to agent {}",
+                    item.id,
+                    agent_id
+                );
             }
             Err(e) => {
                 tx.rollback().await?;
-                tracing::warn!("Scheduler failed to dispatch work item {} to agent {}: {e}", item.id, agent_id);
+                tracing::warn!(
+                    "Scheduler failed to dispatch work item {} to agent {}: {e}",
+                    item.id,
+                    agent_id
+                );
             }
         }
     }

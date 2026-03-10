@@ -24,12 +24,9 @@ async fn handle_task_logs_socket(mut socket: WebSocket, state: AppContext, task_
     };
 
     // 2. Query current DB state
-    let row = sqlx::query!(
-        "SELECT task_log, status FROM tasks WHERE id = $1",
-        task_id
-    )
-    .fetch_optional(&state.db)
-    .await;
+    let row = sqlx::query!("SELECT task_log, status FROM tasks WHERE id = $1", task_id)
+        .fetch_optional(&state.db)
+        .await;
 
     let (log, status) = match row {
         Ok(Some(r)) => (r.task_log, r.status),
@@ -49,7 +46,11 @@ async fn handle_task_logs_socket(mut socket: WebSocket, state: AppContext, task_
 
     // 3. Replay existing log
     if !log.is_empty() {
-        if socket.send(Message::Text(log.clone().into())).await.is_err() {
+        if socket
+            .send(Message::Text(log.clone().into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -70,12 +71,9 @@ async fn handle_task_logs_socket(mut socket: WebSocket, state: AppContext, task_
         Some(r) => r,
         None => {
             // Task finished between subscribe and DB query; re-read from DB
-            let row2 = sqlx::query!(
-                "SELECT task_log, status FROM tasks WHERE id = $1",
-                task_id
-            )
-            .fetch_optional(&state.db)
-            .await;
+            let row2 = sqlx::query!("SELECT task_log, status FROM tasks WHERE id = $1", task_id)
+                .fetch_optional(&state.db)
+                .await;
             if let Ok(Some(r2)) = row2 {
                 let already_sent = log.len();
                 let tail = &r2.task_log[already_sent.min(r2.task_log.len())..];

@@ -237,7 +237,7 @@ export default function ProvisionLog({ agentId, onDone }: ProvisionLogProps) {
     return <span className="text-gray-600 text-base leading-none">○</span>
   }
 
-  const doneOk = doneStatus === 'stopped'
+  const doneOk = doneStatus === 'stopped' || doneStatus === 'running'
   const completedCount = steps.filter(s => s.status === 'ok').length
 
   return (

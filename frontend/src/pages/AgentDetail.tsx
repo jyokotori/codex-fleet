@@ -124,7 +124,7 @@ export default function AgentDetail() {
 
   function handleProvisionDone(status: string) {
     refetchAgent()
-    if (status === 'stopped') {
+    if (status === 'stopped' || status === 'running') {
       setTerminalMounted(true)
       setActiveTab('terminal')
     }

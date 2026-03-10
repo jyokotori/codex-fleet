@@ -20,9 +20,5 @@ export function canDispatchTask(agent: Agent): boolean {
     return false
   }
 
-  if (agent.use_docker) {
-    return agent.status === 'running'
-  }
-
-  return agent.status === 'stopped' || agent.status === 'running'
+  return agent.status === 'running'
 }

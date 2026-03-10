@@ -1,8 +1,8 @@
 # Codex Fleet
 
-> ⚠️ **Work in progress — actively vibe coding, bugs expected.**
+> ⚠️ **Work in progress, actively vibe coding, bugs are expected.**
 
-A web dashboard for managing multiple AI coding agents (Codex etc.) running across your servers or locally. Open your browser, create agents, send tasks, watch them work.
+A web control plane for managing multiple AI coding agents (Codex, etc.). Agents can run on your remote servers or directly on the local machine. Open the browser, create agents, dispatch tasks, and watch them work.
 
 [中文文档 →](./README_CN.md)
 
@@ -11,12 +11,13 @@ A web dashboard for managing multiple AI coding agents (Codex etc.) running acro
 ## Planned
 
 1. Support skill/MCP configuration from multiple sources.
-2. Support more CLI tools with a modular configuration model.
-3. Improve the requirements workflow.
-4. Parse structured JSON output from Codex.
-5. General polish.
+2. Turn the requirements view into a Linear-style waterfall board that can be dragged left and right.
+3. Support more CLI tools and make the configuration model modular.
+4. Add a menu that lets AI automatically run test cases.
+5. Parse structured JSON output from Codex.
+6. Other UX improvements.
 
-> Note: Rust is used because Codex is built with Rust, and this project is also for learning it. Development speed depends on how fast my token refreshes (lol).
+> Note: Rust is used because Codex itself is built with Rust, and this project is also a way to learn it. Development speed depends on how fast my token refreshes (lol).
 
 ---
 
@@ -25,7 +26,7 @@ A web dashboard for managing multiple AI coding agents (Codex etc.) running acro
 ```bash
 git clone git@github.com:jyokotori/codex-fleet.git
 cd codex-fleet
-cp .env.example .env   # edit credentials before going to production
+cp .env.example .env   # change credentials before using in production
 
 docker compose up -d
 ```
@@ -39,87 +40,86 @@ Default admin login: **`codex` / `codex`**
 ## Local Development
 
 ```bash
-# 0. Copy env once (if you haven't already)
+# 0. Copy the environment file first if you have not done it yet
 cp .env.example .env
 
 # 1. Start postgres only
 docker compose up postgres -d
 
-# 2. Run backend (in one terminal)
+# 2. Start the backend (one terminal)
 cargo run -p backend
 
-# 3. Run frontend dev server with hot reload (in another terminal)
+# 3. Start the frontend dev server with hot reload (another terminal)
 cd frontend && npm install && npm run dev
 ```
 
-Frontend dev server: **http://localhost:5173** (proxies `/api` and `/ws` to backend)
+Frontend dev server: **http://localhost:5173** (`/api` and `/ws` are proxied to the backend)
 
 ---
 
 ## Current
 
-### Servers
-Add your remote VMs and test SSH connectivity with one click. Supports passwordless SSH, password auth, and SSH key. Once connected, all agents on that server run through it automatically.
+### Server Management
+Add remote servers and test SSH connectivity with one click. Supports passwordless SSH, password authentication, and SSH keys. Once added, all agents on that server automatically use that connection.
 
-### Agents
-Create an agent by picking a remote server, choosing your CLI tool (Codex only for now), and optionally pointing it at a Git repo. Docker is optional.
-During provisioning, the server always gets:
-- `~/.codex-fleet/{agent_id}/agent` for agent config files
-- `~/.codex-fleet/{agent_id}/workspace` for project workspace
-If Docker is enabled, these two directories are mounted into the container as `/agent` and `/workspace`, and Docker config (ports/env/volumes/init script) is applied.
+### Agent Management
+When creating an agent, choose a remote server, select the CLI tool (currently Codex only), and optionally attach a Git repository. Docker is optional.
+Provisioning always creates two directories on the server:
+- `~/.codex-fleet/{agent_id}/agent`: stores agent configuration
+- `~/.codex-fleet/{agent_id}/workspace`: project working directory
+If Docker is enabled, these two directories are mounted into the container as `/agent` and `/workspace`, and the Docker configuration is applied (ports, environment variables, mounts, init script).
 
-Each agent has its own:
-- **Codex Config** — attach a `config.toml` + `auth.json` bundle so the agent has its credentials and settings ready
-- **AGENTS.md** — inject shared project instructions into the agent's workspace
-- **Docker Config** — customize port mappings, env vars, volume mounts, and init scripts
-- **Runtime controls** — Docker agents expose a single state-aware action button (`Stop`, `Start`, or `Restart`) in the list view; `Stop` and `Restart` require explicit confirmation, while `Start` runs immediately. The agent detail header keeps only `Dispatch Task` and `Copy command`
-- **Status sync** — the UI still reads a single persisted agent status (`provisioning`, `running`, `stopped`, `error`), while the backend periodically syncs Docker runtime state back into that field
-- **Copy as new** — the list view copy action opens the create dialog with copied server, CLI, Git, Docker, and config settings so you can adjust them before creating a new agent; passwords/tokens are not copied
-- **Delete confirmation** — deleting any agent removes `~/.codex-fleet/{agent_id}` and the database record after explicit confirmation; Docker agents also remove the container
+Each agent can be configured independently:
+- **Codex Config** — bind a `config.toml` + `auth.json` bundle so the agent starts with credentials and settings ready
+- **AGENTS.md** — inject a shared project instruction file into the agent workspace
+- **Docker Config** — customize port mappings, environment variables, volume mounts, and init scripts
+- **Runtime controls** — Docker agents show a single action button in the list view that changes with container state (`Stop`, `Start`, or `Restart`); `Stop` and `Restart` require confirmation, while `Start` runs immediately. Non-Docker agents do not expose Start/Stop/Restart buttons. The agent detail header keeps only `Dispatch Task` and `Copy command`
+- **Status sync** — the frontend still reads a single persisted agent status (`provisioning`, `running`, `stopped`, `error`), but the backend syncs the real Docker runtime state back into that field; non-Docker agents are synced to `running` / `stopped` based on SSH reachability
+- **Copy as new agent** — the copy action in the list opens the create dialog with server, CLI, Git, Docker, and config settings prefilled so you can adjust them before creating a new agent; passwords and tokens are not copied
+- **Delete confirmation** — deleting any agent requires explicit confirmation; it removes `~/.codex-fleet/{agent_id}` and the database record, and Docker agents also remove the container
 
-### Tasks
-Open an agent, type a task, hit Send. The task goes straight into the agent's tmux session. You can see all past tasks and their status on the same page.
-Docker agents can dispatch tasks only while their synced status is `running`; non-Docker agents can dispatch while `running` or `stopped`.
+### Task Dispatch
+Before manual dispatch, the agent must be idle and its synced status must be `running`. This rule is the same for both Docker and non-Docker agents, and the backend syncs status again before execution. The scheduler only auto-dispatches `waiting` work items to agents that are both `running` and idle.
 
-### Requirements
+### Requirements Management
 Create projects and work items, assign them to agents or users, link them to agent executions, and review agent results from the requirement detail page.
 
 ### Live Logs & Terminal
-- **Logs tab** — real-time output from the agent's tmux session, auto-scrolling
-- **Terminal tab** — full interactive terminal, type commands directly into the runtime (container or host)
-- **Copy command** — copies an SSH shell command for host agents, or an SSH-to-`docker exec` shell command for Docker agents
+- **Logs tab** — shows real-time output from the agent session and auto-scrolls
+- **Terminal tab** — full interactive terminal, so you can type commands directly in the runtime environment (container or host)
+- **Copy command** — non-Docker agents copy a direct SSH command to the host; Docker agents copy an SSH command that enters the container shell
 
-### Config Management
-Store reusable configs in one place and attach them to any agent:
-- **Codex Configs** — group `config.toml` and `auth.json` together as a named bundle
-- **AGENTS.md** — shared instruction files for your agents
-- **Docker Configs** — reusable Docker run configurations (ports, volumes, env vars, init scripts)
+### Configuration Management
+Store reusable configurations centrally and attach them to any agent at any time:
+- **Codex Configs** — combine `config.toml` and `auth.json` into a named config bundle
+- **AGENTS.md** — reusable agent instruction files
+- **Docker Configs** — reusable Docker runtime configurations (ports, mounts, environment variables, init scripts)
 
 ### Notifications
-Set up webhooks to get notified when tasks complete or fail.
+Configure webhooks so task completion or failure is pushed automatically.
 
 ### User & Access Management
 - JWT access token + refresh token
-- Role-based access control (RBAC) with fine-grained permissions
-- Admin-only user management: create user, reset password, enable/disable, unlock
-- User self-service: change own password
+- Role-based access control (RBAC) with fine-grained permission codes
+- Admin-only user management: create users, reset passwords, enable/disable, unlock
+- Self-service for regular users: change their own password
 
 ---
 
 ## Architecture Evolution
 
-The backend follows this evolution order:
+The backend evolves in the following order:
 
 1. IAM
 2. Config Center
-3. Servers + Agent Runtime
+3. Server + Agent Runtime
 4. Notification Center
 
 ---
 
-## Updating the SQLx offline cache
+## Updating the SQLx Offline Cache
 
-After changing any SQL queries, regenerate the `.sqlx/` cache so Docker builds work without a live database:
+After changing SQL queries, regenerate the `.sqlx/` cache or Docker builds will fail:
 
 ```bash
 cargo install sqlx-cli --no-default-features --features native-tls,postgres

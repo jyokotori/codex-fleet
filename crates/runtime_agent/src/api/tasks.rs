@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::api::agents::{codex_home_prefix, get_server_credentials, sync_agent_status, HOST_ENV_SETUP};
+use crate::api::agents::{
+    codex_home_prefix, get_server_credentials, sync_agent_status, HOST_ENV_SETUP,
+};
 use crate::ssh::terminal::open_exec_channel;
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
 
@@ -48,9 +50,9 @@ pub async fn dispatch_task_for_agent(
         )));
     }
 
-    if agent_info.use_docker && agent_info.status != "running" {
+    if agent_info.status != "running" {
         return Err(AppError::Conflict(
-            "Docker agent must be running before dispatching tasks".into(),
+            "Agent must be running before dispatching tasks".into(),
         ));
     }
 
@@ -59,17 +61,15 @@ pub async fn dispatch_task_for_agent(
 
     let task_dir = task_dir_path(agent_info.use_docker, &agent_info.workdir, &id, &now);
     let env_prefix = codex_home_prefix(agent_info.use_docker, &agent_info.workdir);
-    let cli_cmd = format!(
+    let cli_cmd =
+        format!(
         "mkdir -p '{}' && {}codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
         task_dir, env_prefix, task_dir, shell_quote(description)
     );
 
     // Wrap with docker exec if needed
     let full_cmd = if agent_info.use_docker {
-        let container = agent_info
-            .docker_container_name
-            .as_deref()
-            .unwrap_or("");
+        let container = agent_info.docker_container_name.as_deref().unwrap_or("");
         format!(
             "docker exec {} sh -lc {}",
             container,
@@ -80,7 +80,8 @@ pub async fn dispatch_task_for_agent(
     };
 
     // Insert task record
-    let notification_ids_json = serde_json::to_string(&notification_ids).unwrap_or_else(|_| "[]".into());
+    let notification_ids_json =
+        serde_json::to_string(&notification_ids).unwrap_or_else(|_| "[]".into());
     sqlx::query!(
         "INSERT INTO tasks (id, agent_id, title, description, status, work_item_id, task_log, task_dir, notification_ids, user_id, username, created_at, started_at) VALUES ($1, $2, $3, $4, 'agent_in_progress', $5, '', $6, $7, $8, $9, $10, $11)",
         id, agent_id, title, description, work_item_id, task_dir, notification_ids_json, user_id, username, now, now
@@ -158,12 +159,22 @@ pub async fn dispatch_task_for_agent(
             };
             tracing::debug!("Reading result.md for task {}: {}", task_id, cat_cmd);
             match read_remote_file(
-                &creds.ip, creds.port, &creds.username, &creds.auth_type,
-                creds.password.as_deref(), creds.ssh_key_content.as_deref(),
+                &creds.ip,
+                creds.port,
+                &creds.username,
+                &creds.auth_type,
+                creds.password.as_deref(),
+                creds.ssh_key_content.as_deref(),
                 &cat_cmd,
-            ).await {
+            )
+            .await
+            {
                 Ok(content) => {
-                    tracing::info!("Read result.md for task {} ({} bytes)", task_id, content.len());
+                    tracing::info!(
+                        "Read result.md for task {} ({} bytes)",
+                        task_id,
+                        content.len()
+                    );
                     content
                 }
                 Err(e) => {
@@ -187,7 +198,11 @@ pub async fn dispatch_task_for_agent(
 
         // Sync work_item status with task status
         if let Some(ref wi_id) = work_item_id_clone {
-            let wi_status = if status == "agent_completed" { "agent_completed" } else { "agent_failed" };
+            let wi_status = if status == "agent_completed" {
+                "agent_completed"
+            } else {
+                "agent_failed"
+            };
             let _ = sqlx::query!(
                 "UPDATE work_items SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'agent_in_progress'",
                 wi_status,
@@ -308,13 +323,26 @@ pub struct PaginatedTasks {
 /// Compute date-partitioned task directory path (codex only).
 /// Docker: `/agent/task-codex-fleet/logs/YYYY/M/D/{task_id}/`
 /// Non-Docker: `{workdir}/../agent/task-codex-fleet/logs/YYYY/M/D/{task_id}/`
-fn task_dir_path(use_docker: bool, workdir: &str, task_id: &str, now: &chrono::DateTime<Utc>) -> String {
-    let date_part = format!("{}/{}/{}", now.format("%Y"), now.format("%-m"), now.format("%-d"));
+fn task_dir_path(
+    use_docker: bool,
+    workdir: &str,
+    task_id: &str,
+    now: &chrono::DateTime<Utc>,
+) -> String {
+    let date_part = format!(
+        "{}/{}/{}",
+        now.format("%Y"),
+        now.format("%-m"),
+        now.format("%-d")
+    );
     if use_docker {
         format!("/agent/task-codex-fleet/logs/{}/{}", date_part, task_id)
     } else {
         let base = workdir.trim_end_matches("/workspace");
-        format!("{}/agent/task-codex-fleet/logs/{}/{}", base, date_part, task_id)
+        format!(
+            "{}/agent/task-codex-fleet/logs/{}/{}",
+            base, date_part, task_id
+        )
     }
 }
 
@@ -355,9 +383,16 @@ pub async fn create_task(
     let title = req.title.unwrap_or_default();
     let notification_ids = req.notification_ids.unwrap_or_default();
     let task = dispatch_task_for_agent(
-        &state, &agent_id, &title, &req.description, None,
-        notification_ids, Some(auth.user_id), auth.username,
-    ).await?;
+        &state,
+        &agent_id,
+        &title,
+        &req.description,
+        None,
+        notification_ids,
+        Some(auth.user_id),
+        auth.username,
+    )
+    .await?;
     Ok(Json(task))
 }
 
@@ -381,12 +416,24 @@ const FLUSH_SIZE: usize = 4096;
 
 /// Run a command via SSH and return its stdout as a string.
 async fn read_remote_file(
-    ip: &str, port: u16, username: &str, auth_type: &str,
-    password: Option<&str>, ssh_key_content: Option<&str>,
+    ip: &str,
+    port: u16,
+    username: &str,
+    auth_type: &str,
+    password: Option<&str>,
+    ssh_key_content: Option<&str>,
     command: &str,
 ) -> anyhow::Result<String> {
-    let (mut channel, _handle) =
-        open_exec_channel(ip, port, username, auth_type, password, ssh_key_content, command).await?;
+    let (mut channel, _handle) = open_exec_channel(
+        ip,
+        port,
+        username,
+        auth_type,
+        password,
+        ssh_key_content,
+        command,
+    )
+    .await?;
     let mut output = Vec::new();
     loop {
         match channel.wait().await {
@@ -411,9 +458,16 @@ async fn run_task_exec(
     db: &sqlx::PgPool,
     tx: &broadcast::Sender<String>,
 ) -> anyhow::Result<Option<u32>> {
-    let (mut channel, _handle) =
-        open_exec_channel(ip, port, username, auth_type, password, ssh_key_content, command)
-            .await?;
+    let (mut channel, _handle) = open_exec_channel(
+        ip,
+        port,
+        username,
+        auth_type,
+        password,
+        ssh_key_content,
+        command,
+    )
+    .await?;
 
     let mut exit_code = None;
     let mut byte_buf = Vec::new();
@@ -444,12 +498,8 @@ async fn run_task_exec(
                     if !first_line_parsed {
                         first_line_parsed = true;
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if json.get("type").and_then(|v| v.as_str())
-                                == Some("thread.started")
-                            {
-                                if let Some(tid) =
-                                    json.get("thread_id").and_then(|v| v.as_str())
-                                {
+                            if json.get("type").and_then(|v| v.as_str()) == Some("thread.started") {
+                                if let Some(tid) = json.get("thread_id").and_then(|v| v.as_str()) {
                                     let _ = sqlx::query!(
                                         "UPDATE tasks SET thread_id = $1 WHERE id = $2",
                                         tid,
@@ -520,13 +570,10 @@ pub async fn list_tasks(
     let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * per_page;
 
-    let total = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM tasks WHERE agent_id = $1",
-        agent_id
-    )
-    .fetch_one(&state.db)
-    .await?
-    .unwrap_or(0);
+    let total = sqlx::query_scalar!("SELECT COUNT(*) FROM tasks WHERE agent_id = $1", agent_id)
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(0);
 
     let rows = sqlx::query!(
         "SELECT id, agent_id, title, status, work_item_id, task_dir, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
@@ -549,12 +596,21 @@ pub async fn list_tasks(
             user_id: r.user_id,
             username: r.username,
             created_at: r.created_at.to_string(),
-            started_at: r.started_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
-            completed_at: r.completed_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
+            started_at: r
+                .started_at
+                .map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
+            completed_at: r
+                .completed_at
+                .map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
         })
         .collect();
 
-    Ok(Json(PaginatedTasks { items, total, page, per_page }))
+    Ok(Json(PaginatedTasks {
+        items,
+        total,
+        page,
+        per_page,
+    }))
 }
 
 pub async fn get_task(
@@ -584,7 +640,11 @@ pub async fn get_task(
         user_id: row.user_id,
         username: row.username,
         created_at: row.created_at.to_string(),
-        started_at: row.started_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
-        completed_at: row.completed_at.map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
+        started_at: row
+            .started_at
+            .map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
+        completed_at: row
+            .completed_at
+            .map(|t: chrono::DateTime<chrono::Utc>| t.to_string()),
     }))
 }

@@ -41,8 +41,7 @@ pub async fn connect_russh(
             }
         }
         "key" => {
-            let key_str =
-                ssh_key_content.ok_or_else(|| anyhow::anyhow!("SSH key required"))?;
+            let key_str = ssh_key_content.ok_or_else(|| anyhow::anyhow!("SSH key required"))?;
             let key_pair = russh_keys::decode_secret_key(key_str, None)?;
             let auth_ok = handle
                 .authenticate_publickey(username, Arc::new(key_pair))
@@ -80,8 +79,7 @@ pub async fn open_pty_channel(
     rows: u32,
     command: &str,
 ) -> anyhow::Result<(Channel<Msg>, Handle<ClientHandler>)> {
-    let handle =
-        connect_russh(ip, port, username, auth_type, password, ssh_key_content).await?;
+    let handle = connect_russh(ip, port, username, auth_type, password, ssh_key_content).await?;
     let channel = handle.channel_open_session().await?;
 
     channel
@@ -102,8 +100,7 @@ pub async fn open_exec_channel(
     ssh_key_content: Option<&str>,
     command: &str,
 ) -> anyhow::Result<(Channel<Msg>, Handle<ClientHandler>)> {
-    let handle =
-        connect_russh(ip, port, username, auth_type, password, ssh_key_content).await?;
+    let handle = connect_russh(ip, port, username, auth_type, password, ssh_key_content).await?;
     let channel = handle.channel_open_session().await?;
 
     channel.exec(true, command).await?;

@@ -31,8 +31,7 @@ pub async fn send_task_notification(
     let client = reqwest::Client::new();
 
     for config in configs {
-        let events: Vec<String> =
-            serde_json::from_str(&config.events_json).unwrap_or_default();
+        let events: Vec<String> = serde_json::from_str(&config.events_json).unwrap_or_default();
         if !events.iter().any(|e| e == new_status) {
             continue;
         }
@@ -60,7 +59,11 @@ pub async fn send_task_notification(
         if let Err(e) = builder.send().await {
             tracing::warn!("Webhook notification to {} failed: {e}", url);
         } else {
-            tracing::info!("Webhook notification sent to {} for event {}", url, new_status);
+            tracing::info!(
+                "Webhook notification sent to {} for event {}",
+                url,
+                new_status
+            );
         }
     }
 }
