@@ -1325,27 +1325,41 @@ async fn provision_agent(
     .await;
 
     if cli_type == "codex" {
-        // Non-docker: check if codex is already installed first; skip npm + install if so
         let mut codex_found = false;
-        if !use_docker {
-            emit(db, agent_id, tx, ev_substep(3, "Checking codex on host")).await;
-            let check_cmd = format!(
-                "{}command -v codex && codex --version 2>/dev/null || true",
-                HOST_ENV_SETUP
-            );
-            match stream_cmd(handle, &check_cmd, "command -v codex", db, agent_id, tx, 3).await {
-                Ok(0) => {
-                    emit(
-                        db,
-                        agent_id,
-                        tx,
-                        ev_substep(3, "codex already installed, skipping install"),
-                    )
-                    .await;
-                    codex_found = true;
-                }
-                _ => {}
+        let check_substep = if use_docker {
+            "Checking codex in container"
+        } else {
+            "Checking codex on host"
+        };
+        emit(db, agent_id, tx, ev_substep(3, check_substep)).await;
+        let check_script = "command -v codex >/dev/null 2>&1 && codex --version 2>/dev/null";
+        let check_cmd = if use_docker {
+            target_shell_command(true, container_name, check_script)
+        } else {
+            format!("{}{}", HOST_ENV_SETUP, check_script)
+        };
+        match stream_cmd(
+            handle,
+            &check_cmd,
+            "command -v codex && codex --version",
+            db,
+            agent_id,
+            tx,
+            3,
+        )
+        .await
+        {
+            Ok(0) => {
+                emit(
+                    db,
+                    agent_id,
+                    tx,
+                    ev_substep(3, "codex already installed, skipping install"),
+                )
+                .await;
+                codex_found = true;
             }
+            _ => {}
         }
 
         if !codex_found {
