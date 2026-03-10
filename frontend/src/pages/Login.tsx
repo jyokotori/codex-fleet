@@ -1,9 +1,15 @@
-import { useState, FormEvent } from 'react'
+import { useState, useRef, useEffect, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Zap, Languages } from 'lucide-react'
+import { Zap, Languages, ChevronDown } from 'lucide-react'
 import { authApi } from '../lib/api'
 import { saveAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
+import type { Locale } from '../lib/i18n'
+
+const localeLabels: Record<Locale, string> = {
+  en: 'English',
+  zh: '简体中文',
+}
 
 export default function Login() {
   const navigate = useNavigate()
@@ -12,6 +18,16 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [langOpen, setLangOpen] = useState(false)
+  const langRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -30,14 +46,34 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 p-4">
-      <button
-        onClick={() => setLocale(locale === 'en' ? 'zh' : 'en')}
-        className="absolute top-4 right-4 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-        title="Switch language / 切换语言"
-      >
-        <Languages size={15} />
-        {locale === 'en' ? '中文' : 'English'}
-      </button>
+      <div className="absolute top-4 right-4" ref={langRef}>
+        <button
+          onClick={() => setLangOpen(!langOpen)}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+          title="Switch language / 切换语言"
+        >
+          <Languages size={15} />
+          {localeLabels[locale]}
+          <ChevronDown size={12} className={`transition-transform ${langOpen ? 'rotate-180' : ''}`} />
+        </button>
+        {langOpen && (
+          <div className="absolute right-0 top-full mt-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 z-50">
+            {(Object.keys(localeLabels) as Locale[]).map((loc) => (
+              <button
+                key={loc}
+                onClick={() => { setLocale(loc); setLangOpen(false) }}
+                className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                  loc === locale
+                    ? 'bg-sky-50 text-sky-600 dark:bg-sky-600/20 dark:text-sky-300'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                }`}
+              >
+                {localeLabels[loc]}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">

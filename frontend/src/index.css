@@ -53,4 +53,7 @@
   .badge-blue {
     @apply badge bg-blue-100 text-blue-700 border border-blue-300 dark:bg-blue-900 dark:text-blue-300 dark:border-blue-700;
   }
+  .badge-indigo {
+    @apply badge bg-indigo-100 text-indigo-700 border border-indigo-300 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-700;
+  }
 }

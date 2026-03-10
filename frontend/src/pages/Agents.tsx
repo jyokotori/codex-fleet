@@ -777,13 +777,13 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCo
         <div className="flex items-center gap-2">
           <p className="font-medium text-gray-800 dark:text-gray-100">{agent.name}</p>
           <span className={statusMap[agent.status] ?? 'badge-gray'}>{t.status[agent.status as keyof typeof t.status] ?? agent.status}</span>
-          <span className="badge badge-blue">{agent.cli_type}</span>
+          <span className={agent.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>{agent.cli_type}</span>
           {agent.is_busy && (
             <span className="badge-yellow">{t.requirements.busy}</span>
           )}
-          {!agent.use_docker && (
-            <span className="badge badge-gray">{t.agents.noDockerBadge}</span>
-          )}
+          <span className={agent.use_docker ? 'badge badge-blue' : 'badge badge-gray'}>
+            {agent.use_docker ? t.agents.dockerBadge : t.agents.noDockerBadge}
+          </span>
         </div>
         <p className="text-sm text-gray-500">
           {serverLabel}

@@ -156,6 +156,7 @@ export const translations = {
       restart: 'Restart',
       resume: 'Resume',
       open: 'Open',
+      dockerBadge: 'Docker',
       noDockerBadge: 'No Docker',
       deleteConfirm: (name: string) =>
         `Delete agent "${name}"? This will also remove the container.`,
@@ -577,6 +578,7 @@ export const translations = {
       restart: '重启',
       resume: '恢复',
       open: '打开',
+      dockerBadge: 'Docker',
       noDockerBadge: '非 Docker',
       deleteConfirm: (name: string) =>
         `确认删除 Agent "${name}"？容器也将被一并删除。`,
