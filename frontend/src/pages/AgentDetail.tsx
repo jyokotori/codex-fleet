@@ -204,6 +204,9 @@ export default function AgentDetail() {
                 <h1 className="font-bold text-gray-900 dark:text-white">{agent.name}</h1>
                 <span className={statusMap[agent.status] ?? 'badge-gray'}>{statusLabel}</span>
                 <span className={agent.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>{agent.cli_type}</span>
+                <span className={agent.use_docker ? 'badge badge-blue' : 'badge badge-gray'}>
+                  {agent.use_docker ? t.agents.dockerBadge : t.agents.noDockerBadge}
+                </span>
                 {agent.is_busy && <span className="badge-yellow">{t.requirements.busy}</span>}
               </div>
               <div className="flex items-center gap-4 text-xs text-gray-500 mt-0.5">
