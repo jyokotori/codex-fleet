@@ -39,7 +39,7 @@ export default function Layout() {
     { to: '/', label: t.nav.dashboard, icon: LayoutDashboard, end: true },
     { to: '/requirements', label: t.nav.requirements, icon: ClipboardList },
     { to: '/agents', label: t.nav.agents, icon: Bot },
-    { to: '/servers', label: t.nav.servers, icon: Server },
+    ...(isAdmin ? [{ to: '/servers', label: t.nav.servers, icon: Server }] : []),
     { to: '/configs', label: t.nav.configs, icon: Settings, end: false },
     { to: '/notifications', label: t.nav.notifications, icon: Bell },
   ]

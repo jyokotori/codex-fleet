@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    Json,
+    Extension, Json,
 };
 use base64::Engine as _;
 use chrono::Utc;
@@ -44,7 +44,18 @@ pub struct UpdateServerRequest {
     pub os_type: Option<String>,
 }
 
-pub async fn list_servers(State(state): State<AppContext>) -> Result<Json<Vec<Server>>> {
+fn require_admin(auth: &shared_kernel::AuthContext) -> Result<()> {
+    if !auth.has_role("admin") {
+        return Err(AppError::Forbidden("Admin role required".into()));
+    }
+    Ok(())
+}
+
+pub async fn list_servers(
+    State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
+) -> Result<Json<Vec<Server>>> {
+    require_admin(&auth)?;
     let rows = sqlx::query!(
         "SELECT id, name, ip, port, username, auth_type, os_type, status, created_at FROM servers ORDER BY created_at DESC"
     )
@@ -71,8 +82,10 @@ pub async fn list_servers(State(state): State<AppContext>) -> Result<Json<Vec<Se
 
 pub async fn create_server(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Json(req): Json<CreateServerRequest>,
 ) -> Result<Json<Server>> {
+    require_admin(&auth)?;
     let port = req.port.unwrap_or(22) as u16;
 
     // Ensure the backend has an SSH key pair
@@ -178,9 +191,11 @@ pub async fn create_server(
 
 pub async fn update_server(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
     Json(req): Json<UpdateServerRequest>,
 ) -> Result<Json<Server>> {
+    require_admin(&auth)?;
     let existing = sqlx::query!(
         "SELECT id, name, ip, port, username, auth_type, os_type, status, created_at FROM servers WHERE id = $1",
         id
@@ -220,8 +235,10 @@ pub async fn update_server(
 
 pub async fn delete_server(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
+    require_admin(&auth)?;
     let result = sqlx::query!("DELETE FROM servers WHERE id = $1", id)
         .execute(&state.db)
         .await?;
@@ -235,8 +252,10 @@ pub async fn delete_server(
 
 pub async fn test_server_connection(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
+    require_admin(&auth)?;
     #[derive(sqlx::FromRow)]
     struct ServerRow {
         ip: String,

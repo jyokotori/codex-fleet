@@ -288,6 +288,8 @@ export interface Agent {
   id: string
   name: string
   server_id: string
+  user_id?: string
+  user_display_name?: string
   git_repo: string
   git_branch: string
   git_auth_type: string
@@ -319,6 +321,7 @@ export const agentsApi = {
   create: (data: {
     name: string
     server_id: string
+    user_id?: string
     git_repo?: string
     git_branch?: string
     git_auth_type?: string
@@ -333,12 +336,9 @@ export const agentsApi = {
   }) => request<Agent>('/api/agents', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: {
     name?: string
-    git_repo?: string
-    git_branch?: string
-    force_reclone?: boolean
+    user_id?: string
     codex_config_id?: string
     agents_md_id?: string
-    docker_config_id?: string
   }) =>
     request<Agent>(`/api/agents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string, cleanup = false) =>

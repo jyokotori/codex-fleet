@@ -46,7 +46,7 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="servers" element={<Servers />} />
+        <Route path="servers" element={<AdminRoute><Servers /></AdminRoute>} />
         <Route path="agents" element={<Agents />} />
         <Route path="agents/:id" element={<AgentDetail />} />
         <Route path="configs" element={<ConfigsLayout />}>

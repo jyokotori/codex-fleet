@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agents (id, name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,\n           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, docker_container_name, workdir, use_docker,\n           status, provision_log, provision_steps, created_at)\n           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'stopped', '', '{}', $18)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cc1f3921adfee2bc8d85da8261daf62aa31a1f85317caa24283598aa7a726b87"
+}

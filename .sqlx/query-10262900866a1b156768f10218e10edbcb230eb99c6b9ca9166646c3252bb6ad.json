@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT name, server_id, git_repo, git_branch, git_auth_type, git_username,\n           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, use_docker\n           FROM agents WHERE id = $1",
+  "query": "SELECT name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,\n           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,\n           docker_image, use_docker\n           FROM agents WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -15,56 +15,61 @@
       },
       {
         "ordinal": 2,
-        "name": "git_repo",
+        "name": "user_id",
         "type_info": "Text"
       },
       {
         "ordinal": 3,
-        "name": "git_branch",
+        "name": "git_repo",
         "type_info": "Text"
       },
       {
         "ordinal": 4,
-        "name": "git_auth_type",
+        "name": "git_branch",
         "type_info": "Text"
       },
       {
         "ordinal": 5,
-        "name": "git_username",
+        "name": "git_auth_type",
         "type_info": "Text"
       },
       {
         "ordinal": 6,
-        "name": "git_password_encrypted",
+        "name": "git_username",
         "type_info": "Text"
       },
       {
         "ordinal": 7,
-        "name": "cli_type",
+        "name": "git_password_encrypted",
         "type_info": "Text"
       },
       {
         "ordinal": 8,
-        "name": "codex_config_id",
+        "name": "cli_type",
         "type_info": "Text"
       },
       {
         "ordinal": 9,
-        "name": "agents_md_id",
+        "name": "codex_config_id",
         "type_info": "Text"
       },
       {
         "ordinal": 10,
-        "name": "docker_config_id",
+        "name": "agents_md_id",
         "type_info": "Text"
       },
       {
         "ordinal": 11,
-        "name": "docker_image",
+        "name": "docker_config_id",
         "type_info": "Text"
       },
       {
         "ordinal": 12,
+        "name": "docker_image",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
         "name": "use_docker",
         "type_info": "Bool"
       }
@@ -77,6 +82,7 @@
     "nullable": [
       false,
       false,
+      true,
       false,
       false,
       false,
@@ -90,5 +96,5 @@
       false
     ]
   },
-  "hash": "690bbe5bd051b4e69e3eba721e15a6a614c4ae0c4d8e602af860ec40bca4dc72"
+  "hash": "10262900866a1b156768f10218e10edbcb230eb99c6b9ca9166646c3252bb6ad"
 }

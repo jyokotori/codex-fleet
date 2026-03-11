@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
+    Extension, Json,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Utc;
@@ -154,6 +154,8 @@ pub struct Agent {
     pub id: String,
     pub name: String,
     pub server_id: String,
+    pub user_id: Option<String>,
+    pub user_display_name: Option<String>,
     pub git_repo: String,
     pub git_branch: String,
     pub git_auth_type: String,
@@ -178,6 +180,7 @@ pub struct Agent {
 pub struct CreateAgentRequest {
     pub name: String,
     pub server_id: String,
+    pub user_id: Option<String>,
     pub git_repo: Option<String>,
     pub git_branch: Option<String>,
     pub git_auth_type: Option<String>,
@@ -194,12 +197,9 @@ pub struct CreateAgentRequest {
 #[derive(Deserialize)]
 pub struct UpdateAgentRequest {
     pub name: Option<String>,
-    pub git_repo: Option<String>,
-    pub git_branch: Option<String>,
-    pub force_reclone: Option<bool>,
+    pub user_id: Option<String>,
     pub codex_config_id: Option<String>,
     pub agents_md_id: Option<String>,
-    pub docker_config_id: Option<String>,
 }
 
 fn unix_now() -> i64 {
@@ -739,13 +739,28 @@ async fn quick_exec(handle: &Handle<ClientHandler>, cmd: &str) -> anyhow::Result
     Ok(String::from_utf8_lossy(&output).trim().to_string())
 }
 
-pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Agent>>> {
-    let rows = sqlx::query!(
-        r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
-           cli_type, codex_config_id, agents_md_id, docker_config_id,
-           docker_image, docker_container_name, container_id,
-           workdir, use_docker, status, provision_log, provision_steps, created_at
-           FROM agents ORDER BY created_at DESC"#
+fn require_admin(auth: &shared_kernel::AuthContext) -> Result<()> {
+    if !auth.has_role("admin") {
+        return Err(AppError::Forbidden("Admin role required".into()));
+    }
+    Ok(())
+}
+
+pub async fn list_agents(
+    State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
+) -> Result<Json<Vec<Agent>>> {
+    let is_admin = auth.has_role("admin");
+
+    let rows = sqlx::query(
+        r#"SELECT a.id, a.name, a.server_id, a.user_id, u.display_name AS user_display_name,
+           a.git_repo, a.git_branch, a.git_auth_type, a.git_username,
+           a.cli_type, a.codex_config_id, a.agents_md_id, a.docker_config_id,
+           a.docker_image, a.docker_container_name, a.container_id,
+           a.workdir, a.use_docker, a.status, a.provision_log, a.provision_steps, a.created_at
+           FROM agents a
+           LEFT JOIN users u ON a.user_id = u.id
+           ORDER BY a.created_at DESC"#,
     )
     .fetch_all(&state.db)
     .await?;
@@ -762,31 +777,42 @@ pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Age
 
     let mut agents = rows
         .into_iter()
-        .map(|r| {
-            let is_busy = busy_set.contains(&r.id);
-            Agent {
-                id: r.id,
-                name: r.name,
-                server_id: r.server_id,
-                git_repo: r.git_repo,
-                git_branch: r.git_branch,
-                git_auth_type: r.git_auth_type,
-                git_username: r.git_username,
-                cli_type: r.cli_type,
-                codex_config_id: r.codex_config_id,
-                agents_md_id: r.agents_md_id,
-                docker_config_id: r.docker_config_id,
-                docker_image: r.docker_image,
-                docker_container_name: r.docker_container_name,
-                container_id: r.container_id,
-                workdir: r.workdir,
-                use_docker: r.use_docker,
-                status: r.status,
-                provision_log: r.provision_log,
-                provision_steps: r.provision_steps,
-                is_busy,
-                created_at: r.created_at.to_string(),
+        .filter_map(|r| {
+            let user_id: Option<String> = r.get("user_id");
+            // Non-admin users can only see agents assigned to them
+            if !is_admin {
+                match &user_id {
+                    Some(uid) if uid == &auth.user_id => {}
+                    _ => return None,
+                }
             }
+            let id: String = r.get("id");
+            let is_busy = busy_set.contains(&id);
+            Some(Agent {
+                id,
+                name: r.get("name"),
+                server_id: r.get("server_id"),
+                user_id,
+                user_display_name: r.get("user_display_name"),
+                git_repo: r.get("git_repo"),
+                git_branch: r.get("git_branch"),
+                git_auth_type: r.get("git_auth_type"),
+                git_username: r.get("git_username"),
+                cli_type: r.get("cli_type"),
+                codex_config_id: r.get("codex_config_id"),
+                agents_md_id: r.get("agents_md_id"),
+                docker_config_id: r.get("docker_config_id"),
+                docker_image: r.get("docker_image"),
+                docker_container_name: r.get("docker_container_name"),
+                container_id: r.get("container_id"),
+                workdir: r.get("workdir"),
+                use_docker: r.get("use_docker"),
+                status: r.get("status"),
+                provision_log: r.get("provision_log"),
+                provision_steps: r.get("provision_steps"),
+                is_busy,
+                created_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
+            })
         })
         .collect::<Vec<_>>();
 
@@ -797,8 +823,10 @@ pub async fn list_agents(State(state): State<AppContext>) -> Result<Json<Vec<Age
 
 pub async fn create_agent(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Json(req): Json<CreateAgentRequest>,
 ) -> Result<Json<Agent>> {
+    require_admin(&auth)?;
     let git_repo = req.git_repo.unwrap_or_default();
     let git_auth_type = if git_repo.is_empty() {
         "none".to_string()
@@ -856,11 +884,11 @@ pub async fn create_agent(
     let container_name_db = docker_container_name.as_deref().unwrap_or("");
 
     sqlx::query!(
-        r#"INSERT INTO agents (id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
+        r#"INSERT INTO agents (id, name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,
            git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, workdir, use_docker, status, provision_log, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'provisioning', '', $17)"#,
-        id, req.name, req.server_id, git_repo, git_branch, git_auth_type, req.git_username,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'provisioning', '', $18)"#,
+        id, req.name, req.server_id, req.user_id, git_repo, git_branch, git_auth_type, req.git_username,
         git_password_encrypted, req.cli_type, req.codex_config_id, req.agents_md_id,
         req.docker_config_id, docker_image, container_name_db, workdir,
         use_docker, now
@@ -960,10 +988,23 @@ pub async fn create_agent(
         provision_channels.lock().await.remove(&agent_id);
     });
 
+    // Resolve user display name for the response
+    let user_display_name = if let Some(ref uid) = req.user_id {
+        sqlx::query_scalar!("SELECT display_name FROM users WHERE id = $1", uid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+
     Ok(Json(Agent {
         id,
         name: req.name,
         server_id: req.server_id,
+        user_id: req.user_id,
+        user_display_name,
         git_repo,
         git_branch,
         git_auth_type,
@@ -1680,14 +1721,15 @@ fi"#,
 
 pub async fn update_agent(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentRequest>,
 ) -> std::result::Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    require_admin(&auth)?;
     let existing = sqlx::query!(
-        r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
-           cli_type, codex_config_id, agents_md_id, docker_config_id,
-           docker_image, docker_container_name, container_id,
-           workdir, use_docker, status, provision_log, provision_steps, created_at
+        r#"SELECT id, name, server_id, user_id,
+           cli_type, codex_config_id, agents_md_id,
+           docker_container_name, workdir, use_docker, created_at
            FROM agents WHERE id = $1"#,
         id
     )
@@ -1695,46 +1737,51 @@ pub async fn update_agent(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
 
-    let codex_config_changed = req.codex_config_id.is_some();
-    let agents_md_changed = req.agents_md_id.is_some();
-
     let name = req.name.unwrap_or(existing.name);
-    let git_branch = req.git_branch.unwrap_or(existing.git_branch.clone());
-    let new_git_repo = req.git_repo.clone().unwrap_or(existing.git_repo.clone());
-    let codex_config_id = req.codex_config_id.or(existing.codex_config_id.clone());
-    let agents_md_id = req.agents_md_id.or(existing.agents_md_id.clone());
-    let docker_config_id = req.docker_config_id.or(existing.docker_config_id.clone());
-    let use_docker = existing.use_docker;
 
-    let git_repo_changed = req.git_repo.is_some() && new_git_repo != existing.git_repo;
-    if git_repo_changed && req.force_reclone != Some(true) {
-        return Ok((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "requires_confirm": true,
-                "message": "Changing git_repo will clear the workspace and re-clone. Pass force_reclone=true to confirm."
-            })),
-        ));
-    }
+    // Detect which configs actually changed (Some means the field was sent)
+    let codex_config_changed = req.codex_config_id.is_some()
+        && req.codex_config_id != existing.codex_config_id;
+    let agents_md_changed = req.agents_md_id.is_some()
+        && req.agents_md_id != existing.agents_md_id;
+
+    // New values (empty string → None = "no config")
+    let codex_config_id = if req.codex_config_id.is_some() {
+        req.codex_config_id.clone().filter(|s| !s.is_empty())
+    } else {
+        existing.codex_config_id.clone()
+    };
+    let agents_md_id = if req.agents_md_id.is_some() {
+        req.agents_md_id.clone().filter(|s| !s.is_empty())
+    } else {
+        existing.agents_md_id.clone()
+    };
+
+    // user_id: if explicitly provided (even as null/empty) update it; otherwise keep existing
+    let user_id = if req.user_id.is_some() {
+        req.user_id.clone().filter(|s| !s.is_empty())
+    } else {
+        existing.user_id.clone()
+    };
 
     sqlx::query!(
-        "UPDATE agents SET name=$1, git_repo=$2, git_branch=$3, codex_config_id=$4, agents_md_id=$5, docker_config_id=$6 WHERE id=$7",
-        name, new_git_repo, git_branch, codex_config_id, agents_md_id, docker_config_id, id
+        "UPDATE agents SET name=$1, codex_config_id=$2, agents_md_id=$3, user_id=$4 WHERE id=$5",
+        name, codex_config_id, agents_md_id, user_id, id
     )
     .execute(&state.db)
     .await?;
 
-    let config_changed = codex_config_changed || agents_md_changed;
-    let reclone_needed = git_repo_changed && req.force_reclone == Some(true);
+    // Previous config IDs (for knowing whether there was an old file to backup)
+    let old_codex_config_id = existing.codex_config_id.clone();
+    let old_agents_md_id = existing.agents_md_id.clone();
 
-    if config_changed || reclone_needed {
+    if codex_config_changed || agents_md_changed {
         let db = state.db.clone();
         let master_key = state.config.master_key.clone();
-        let agent_id = id.clone();
-        let container_name = existing.docker_container_name.clone().unwrap_or_default();
-        let new_git_repo2 = new_git_repo.clone();
-        let git_branch2 = git_branch.clone();
         let server_id = existing.server_id.clone();
+        let agent_workdir = existing.workdir.clone();
+        let new_codex_config_id = codex_config_id.clone();
+        let new_agents_md_id = agents_md_id.clone();
 
         let server = sqlx::query!(
             "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
@@ -1744,28 +1791,18 @@ pub async fn update_agent(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Server {} not found", server_id)))?;
 
-        let ssh_ip = server.ip;
-        let ssh_port = server.port;
-        let ssh_username = server.username;
-        let ssh_auth_type = server.auth_type;
-        let ssh_password_enc = server.password_encrypted;
-        let ssh_key_content = server.ssh_key_content;
-        let new_codex_config_id = codex_config_id.clone();
-        let new_agents_md_id = agents_md_id.clone();
-        let agent_workdir = existing.workdir.clone();
-
         tokio::spawn(async move {
             let crypto = Crypto::new(&master_key);
-            let password = ssh_password_enc
+            let password = server.password_encrypted
                 .as_deref()
                 .and_then(|p| crypto.decrypt(p).ok());
             let executor = match SshClientPool::connect(
-                &ssh_ip,
-                ssh_port as u16,
-                &ssh_username,
-                &ssh_auth_type,
+                &server.ip,
+                server.port as u16,
+                &server.username,
+                &server.auth_type,
                 password.as_deref(),
-                ssh_key_content.as_deref(),
+                server.ssh_key_content.as_deref(),
             )
             .await
             {
@@ -1779,8 +1816,21 @@ pub async fn update_agent(
                 tracing::error!("update_agent async invalid workdir: {}", agent_workdir);
                 return;
             };
+            let agent_dir = format!("{}/agent", base_dir);
+            let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
 
-            if config_changed {
+            // --- Codex config (config.toml + auth.json) ---
+            if codex_config_changed {
+                // Backup old files if a previous config existed
+                if old_codex_config_id.is_some() {
+                    let _ = executor.execute(&format!(
+                        "[ -f {dir}/config.toml ] && mv {dir}/config.toml {dir}/config.toml_backup_{ts}; \
+                         [ -f {dir}/auth.json ] && mv {dir}/auth.json {dir}/auth.json_backup_{ts}",
+                        dir = agent_dir, ts = ts
+                    )).await;
+                }
+
+                // Write new files if a new config is selected
                 if let Some(cid) = new_codex_config_id {
                     if let Ok(row) = sqlx::query!(
                         "SELECT config_toml, auth_json FROM codex_configs WHERE id = $1",
@@ -1801,22 +1851,35 @@ pub async fn update_agent(
                         if !row.config_toml.is_empty() {
                             let b64 = BASE64.encode(row.config_toml.as_bytes());
                             let cmd = format!(
-                                "echo '{}' | base64 -d > {}/agent/config.toml",
-                                b64, base_dir
+                                "echo '{}' | base64 -d > {}/config.toml",
+                                b64, agent_dir
                             );
                             let _ = executor.execute(&cmd).await;
                         }
                         if !auth_json_content.is_empty() {
                             let b64 = BASE64.encode(auth_json_content.as_bytes());
                             let cmd = format!(
-                                "echo '{}' | base64 -d > {}/agent/auth.json",
-                                b64, base_dir
+                                "echo '{}' | base64 -d > {}/auth.json",
+                                b64, agent_dir
                             );
                             let _ = executor.execute(&cmd).await;
                         }
                     }
                 }
+                // If new_codex_config_id is None, we only backed up — no new file written
+            }
 
+            // --- AGENTS.md ---
+            if agents_md_changed {
+                // Backup old file if a previous config existed
+                if old_agents_md_id.is_some() {
+                    let _ = executor.execute(&format!(
+                        "[ -f {dir}/AGENTS.md ] && mv {dir}/AGENTS.md {dir}/AGENTS.md_backup_{ts}",
+                        dir = agent_dir, ts = ts
+                    )).await;
+                }
+
+                // Write new file if a new config is selected
                 if let Some(md_id) = new_agents_md_id {
                     if let Ok(row) =
                         sqlx::query!("SELECT content FROM company_configs WHERE id = $1", md_id)
@@ -1826,103 +1889,55 @@ pub async fn update_agent(
                         if !row.content.is_empty() {
                             let b64 = BASE64.encode(row.content.as_bytes());
                             let cmd = format!(
-                                "echo '{}' | base64 -d > {}/agent/AGENTS.md",
-                                b64, base_dir
+                                "echo '{}' | base64 -d > {}/AGENTS.md",
+                                b64, agent_dir
                             );
                             let _ = executor.execute(&cmd).await;
                         }
                     }
                 }
-            }
-
-            if reclone_needed {
-                // Helper to append a JSONL event to provision_log without broadcasting
-                let db_log = |db: &sqlx::PgPool, aid: &str, ev: Value| {
-                    let db = db.clone();
-                    let aid = aid.to_string();
-                    async move {
-                        let line = serde_json::to_string(&ev).unwrap_or_default() + "\n";
-                        let _ = sqlx::query!(
-                            "UPDATE agents SET provision_log = provision_log || $1 WHERE id = $2",
-                            line,
-                            aid
-                        )
-                        .execute(&db)
-                        .await;
-                    }
-                };
-
-                db_log(&db, &agent_id, json!({"t":"step_output","step":7,"text":"[Re-clone] Clearing workspace...","ts":unix_now()})).await;
-                if use_docker && !container_name.is_empty() {
-                    let clear_cmd =
-                        format!("docker exec {} sh -c 'rm -rf /workspace/*'", container_name);
-                    let _ = executor.execute(&clear_cmd).await;
-                    let clone_cmd = format!(
-                        "docker exec {} sh -c 'git clone {} /workspace && cd /workspace && git checkout {}'",
-                        container_name, new_git_repo2, git_branch2
-                    );
-                    match executor.execute(&clone_cmd).await {
-                        Ok(out) => {
-                            db_log(&db, &agent_id, json!({"t":"step_output","step":7,"text":format!("[Re-clone] Done: {}", out.trim()),"ts":unix_now()})).await;
-                        }
-                        Err(e) => {
-                            db_log(&db, &agent_id, json!({"t":"warn","step":7,"text":format!("[Re-clone] Failed: {}", e),"ts":unix_now()})).await;
-                        }
-                    }
-                } else {
-                    let workdir = agent_workdir.clone();
-                    let clear_cmd = format!("rm -rf {}/*", workdir);
-                    let _ = executor.execute(&clear_cmd).await;
-                    let clone_cmd = format!(
-                        "git clone {} {} && cd {} && git checkout {}",
-                        new_git_repo2, workdir, workdir, git_branch2
-                    );
-                    match executor.execute(&clone_cmd).await {
-                        Ok(out) => {
-                            db_log(&db, &agent_id, json!({"t":"step_output","step":7,"text":format!("[Re-clone] Done: {}", out.trim()),"ts":unix_now()})).await;
-                        }
-                        Err(e) => {
-                            db_log(&db, &agent_id, json!({"t":"warn","step":7,"text":format!("[Re-clone] Failed: {}", e),"ts":unix_now()})).await;
-                        }
-                    }
-                }
+                // If new_agents_md_id is None, we only backed up — no new file written
             }
         });
     }
 
-    let updated = sqlx::query!(
-        r#"SELECT id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
-           cli_type, codex_config_id, agents_md_id, docker_config_id,
-           docker_image, docker_container_name, container_id,
-           workdir, use_docker, status, provision_log, provision_steps, created_at
-           FROM agents WHERE id = $1"#,
-        id
+    let updated = sqlx::query(
+        r#"SELECT a.id, a.name, a.server_id, a.user_id, u.display_name AS user_display_name,
+           a.git_repo, a.git_branch, a.git_auth_type, a.git_username,
+           a.cli_type, a.codex_config_id, a.agents_md_id, a.docker_config_id,
+           a.docker_image, a.docker_container_name, a.container_id,
+           a.workdir, a.use_docker, a.status, a.provision_log, a.provision_steps, a.created_at
+           FROM agents a LEFT JOIN users u ON a.user_id = u.id
+           WHERE a.id = $1"#,
     )
+    .bind(&id)
     .fetch_one(&state.db)
     .await?;
 
     let agent = Agent {
-        id: updated.id,
-        name: updated.name,
-        server_id: updated.server_id,
-        git_repo: updated.git_repo,
-        git_branch: updated.git_branch,
-        git_auth_type: updated.git_auth_type,
-        git_username: updated.git_username,
-        cli_type: updated.cli_type,
-        codex_config_id: updated.codex_config_id,
-        agents_md_id: updated.agents_md_id,
-        docker_config_id: updated.docker_config_id,
-        docker_image: updated.docker_image,
-        docker_container_name: updated.docker_container_name,
-        container_id: updated.container_id,
-        workdir: updated.workdir,
-        use_docker: updated.use_docker,
-        status: updated.status,
-        provision_log: updated.provision_log,
-        provision_steps: updated.provision_steps,
+        id: updated.get("id"),
+        name: updated.get("name"),
+        server_id: updated.get("server_id"),
+        user_id: updated.get("user_id"),
+        user_display_name: updated.get("user_display_name"),
+        git_repo: updated.get("git_repo"),
+        git_branch: updated.get("git_branch"),
+        git_auth_type: updated.get("git_auth_type"),
+        git_username: updated.get("git_username"),
+        cli_type: updated.get("cli_type"),
+        codex_config_id: updated.get("codex_config_id"),
+        agents_md_id: updated.get("agents_md_id"),
+        docker_config_id: updated.get("docker_config_id"),
+        docker_image: updated.get("docker_image"),
+        docker_container_name: updated.get("docker_container_name"),
+        container_id: updated.get("container_id"),
+        workdir: updated.get("workdir"),
+        use_docker: updated.get("use_docker"),
+        status: updated.get("status"),
+        provision_log: updated.get("provision_log"),
+        provision_steps: updated.get("provision_steps"),
         is_busy: false,
-        created_at: updated.created_at.to_string(),
+        created_at: updated.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
     };
 
     Ok((StatusCode::OK, Json(serde_json::to_value(agent).unwrap())))
@@ -1936,9 +1951,11 @@ pub struct DeleteAgentQuery {
 
 pub async fn delete_agent(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
     Query(params): Query<DeleteAgentQuery>,
 ) -> Result<Json<serde_json::Value>> {
+    require_admin(&auth)?;
     let cleanup = params.cleanup.unwrap_or(false);
     tracing::info!(agent_id = %id, cleanup = cleanup, "Deleting agent");
 
@@ -1998,8 +2015,10 @@ pub async fn delete_agent(
 
 pub async fn start_agent(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
+    require_admin(&auth)?;
     let (executor, agent_info) = get_executor(&state, &id).await?;
 
     if agent_info.use_docker {
@@ -2030,8 +2049,10 @@ pub async fn start_agent(
 
 pub async fn stop_agent(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
+    require_admin(&auth)?;
     let (executor, agent_info) = get_executor(&state, &id).await?;
 
     if agent_info.use_docker {
@@ -2061,8 +2082,10 @@ pub async fn stop_agent(
 
 pub async fn restart_agent(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
+    require_admin(&auth)?;
     let (executor, agent_info) = get_executor(&state, &id).await?;
 
     if !agent_info.use_docker {
@@ -2097,10 +2120,12 @@ pub async fn restart_agent(
 
 pub async fn clone_agent(
     State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<Agent>)> {
+    require_admin(&auth)?;
     let row = sqlx::query!(
-        r#"SELECT name, server_id, git_repo, git_branch, git_auth_type, git_username,
+        r#"SELECT name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,
            git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, use_docker
            FROM agents WHERE id = $1"#,
@@ -2121,17 +2146,28 @@ pub async fn clone_agent(
     let now = Utc::now();
 
     sqlx::query!(
-        r#"INSERT INTO agents (id, name, server_id, git_repo, git_branch, git_auth_type, git_username,
+        r#"INSERT INTO agents (id, name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,
            git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
            docker_image, docker_container_name, workdir, use_docker,
            status, provision_log, provision_steps, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'stopped', '', '{}', $17)"#,
-        new_id, name, row.server_id, row.git_repo, row.git_branch, row.git_auth_type, row.git_username,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'stopped', '', '{}', $18)"#,
+        new_id, name, row.server_id, row.user_id, row.git_repo, row.git_branch, row.git_auth_type, row.git_username,
         row.git_password_encrypted, row.cli_type, row.codex_config_id, row.agents_md_id, row.docker_config_id,
         row.docker_image, docker_container_name, workdir, row.use_docker, now
     )
     .execute(&state.db)
     .await?;
+
+    // Resolve user display name
+    let user_display_name = if let Some(ref uid) = row.user_id {
+        sqlx::query_scalar!("SELECT display_name FROM users WHERE id = $1", uid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
 
     Ok((
         StatusCode::CREATED,
@@ -2139,6 +2175,8 @@ pub async fn clone_agent(
             id: new_id,
             name,
             server_id: row.server_id,
+            user_id: row.user_id,
+            user_display_name,
             git_repo: row.git_repo,
             git_branch: row.git_branch,
             git_auth_type: row.git_auth_type,

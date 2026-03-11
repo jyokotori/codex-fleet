@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
-  agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi,
-  type Agent, type Server,
+  agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi, usersApi,
+  type Agent, type Server, type SimpleUser,
 } from '../lib/api'
+import { getAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
 import DeleteAgentDialog from '../components/DeleteAgentDialog'
 import { canDispatchTask, getAgentRuntimeAction, type AgentRuntimeAction } from '../lib/agentRuntime'
@@ -13,6 +14,7 @@ import { canDispatchTask, getAgentRuntimeAction, type AgentRuntimeAction } from 
 interface AgentFormData {
   name: string
   server_id: string
+  user_id: string
   use_docker: boolean
   use_git: boolean
   git_repo: string
@@ -29,8 +31,7 @@ interface AgentFormData {
 
 interface EditFormData {
   name: string
-  git_repo: string
-  git_branch: string
+  user_id: string
   codex_config_id: string
   agents_md_id: string
 }
@@ -38,6 +39,7 @@ interface EditFormData {
 const defaultForm: AgentFormData = {
   name: '',
   server_id: '',
+  user_id: '',
   use_docker: true,
   use_git: false,
   git_repo: '',
@@ -59,6 +61,76 @@ const CLI_TYPES = [
   { value: 'opencode', label: 'OpenCode', wip: true },
 ]
 
+function UserSelect({ value, onChange, users, t }: {
+  value: string
+  onChange: (val: string) => void
+  users: SimpleUser[]
+  t: ReturnType<typeof useI18n>['t']
+}) {
+  const [search, setSearch] = useState('')
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const selectedUser = users.find(u => u.id === value)
+  const filtered = users.filter(u =>
+    !search || u.display_name.toLowerCase().includes(search.toLowerCase()) || u.username.toLowerCase().includes(search.toLowerCase())
+  )
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div
+        className="input cursor-pointer flex items-center justify-between"
+        onClick={() => setOpen(!open)}
+      >
+        <span className={selectedUser ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}>
+          {selectedUser ? `${selectedUser.display_name} (${selectedUser.username})` : t.agents.noUser}
+        </span>
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto">
+          <div className="p-2 sticky top-0 bg-white dark:bg-gray-800">
+            <input
+              className="input w-full text-sm"
+              placeholder={t.agents.selectUser}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              autoFocus
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+          <div
+            className="px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400"
+            onClick={() => { onChange(''); setOpen(false); setSearch('') }}
+          >
+            {t.agents.noUser}
+          </div>
+          {filtered.map(u => (
+            <div
+              key={u.id}
+              className={`px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 ${value === u.id ? 'bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400' : 'text-gray-700 dark:text-gray-300'}`}
+              onClick={() => { onChange(u.id); setOpen(false); setSearch('') }}
+            >
+              {u.display_name} <span className="text-gray-400">({u.username})</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SectionDivider({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3 my-1">
@@ -73,11 +145,12 @@ export default function Agents() {
   const qc = useQueryClient()
   const { t } = useI18n()
   const navigate = useNavigate()
+  const currentAuth = getAuth()
+  const isAdmin = currentAuth?.user?.roles?.includes('admin') ?? false
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<AgentFormData>(defaultForm)
   const [editAgent, setEditAgent] = useState<Agent | null>(null)
-  const [editForm, setEditForm] = useState<EditFormData>({ name: '', git_repo: '', git_branch: '', codex_config_id: '', agents_md_id: '' })
-  const [gitRepoConfirm, setGitRepoConfirm] = useState(false)
+  const [editForm, setEditForm] = useState<EditFormData>({ name: '', user_id: '', codex_config_id: '', agents_md_id: '' })
   const [dispatchAgent, setDispatchAgent] = useState<Agent | null>(null)
   const [dispatchInput, setDispatchInput] = useState('')
   const [dispatchNotifIds, setDispatchNotifIds] = useState<string[]>([])
@@ -88,6 +161,7 @@ export default function Agents() {
 
   const { data: agents = [], isLoading } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
   const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
+  const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: usersApi.list })
   const { data: codexConfigs = [] } = useQuery({ queryKey: ['codex-configs'], queryFn: codexConfigsApi.list })
   const { data: agentsMdConfigs = [] } = useQuery({
     queryKey: ['configs', 'agents_md'],
@@ -100,6 +174,7 @@ export default function Agents() {
     mutationFn: (data: AgentFormData) => agentsApi.create({
       name: data.name.trim(),
       server_id: data.server_id,
+      user_id: data.user_id || undefined,
       git_repo: '',
       git_branch: defaultForm.git_branch,
       git_auth_type: 'none',
@@ -120,25 +195,17 @@ export default function Agents() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data, forceReclone }: { id: string; data: EditFormData; forceReclone?: boolean }) => {
+    mutationFn: async ({ id, data }: { id: string; data: EditFormData }) => {
       return agentsApi.update(id, {
         name: data.name || undefined,
-        git_repo: data.git_repo || undefined,
-        git_branch: data.git_branch || undefined,
-        codex_config_id: data.codex_config_id || undefined,
-        agents_md_id: data.agents_md_id || undefined,
-        force_reclone: forceReclone,
+        user_id: data.user_id,
+        codex_config_id: data.codex_config_id,
+        agents_md_id: data.agents_md_id,
       })
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
       setEditAgent(null)
-      setGitRepoConfirm(false)
-    },
-    onError: (err: Error & { status?: number; requires_confirm?: boolean }) => {
-      if (err.status === 409 || err.requires_confirm) {
-        setGitRepoConfirm(true)
-      }
     },
   })
 
@@ -204,6 +271,7 @@ export default function Agents() {
     setForm({
       name: t.agents.copyName(agent.name),
       server_id: agent.server_id,
+      user_id: agent.user_id ?? '',
       use_docker: agent.use_docker,
       use_git: false,
       git_repo: '',
@@ -226,18 +294,16 @@ export default function Agents() {
     setEditAgent(agent)
     setEditForm({
       name: agent.name,
-      git_repo: agent.git_repo,
-      git_branch: agent.git_branch,
+      user_id: agent.user_id ?? '',
       codex_config_id: agent.codex_config_id ?? '',
       agents_md_id: agent.agents_md_id ?? '',
     })
-    setGitRepoConfirm(false)
   }
 
-  function handleEditSubmit(e: React.FormEvent, forceReclone?: boolean) {
+  function handleEditSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!editAgent) return
-    updateMutation.mutate({ id: editAgent.id, data: editForm, forceReclone })
+    updateMutation.mutate({ id: editAgent.id, data: editForm })
   }
 
   function handleRuntimeAction(agent: Agent) {
@@ -257,9 +323,11 @@ export default function Agents() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t.agents.title}</h1>
           <p className="text-gray-500 mt-1">{t.agents.subtitle}</p>
         </div>
-        <button onClick={handleCreateOpen} className="btn-primary flex items-center gap-2">
-          <Plus size={16} />{t.agents.newAgent}
-        </button>
+        {isAdmin && (
+          <button onClick={handleCreateOpen} className="btn-primary flex items-center gap-2">
+            <Plus size={16} />{t.agents.newAgent}
+          </button>
+        )}
       </div>
 
       {isLoading ? (
@@ -274,6 +342,7 @@ export default function Agents() {
         <div className="grid gap-4">
           {agents.map(agent => (
             <AgentRow key={agent.id} agent={agent} servers={servers} t={t}
+              isAdmin={isAdmin}
               onRuntimeAction={() => handleRuntimeAction(agent)}
               onEdit={() => handleEditOpen(agent)}
               onDispatch={() => { setDispatchAgent(agent); setDispatchTitle(''); setDispatchInput('') }}
@@ -315,6 +384,12 @@ export default function Agents() {
                     {servers.map(s => <option key={s.id} value={s.id}>{s.name} ({s.ip})</option>)}
                   </select>
                 </div>
+              </div>
+
+              {/* Assigned User */}
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.assignedUser}</label>
+                <UserSelect value={form.user_id} onChange={val => setForm(f => ({ ...f, user_id: val }))} users={users} t={t} />
               </div>
 
               {/* CLI Type */}
@@ -459,7 +534,7 @@ export default function Agents() {
           <div className="bg-white border border-gray-200 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto dark:bg-gray-900 dark:border-gray-700">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-900 z-10">
               <h3 className="font-semibold text-gray-800 dark:text-gray-100">{t.agents.editAgentTitle(editAgent.name)}</h3>
-              <button onClick={() => { setEditAgent(null); setGitRepoConfirm(false) }} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+              <button onClick={() => setEditAgent(null)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
             </div>
             <form onSubmit={e => handleEditSubmit(e)} className="p-6 space-y-4">
 
@@ -478,7 +553,7 @@ export default function Agents() {
                   <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.dockerImage}</label>
                   <input
                     className="input bg-gray-50 dark:bg-gray-800 cursor-not-allowed opacity-70"
-                    value={editAgent.docker_image}
+                    value={editAgent.use_docker ? editAgent.docker_image : t.agents.noDockerBadge}
                     disabled
                     title={t.agents.recreateToChangeHint}
                   />
@@ -489,6 +564,12 @@ export default function Agents() {
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.agentName}</label>
                 <input className="input" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
+
+              {/* Assigned User */}
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.assignedUser}</label>
+                <UserSelect value={editForm.user_id} onChange={val => setEditForm(f => ({ ...f, user_id: val }))} users={users} t={t} />
               </div>
 
               {/* Codex config + AGENTS.md */}
@@ -516,48 +597,11 @@ export default function Agents() {
                 </div>
               </div>
 
-              {/* Git section */}
-              <SectionDivider label={t.agents.gitSection} />
-
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.gitRepo}</label>
-                <input
-                  className="input"
-                  value={editForm.git_repo}
-                  onChange={e => setEditForm(f => ({ ...f, git_repo: e.target.value }))}
-                  placeholder="https://github.com/org/repo.git"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.branch}</label>
-                <input className="input" value={editForm.git_branch} onChange={e => setEditForm(f => ({ ...f, git_branch: e.target.value }))} />
-              </div>
-
-              {/* Git repo change confirmation */}
-              {gitRepoConfirm && (
-                <div className="rounded-lg border border-orange-400 bg-orange-50 dark:bg-orange-900/20 p-4">
-                  <p className="text-sm text-orange-700 dark:text-orange-300 font-medium mb-3">
-                    {t.agents.gitRepoChangeWarning}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={e => handleEditSubmit(e as unknown as React.FormEvent, true)}
-                      className="btn-primary btn-sm"
-                    >
-                      {t.agents.confirmReclone}
-                    </button>
-                    <button type="button" onClick={() => setGitRepoConfirm(false)} className="btn-secondary btn-sm">{t.common.cancel}</button>
-                  </div>
-                </div>
-              )}
-
-              {updateMutation.error && !gitRepoConfirm && (
+              {updateMutation.error && (
                 <div className="text-red-500 dark:text-red-400 text-sm">{String(updateMutation.error.message)}</div>
               )}
               <div className="flex gap-3 justify-end pt-2">
-                <button type="button" onClick={() => { setEditAgent(null); setGitRepoConfirm(false) }} className="btn-secondary">{t.common.cancel}</button>
+                <button type="button" onClick={() => setEditAgent(null)} className="btn-secondary">{t.common.cancel}</button>
                 <button type="submit" className="btn-primary" disabled={updateMutation.isPending}>
                   {updateMutation.isPending ? t.common.loading : t.common.save}
                 </button>
@@ -686,10 +730,11 @@ export default function Agents() {
   )
 }
 
-function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCopy, onDelete, runtimePending }: {
+function AgentRow({ agent, servers, t, isAdmin, onRuntimeAction, onEdit, onDispatch, onCopy, onDelete, runtimePending }: {
   agent: Agent
   servers: Server[]
   t: ReturnType<typeof useI18n>['t']
+  isAdmin: boolean
   onRuntimeAction: () => void
   onEdit: () => void
   onDispatch: () => void
@@ -737,6 +782,7 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCo
         </div>
         <p className="text-sm text-gray-500">
           {serverLabel}
+          {agent.user_display_name && ` · ${agent.user_display_name}`}
           {agent.git_repo && ` · ${agent.git_repo.split('/').slice(-2).join('/')} (${agent.git_branch})`}
         </p>
       </div>
@@ -744,7 +790,7 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCo
         {canDispatchTask(agent) && (
           <button onClick={onDispatch} className="btn-primary btn-sm flex items-center gap-1"><Send size={13} />{t.agents.dispatchTask}</button>
         )}
-        {runtimeAction && (
+        {isAdmin && runtimeAction && (
           <button
             onClick={onRuntimeAction}
             className="btn-secondary btn-sm flex items-center gap-1"
@@ -754,18 +800,24 @@ function AgentRow({ agent, servers, t, onRuntimeAction, onEdit, onDispatch, onCo
             {runtimeLabel}
           </button>
         )}
-        <button onClick={onCopy} className="btn-secondary btn-sm flex items-center gap-1.5" title={t.common.copy}>
-          <Copy size={13} />
-          {t.common.copy}
-        </button>
-        <button onClick={onEdit} className="btn-secondary btn-sm flex items-center gap-1.5" title={t.common.edit}>
-          <Pencil size={13} />
-          {t.common.edit}
-        </button>
-        <button onClick={onDelete} className="btn-danger btn-sm flex items-center gap-1.5" title={t.common.delete}>
-          <Trash2 size={13} />
-          {t.common.delete}
-        </button>
+        {isAdmin && (
+          <button onClick={onCopy} className="btn-secondary btn-sm flex items-center gap-1.5" title={t.common.copy}>
+            <Copy size={13} />
+            {t.common.copy}
+          </button>
+        )}
+        {isAdmin && (
+          <button onClick={onEdit} className="btn-secondary btn-sm flex items-center gap-1.5" title={t.common.edit}>
+            <Pencil size={13} />
+            {t.common.edit}
+          </button>
+        )}
+        {isAdmin && (
+          <button onClick={onDelete} className="btn-danger btn-sm flex items-center gap-1.5" title={t.common.delete}>
+            <Trash2 size={13} />
+            {t.common.delete}
+          </button>
+        )}
       </div>
     </div>
   )
