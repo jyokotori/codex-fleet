@@ -9,6 +9,7 @@ import Terminal from '../components/Terminal'
 import TaskLogViewer from '../components/TaskLogViewer'
 import ProvisionLog from '../components/ProvisionLog'
 import { canDispatchTask } from '../lib/agentRuntime'
+import { isAdmin as hasAdminRole } from '../lib/auth'
 import { copyToClipboard } from '../lib/clipboard'
 
 interface ResumeTab {
@@ -43,6 +44,7 @@ export default function AgentDetail() {
   const resumeTabsRef = useRef(resumeTabs)
   resumeTabsRef.current = resumeTabs
   const [pendingNav, setPendingNav] = useState<string | null>(null)
+  const isAdmin = hasAdminRole()
 
   // Warn on browser tab close / refresh when resume tabs are open
   useEffect(() => {
@@ -75,7 +77,13 @@ export default function AgentDetail() {
     }
   }, [agent?.status])
 
-  const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
+  const { data: servers = [] } = useQuery({
+    queryKey: ['servers'],
+    queryFn: serversApi.list,
+    enabled: isAdmin,
+    retry: false,
+  })
+  const visibleServers = isAdmin ? servers : []
   const { data: notifConfigs = [] } = useQuery({ queryKey: ['notifications'], queryFn: notificationsApi.list })
   const { data: tasksData } = useQuery({
     queryKey: ['tasks', id, taskPage],
@@ -136,7 +144,7 @@ export default function AgentDetail() {
 
   const isProvisioning = agent.status === 'provisioning'
   const provisionFailed = agent.status === 'provision_failed'
-  const server = servers.find(s => s.id === agent.server_id)
+  const server = visibleServers.find(s => s.id === agent.server_id)
   const statusMap: Record<string, string> = { running: 'badge-green', stopped: 'badge-gray', error: 'badge-red', provisioning: 'badge-yellow', provision_failed: 'badge-red' }
   const statusLabel = t.status[agent.status as keyof typeof t.status] ?? agent.status
 

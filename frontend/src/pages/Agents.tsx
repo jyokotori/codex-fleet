@@ -160,7 +160,13 @@ export default function Agents() {
   const [runtimeConfirm, setRuntimeConfirm] = useState<{ agent: Agent; action: Exclude<AgentRuntimeAction, 'start'> } | null>(null)
 
   const { data: agents = [], isLoading } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
-  const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
+  const { data: servers = [] } = useQuery({
+    queryKey: ['servers'],
+    queryFn: serversApi.list,
+    enabled: isAdmin,
+    retry: false,
+  })
+  const visibleServers = isAdmin ? servers : []
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: usersApi.list })
   const { data: codexConfigs = [] } = useQuery({ queryKey: ['codex-configs'], queryFn: codexConfigsApi.list })
   const { data: agentsMdConfigs = [] } = useQuery({
@@ -341,7 +347,7 @@ export default function Agents() {
       ) : (
         <div className="grid gap-4">
           {agents.map(agent => (
-            <AgentRow key={agent.id} agent={agent} servers={servers} t={t}
+            <AgentRow key={agent.id} agent={agent} servers={visibleServers} t={t}
               isAdmin={isAdmin}
               onRuntimeAction={() => handleRuntimeAction(agent)}
               onEdit={() => handleEditOpen(agent)}

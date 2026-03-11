@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Server, Bot, CheckCircle, AlertCircle, Clock, Activity } from 'lucide-react'
 import { serversApi, agentsApi } from '../lib/api'
+import { isAdmin as hasAdminRole } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
 
 function StatCard({
@@ -25,7 +26,13 @@ function StatCard({
 
 export default function Dashboard() {
   const { t } = useI18n()
-  const { data: servers = [] } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list })
+  const isAdmin = hasAdminRole()
+  const { data: servers = [] } = useQuery({
+    queryKey: ['servers'],
+    queryFn: serversApi.list,
+    enabled: isAdmin,
+    retry: false,
+  })
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
 
   const runningAgents = agents.filter(a => a.status === 'running').length
@@ -40,14 +47,14 @@ export default function Dashboard() {
         <p className="text-gray-500 mt-1">{t.dashboard.subtitle}</p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label={t.dashboard.totalServers} value={servers.length} icon={Server} color="bg-blue-600" />
-        <StatCard label={t.dashboard.onlineServers} value={onlineServers} icon={CheckCircle} color="bg-green-600" />
+      <div className={`grid grid-cols-2 gap-4 mb-8 ${isAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-2'}`}>
+        {isAdmin && <StatCard label={t.dashboard.totalServers} value={servers.length} icon={Server} color="bg-blue-600" />}
+        {isAdmin && <StatCard label={t.dashboard.onlineServers} value={onlineServers} icon={CheckCircle} color="bg-green-600" />}
         <StatCard label={t.dashboard.runningAgents} value={runningAgents} icon={Activity} color="bg-sky-600" />
         <StatCard label={t.dashboard.totalAgents} value={agents.length} icon={Bot} color="bg-purple-600" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={`grid grid-cols-1 gap-6 ${isAdmin ? 'lg:grid-cols-2' : ''}`}>
         {/* Agents */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
@@ -78,31 +85,32 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Servers */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-800 dark:text-gray-100">{t.dashboard.recentServers}</h2>
-            <Link to="/servers" className="text-sky-500 text-sm hover:underline">{t.dashboard.viewAll}</Link>
-          </div>
-          {servers.length === 0 ? (
-            <p className="text-gray-500 text-sm py-4 text-center">{t.dashboard.noServers}</p>
-          ) : (
-            <div className="space-y-2">
-              {servers.slice(0, 5).map(server => (
-                <div key={server.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
-                  <div className="flex items-center gap-3">
-                    <Server size={16} className="text-gray-400" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{server.name}</p>
-                      <p className="text-xs text-gray-500">{server.ip}:{server.port}</p>
-                    </div>
-                  </div>
-                  <ServerStatusBadge status={server.status} t={t} />
-                </div>
-              ))}
+        {isAdmin && (
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-gray-800 dark:text-gray-100">{t.dashboard.recentServers}</h2>
+              <Link to="/servers" className="text-sky-500 text-sm hover:underline">{t.dashboard.viewAll}</Link>
             </div>
-          )}
-        </div>
+            {servers.length === 0 ? (
+              <p className="text-gray-500 text-sm py-4 text-center">{t.dashboard.noServers}</p>
+            ) : (
+              <div className="space-y-2">
+                {servers.slice(0, 5).map(server => (
+                  <div key={server.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-100 dark:bg-gray-800">
+                    <div className="flex items-center gap-3">
+                      <Server size={16} className="text-gray-400" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{server.name}</p>
+                        <p className="text-xs text-gray-500">{server.ip}:{server.port}</p>
+                      </div>
+                    </div>
+                    <ServerStatusBadge status={server.status} t={t} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {agents.length > 0 && (

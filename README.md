@@ -107,6 +107,7 @@ Configure webhooks so task completion or failure is pushed automatically.
 - Role-based access control (RBAC) with fine-grained permission codes
 - Admin-only user management: create users, reset passwords, enable/disable, unlock
 - Self-service for regular users: change their own password
+- Regular users only load and see the agents assigned to them on shared pages; admin-only server inventory is not fetched or shown for non-admin sessions
 
 ---
 
