@@ -100,7 +100,7 @@ Store reusable configurations centrally and attach them to any agent at any time
 - **Docker Configs** — reusable Docker runtime configurations (ports, mounts, environment variables, init scripts)
 
 ### Notifications
-Configure webhooks so task completion or failure is pushed automatically.
+Configure webhooks so task progress, completion, failure, approval, or rejection is pushed automatically.
 
 ### User & Access Management
 - JWT access token + refresh token

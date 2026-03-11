@@ -72,6 +72,7 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
 - `event`: The status that triggered the notification.
 - `task`: Always present. Contains task metadata (excludes `task_log` for payload size).
 - `task.result_md`: The agent's result summary in Markdown format. Present when the agent writes a `result.md` file in the task directory upon completion; `null` otherwise.
+- Review events (`human_approved` and `human_rejected`) include the same core `task` metadata as completion events, with `task.status` set to the review result.
 - `work_item`: Present only if the task is linked to a work item.
 
 ### Example Payload

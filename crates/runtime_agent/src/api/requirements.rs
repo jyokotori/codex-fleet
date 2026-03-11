@@ -5,6 +5,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use uuid::Uuid;
 
 use shared_kernel::{AppContext, AppError, Result};
@@ -500,20 +501,43 @@ pub async fn update_work_item(
             .await?;
 
             // Send webhook notifications for the linked task
-            if let Ok(Some(task_row)) =
-                sqlx::query!("SELECT notification_ids FROM tasks WHERE id = $1", exec_id)
-                    .fetch_optional(&state.db)
-                    .await
+            if let Ok(Some(task_row)) = sqlx::query(
+                r#"SELECT id, agent_id, title, status, result_md, notification_ids, user_id, username,
+                          created_at::text AS created_at_text,
+                          completed_at::text AS completed_at_text
+                   FROM tasks
+                   WHERE id = $1"#,
+            )
+            .bind(exec_id)
+            .fetch_optional(&state.db)
+            .await
             {
+                let task_id: String = task_row.get("id");
+                let task_agent_id: String = task_row.get("agent_id");
+                let task_title: String = task_row.get("title");
+                let task_status: String = task_row.get("status");
+                let task_result_md: String = task_row.get("result_md");
+                let task_notification_ids: String = task_row.get("notification_ids");
+                let task_user_id: Option<String> = task_row.get("user_id");
+                let task_username: String = task_row.get("username");
+                let task_created_at: String = task_row.get("created_at_text");
+                let task_completed_at: Option<String> = task_row.get("completed_at_text");
                 let task_notif_ids: Vec<String> =
-                    serde_json::from_str(&task_row.notification_ids).unwrap_or_default();
+                    serde_json::from_str(&task_notification_ids).unwrap_or_default();
                 if !task_notif_ids.is_empty() {
                     let status_clone = status.clone();
                     let payload = serde_json::json!({
                         "event": &status,
                         "task": {
-                            "id": exec_id,
-                            "status": &status,
+                            "id": &task_id,
+                            "agent_id": &task_agent_id,
+                            "title": &task_title,
+                            "status": &task_status,
+                            "result_md": if task_result_md.is_empty() { None } else { Some(task_result_md.as_str()) },
+                            "user_id": &task_user_id,
+                            "username": &task_username,
+                            "created_at": &task_created_at,
+                            "completed_at": &task_completed_at,
                         },
                         "work_item": {
                             "id": &id,

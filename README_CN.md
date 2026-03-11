@@ -100,7 +100,7 @@ cd frontend && npm install && npm run dev
 - **Docker 配置** — 可复用的 Docker 运行配置（端口、挂载、环境变量、初始化脚本）
 
 ### 通知
-配置 Webhook，任务完成或失败时自动推送通知。
+配置 Webhook，任务进度、完成、失败、通过或打回时自动推送通知。
 
 ### 用户与权限管理
 - JWT 访问令牌 + Refresh Token
