@@ -9,6 +9,7 @@ import Terminal from '../components/Terminal'
 import TaskLogViewer from '../components/TaskLogViewer'
 import ProvisionLog from '../components/ProvisionLog'
 import { canDispatchTask } from '../lib/agentRuntime'
+import { copyToClipboard } from '../lib/clipboard'
 
 interface ResumeTab {
   id: string
@@ -114,7 +115,7 @@ export default function AgentDetail() {
     try {
       const { local_cmd, ssh_cmd } = await agentsApi.getTerminalCommand(id!)
       const cmd = ssh_cmd ?? local_cmd
-      await navigator.clipboard.writeText(cmd)
+      await copyToClipboard(cmd)
       setCopyToast(true)
       setTimeout(() => setCopyToast(false), 2000)
     } catch (e) {
@@ -515,7 +516,7 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
     e.stopPropagation()
     try {
       const { ssh_cmd, local_cmd } = await agentsApi.getResumeCommand(agentId, task.thread_id!)
-      await navigator.clipboard.writeText(ssh_cmd ?? local_cmd)
+      await copyToClipboard(ssh_cmd ?? local_cmd)
       setResumeCopied(true)
       setTimeout(() => setResumeCopied(false), 2000)
     } catch (err) {

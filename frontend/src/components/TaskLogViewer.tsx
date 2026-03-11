@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Copy, CheckCircle, XCircle, Loader } from 'lucide-react'
 import { useWebSocket } from '../hooks/useWebSocket'
+import { copyToClipboard } from '../lib/clipboard'
 
 interface TaskLogViewerProps {
   taskId: string
@@ -63,7 +64,7 @@ export default function TaskLogViewer({ taskId, className = '' }: TaskLogViewerP
 
   async function handleCopyThreadId() {
     if (!threadId) return
-    await navigator.clipboard.writeText(threadId)
+    await copyToClipboard(threadId)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
