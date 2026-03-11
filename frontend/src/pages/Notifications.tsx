@@ -11,8 +11,8 @@ interface NotifFormData {
 }
 
 const EVENT_OPTIONS = [
-  'waiting', 'agent_in_progress', 'agent_completed', 'agent_failed',
-  'human_approved', 'human_rejected', 'cancelled', 'closed',
+  'agent_in_progress', 'agent_completed', 'agent_failed',
+  'human_approved', 'human_rejected',
 ]
 
 const defaultForm: NotifFormData = {

@@ -1487,7 +1487,7 @@ fi"#;
             let link_cmd = target_shell_command(
                 true,
                 container_name,
-                "mkdir -p /root && ln -sfn /agent /root/.codex",
+                "mkdir -p /root && if [ -e /root/.codex ] && [ ! -L /root/.codex ]; then mv /root/.codex /root/.codex_backup_$(date +%Y%m%d%H%M%S); fi && ln -sfn /agent /root/.codex",
             );
             match stream_cmd(
                 handle,
@@ -1940,6 +1940,7 @@ pub async fn delete_agent(
     Query(params): Query<DeleteAgentQuery>,
 ) -> Result<Json<serde_json::Value>> {
     let cleanup = params.cleanup.unwrap_or(false);
+    tracing::info!(agent_id = %id, cleanup = cleanup, "Deleting agent");
 
     if cleanup {
         match get_executor(&state, &id).await {
@@ -1947,6 +1948,7 @@ pub async fn delete_agent(
                 if agent_info.use_docker {
                     let container = agent_info.docker_container_name.unwrap_or_default();
                     if !container.is_empty() {
+                        tracing::info!(agent_id = %id, container = %container, "Stopping and removing docker container");
                         let _ = executor
                             .execute(&format!(
                                 "docker stop {} 2>/dev/null; docker rm {} 2>/dev/null",
@@ -1961,9 +1963,11 @@ pub async fn delete_agent(
                         agent_info.workdir
                     ))
                 })?;
+                tracing::info!(agent_id = %id, base_dir = %base, "Removing agent files");
                 let _ = executor.execute(&format!("rm -rf {}/", base)).await;
             }
-            Err(_) => {
+            Err(e) => {
+                tracing::error!(agent_id = %id, error = %e, "Server unreachable during agent cleanup");
                 return Err(AppError::Conflict(
                     "Server unreachable, cannot clean up remote data. You can delete the database record only by unchecking the cleanup option.".into(),
                 ));
@@ -1971,10 +1975,24 @@ pub async fn delete_agent(
         }
     }
 
+    // Delete related tasks first (FK has no ON DELETE CASCADE)
+    sqlx::query!("DELETE FROM tasks WHERE agent_id = $1", id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(agent_id = %id, error = %e, "Failed to delete agent tasks from database");
+            AppError::Database(e)
+        })?;
+
     sqlx::query!("DELETE FROM agents WHERE id = $1", id)
         .execute(&state.db)
-        .await?;
+        .await
+        .map_err(|e| {
+            tracing::error!(agent_id = %id, error = %e, "Failed to delete agent from database");
+            AppError::Database(e)
+        })?;
 
+    tracing::info!(agent_id = %id, "Agent deleted successfully");
     Ok(Json(serde_json::json!({"message": "Agent deleted"})))
 }
 

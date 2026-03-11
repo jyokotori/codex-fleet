@@ -89,6 +89,23 @@ pub async fn dispatch_task_for_agent(
     .execute(&state.db)
     .await?;
 
+    // Send agent_in_progress notification
+    if !notification_ids.is_empty() {
+        let payload = serde_json::json!({
+            "event": "agent_in_progress",
+            "task": {
+                "id": id,
+                "agent_id": agent_id,
+                "title": title,
+                "status": "agent_in_progress",
+                "user_id": user_id,
+                "username": username,
+                "created_at": now.to_string(),
+            }
+        });
+        shared_kernel::send_task_notification(&state.db, &notification_ids, "agent_in_progress", payload).await;
+    }
+
     // Create broadcast channel for live streaming
     let (tx, _) = broadcast::channel::<String>(256);
     {
