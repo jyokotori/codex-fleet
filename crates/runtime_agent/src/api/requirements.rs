@@ -27,8 +27,6 @@ pub struct Project {
 pub struct WorkItem {
     pub id: String,
     pub project_id: String,
-    pub parent_id: Option<String>,
-    pub r#type: String,
     pub title: String,
     pub description: String,
     pub status: String,
@@ -61,10 +59,9 @@ pub struct UpdateProjectRequest {
 
 #[derive(Deserialize)]
 pub struct CreateWorkItemRequest {
-    pub parent_id: Option<String>,
-    pub r#type: String,
     pub title: String,
     pub description: Option<String>,
+    pub status: Option<String>,
     pub priority: Option<String>,
     pub assigned_agent_id: Option<String>,
     pub assigned_user_id: Option<String>,
@@ -86,7 +83,6 @@ pub struct UpdateWorkItemRequest {
 #[derive(Deserialize)]
 pub struct ListWorkItemsQuery {
     pub status: Option<String>,
-    pub r#type: Option<String>,
 }
 
 // ── Project handlers ───────────────────────────────────────────────────────
@@ -241,16 +237,14 @@ pub async fn list_work_items(
         .ok_or_else(|| AppError::NotFound(format!("Project {} not found", project_id)))?;
 
     let rows = sqlx::query!(
-        r#"SELECT id, project_id, parent_id, type as "type", title, description, status, priority,
+        r#"SELECT id, project_id, title, description, status, priority,
            assigned_agent_id, assigned_user_id, assigned_username, execution_id, notification_ids, created_at, updated_at
            FROM work_items
            WHERE project_id = $1
              AND ($2::text IS NULL OR status = $2)
-             AND ($3::text IS NULL OR type = $3)
            ORDER BY created_at ASC"#,
         project_id,
         params.status,
-        params.r#type,
     )
     .fetch_all(&state.db)
     .await?;
@@ -260,8 +254,6 @@ pub async fn list_work_items(
             .map(|r| WorkItem {
                 id: r.id,
                 project_id: r.project_id,
-                parent_id: r.parent_id,
-                r#type: r.r#type,
                 title: r.title,
                 description: r.description,
                 status: r.status,
@@ -294,10 +286,13 @@ pub async fn create_work_item(
 
     let id = Uuid::new_v4().to_string();
     let description = req.description.unwrap_or_default();
+    let status = req.status.unwrap_or_else(|| "backlog".into());
+    if status == "waiting" && description.trim().is_empty() {
+        return Err(AppError::BadRequest("Description is required before moving to waiting".into()));
+    }
     let priority = req.priority.unwrap_or_else(|| "medium".into());
     let now = Utc::now();
 
-    let status = "waiting";
     let notification_ids_json = req
         .notification_ids
         .as_ref()
@@ -316,9 +311,9 @@ pub async fn create_work_item(
     };
 
     sqlx::query!(
-        r#"INSERT INTO work_items (id, project_id, parent_id, type, title, description, status, priority, assigned_agent_id, assigned_user_id, assigned_username, notification_ids, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
-        id, project_id, req.parent_id, req.r#type, req.title, description, status, priority, req.assigned_agent_id, req.assigned_user_id, assigned_username, notification_ids_json, now, now
+        r#"INSERT INTO work_items (id, project_id, title, description, status, priority, assigned_agent_id, assigned_user_id, assigned_username, notification_ids, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#,
+        id, project_id, req.title, description, status, priority, req.assigned_agent_id, req.assigned_user_id, assigned_username, notification_ids_json, now, now
     )
     .execute(&state.db)
     .await?;
@@ -328,11 +323,9 @@ pub async fn create_work_item(
         Json(WorkItem {
             id,
             project_id,
-            parent_id: req.parent_id,
-            r#type: req.r#type,
             title: req.title,
             description,
-            status: status.into(),
+            status,
             priority,
             assigned_agent_id: req.assigned_agent_id,
             assigned_user_id: req.assigned_user_id,
@@ -350,7 +343,7 @@ pub async fn get_work_item(
     Path(id): Path<String>,
 ) -> Result<Json<WorkItem>> {
     let row = sqlx::query!(
-        r#"SELECT id, project_id, parent_id, type as "type", title, description, status, priority,
+        r#"SELECT id, project_id, title, description, status, priority,
            assigned_agent_id, assigned_user_id, assigned_username, execution_id, notification_ids, created_at, updated_at
            FROM work_items WHERE id = $1"#,
         id
@@ -362,8 +355,6 @@ pub async fn get_work_item(
     Ok(Json(WorkItem {
         id: row.id,
         project_id: row.project_id,
-        parent_id: row.parent_id,
-        r#type: row.r#type,
         title: row.title,
         description: row.description,
         status: row.status,
@@ -384,7 +375,7 @@ pub async fn update_work_item(
     Json(req): Json<UpdateWorkItemRequest>,
 ) -> Result<Json<WorkItem>> {
     let row = sqlx::query!(
-        r#"SELECT id, project_id, parent_id, type as "type", title, description, status, priority,
+        r#"SELECT id, project_id, title, description, status, priority,
            assigned_agent_id, assigned_user_id, assigned_username, execution_id, notification_ids, created_at, updated_at
            FROM work_items WHERE id = $1"#,
         id
@@ -397,37 +388,10 @@ pub async fn update_work_item(
     let description = req.description.unwrap_or(row.description);
     let priority = req.priority.unwrap_or(row.priority);
     let old_status = row.status.clone();
-    let new_status = req.status.unwrap_or(row.status);
-
-    // Validate status transition
-    if new_status != old_status {
-        let valid = match (old_status.as_str(), new_status.as_str()) {
-            // Manual transitions allowed from API
-            ("waiting", "closed") => true,
-            ("waiting", "cancelled") => true,
-            ("agent_in_progress", "closed") => true,
-            ("agent_in_progress", "cancelled") => true,
-            ("agent_completed", "human_approved") => true,
-            ("agent_completed", "human_rejected") => true,
-            ("agent_failed", "waiting") => true,
-            ("agent_failed", "closed") => true,
-            ("human_rejected", "waiting") => true,
-            ("human_approved", "closed") => true,
-            // Scheduler-only transitions: reject from API
-            ("waiting", "agent_in_progress")
-            | ("agent_in_progress", "agent_completed")
-            | ("agent_in_progress", "agent_failed") => false,
-            _ => false,
-        };
-        if !valid {
-            return Err(AppError::BadRequest(format!(
-                "Invalid status transition: {} -> {}",
-                old_status, new_status
-            )));
-        }
+    let status = req.status.unwrap_or(row.status);
+    if status == "waiting" && description.trim().is_empty() {
+        return Err(AppError::BadRequest("Description is required before moving to waiting".into()));
     }
-
-    let status = new_status;
 
     // For optional FK fields: Some(value) = set, Some("") = clear, None = keep existing
     let old_agent_id = row.assigned_agent_id.clone();
@@ -465,8 +429,8 @@ pub async fn update_work_item(
         String::new()
     };
 
-    // When re-queuing from human_rejected → waiting, clear execution_id
-    let execution_id = if old_status == "human_rejected" && status == "waiting" {
+    // Clear execution_id when moving back to backlog or waiting (re-queue)
+    let execution_id = if matches!(status.as_str(), "backlog" | "waiting") && old_status != status {
         None
     } else {
         match req.execution_id {
@@ -566,8 +530,6 @@ pub async fn update_work_item(
     Ok(Json(WorkItem {
         id,
         project_id: row.project_id,
-        parent_id: row.parent_id,
-        r#type: row.r#type,
         title,
         description,
         status,
@@ -587,7 +549,7 @@ pub async fn get_work_item_by_execution(
     Path(execution_id): Path<String>,
 ) -> Result<Json<WorkItem>> {
     let row = sqlx::query!(
-        r#"SELECT id, project_id, parent_id, type as "type", title, description, status, priority,
+        r#"SELECT id, project_id, title, description, status, priority,
            assigned_agent_id, assigned_user_id, assigned_username, execution_id, notification_ids, created_at, updated_at
            FROM work_items WHERE execution_id = $1"#,
         execution_id
@@ -599,8 +561,6 @@ pub async fn get_work_item_by_execution(
     Ok(Json(WorkItem {
         id: row.id,
         project_id: row.project_id,
-        parent_id: row.parent_id,
-        r#type: row.r#type,
         title: row.title,
         description: row.description,
         status: row.status,

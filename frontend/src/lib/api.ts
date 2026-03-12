@@ -417,8 +417,6 @@ export interface Project {
 export interface WorkItem {
   id: string
   project_id: string
-  parent_id?: string
-  type: string
   title: string
   description: string
   status: string
@@ -451,15 +449,14 @@ export const projectsApi = {
     request<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<{ message: string }>(`/api/projects/${id}`, { method: 'DELETE' }),
-  listWorkItems: (projectId: string, params?: { status?: string; type?: string }) => {
+  listWorkItems: (projectId: string, params?: { status?: string }) => {
     const qs = new URLSearchParams()
     if (params?.status) qs.set('status', params.status)
-    if (params?.type) qs.set('type', params.type)
     const query = qs.toString() ? `?${qs.toString()}` : ''
     return request<WorkItem[]>(`/api/projects/${projectId}/work-items${query}`)
   },
   createWorkItem: (projectId: string, data: {
-    parent_id?: string; type: string; title: string; description?: string; priority?: string; assigned_agent_id?: string; assigned_user_id?: string; notification_ids?: string[]
+    title: string; description?: string; status?: string; priority?: string; assigned_agent_id?: string; assigned_user_id?: string; notification_ids?: string[]
   }) =>
     request<WorkItem>(`/api/projects/${projectId}/work-items`, { method: 'POST', body: JSON.stringify(data) }),
 }
