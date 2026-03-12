@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil } from 'lucide-react'
+import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil, Search } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
   agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi, usersApi,
@@ -61,16 +61,19 @@ const CLI_TYPES = [
   { value: 'opencode', label: 'OpenCode', wip: true },
 ]
 
-function UserSelect({ value, onChange, users, t }: {
+function UserSelect({ value, onChange, users, t, placeholder, className }: {
   value: string
   onChange: (val: string) => void
   users: SimpleUser[]
   t: ReturnType<typeof useI18n>['t']
+  placeholder?: string
+  className?: string
 }) {
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const selectedUser = users.find(u => u.id === value)
+  const emptyLabel = placeholder ?? t.agents.noUser
   const filtered = users.filter(u =>
     !search || u.display_name.toLowerCase().includes(search.toLowerCase()) || u.username.toLowerCase().includes(search.toLowerCase())
   )
@@ -88,18 +91,18 @@ function UserSelect({ value, onChange, users, t }: {
   }, [open])
 
   return (
-    <div className="relative" ref={containerRef}>
+    <div className={`relative ${className ?? ''}`} ref={containerRef}>
       <div
         className="input cursor-pointer flex items-center justify-between"
         onClick={() => setOpen(!open)}
       >
         <span className={selectedUser ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}>
-          {selectedUser ? `${selectedUser.display_name} (${selectedUser.username})` : t.agents.noUser}
+          {selectedUser ? `${selectedUser.display_name} (${selectedUser.username})` : emptyLabel}
         </span>
-        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+        <svg className="w-4 h-4 text-gray-400 flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
       </div>
       {open && (
-        <div className="absolute z-20 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto">
+        <div className="absolute z-20 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-60 overflow-auto min-w-[200px]">
           <div className="p-2 sticky top-0 bg-white dark:bg-gray-800">
             <input
               className="input w-full text-sm"
@@ -114,7 +117,7 @@ function UserSelect({ value, onChange, users, t }: {
             className="px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400"
             onClick={() => { onChange(''); setOpen(false); setSearch('') }}
           >
-            {t.agents.noUser}
+            {emptyLabel}
           </div>
           {filtered.map(u => (
             <div
@@ -158,6 +161,8 @@ export default function Agents() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copySourceName, setCopySourceName] = useState<string | null>(null)
   const [runtimeConfirm, setRuntimeConfirm] = useState<{ agent: Agent; action: Exclude<AgentRuntimeAction, 'start'> } | null>(null)
+  const [searchName, setSearchName] = useState('')
+  const [filterUserId, setFilterUserId] = useState('')
 
   const { data: agents = [], isLoading } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
   const { data: servers = [] } = useQuery({
@@ -175,6 +180,17 @@ export default function Agents() {
   })
   const { data: dockerConfigs = [] } = useQuery({ queryKey: ['docker-configs'], queryFn: dockerConfigsApi.list })
   const { data: notifConfigs = [] } = useQuery({ queryKey: ['notifications'], queryFn: notificationsApi.list })
+
+  const filteredAgents = agents.filter(agent => {
+    if (searchName && !agent.name.toLowerCase().includes(searchName.toLowerCase())) return false
+    if (filterUserId && agent.user_id !== filterUserId) return false
+    return true
+  })
+
+  function isNameDuplicate(name: string, excludeId?: string): boolean {
+    const trimmed = name.trim().toLowerCase()
+    return agents.some(a => a.name.trim().toLowerCase() === trimmed && a.id !== excludeId)
+  }
 
   const createMutation = useMutation({
     mutationFn: (data: AgentFormData) => agentsApi.create({
@@ -253,8 +269,15 @@ export default function Agents() {
     },
   })
 
+  const [nameError, setNameError] = useState('')
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (isNameDuplicate(form.name)) {
+      setNameError(t.agents.nameDuplicate)
+      return
+    }
+    setNameError('')
     createMutation.mutate(form)
   }
 
@@ -263,6 +286,7 @@ export default function Agents() {
     setShowModal(false)
     setForm(defaultForm)
     setCopySourceName(null)
+    setNameError('')
   }
 
   function handleCreateOpen() {
@@ -297,6 +321,7 @@ export default function Agents() {
 
   function handleEditOpen(agent: Agent) {
     updateMutation.reset()
+    setEditNameError('')
     setEditAgent(agent)
     setEditForm({
       name: agent.name,
@@ -306,9 +331,16 @@ export default function Agents() {
     })
   }
 
+  const [editNameError, setEditNameError] = useState('')
+
   function handleEditSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!editAgent) return
+    if (isNameDuplicate(editForm.name, editAgent.id)) {
+      setEditNameError(t.agents.nameDuplicate)
+      return
+    }
+    setEditNameError('')
     updateMutation.mutate({ id: editAgent.id, data: editForm })
   }
 
@@ -324,16 +356,37 @@ export default function Agents() {
 
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t.agents.title}</h1>
-          <p className="text-gray-500 mt-1">{t.agents.subtitle}</p>
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t.agents.title}</h1>
+            <p className="text-gray-500 mt-1">{t.agents.subtitle}</p>
+          </div>
         </div>
-        {isAdmin && (
-          <button onClick={handleCreateOpen} className="btn-primary flex items-center gap-2">
-            <Plus size={16} />{t.agents.newAgent}
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              className="input w-full pl-9 pr-3"
+              placeholder={t.agents.searchByName}
+              value={searchName}
+              onChange={e => setSearchName(e.target.value)}
+            />
+          </div>
+          <UserSelect
+            value={filterUserId}
+            onChange={setFilterUserId}
+            users={users}
+            t={t}
+            placeholder={t.agents.filterByUser}
+            className="w-auto min-w-[180px]"
+          />
+          {isAdmin && (
+            <button onClick={handleCreateOpen} className="btn-primary flex items-center gap-2 ml-auto">
+              <Plus size={16} />{t.agents.newAgent}
+            </button>
+          )}
+        </div>
       </div>
 
       {isLoading ? (
@@ -344,9 +397,14 @@ export default function Agents() {
           <p className="text-gray-500 dark:text-gray-400">{t.agents.noAgents}</p>
           <p className="text-gray-400 dark:text-gray-600 text-sm mt-1">{t.agents.noAgentsHint}</p>
         </div>
+      ) : filteredAgents.length === 0 ? (
+        <div className="text-center py-12 card">
+          <Search size={32} className="mx-auto text-gray-400 dark:text-gray-600 mb-3" />
+          <p className="text-gray-500 dark:text-gray-400">{t.common.noData}</p>
+        </div>
       ) : (
         <div className="grid gap-4">
-          {agents.map(agent => (
+          {filteredAgents.map(agent => (
             <AgentRow key={agent.id} agent={agent} servers={visibleServers} t={t}
               isAdmin={isAdmin}
               onRuntimeAction={() => handleRuntimeAction(agent)}
@@ -381,7 +439,8 @@ export default function Agents() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.agentName}</label>
-                  <input className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="my-codex-agent" required />
+                  <input className="input" value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setNameError('') }} placeholder="my-codex-agent" required />
+                  {nameError && <p className="text-red-500 text-xs mt-1">{nameError}</p>}
                 </div>
                 <div>
                   <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.server}</label>
@@ -569,7 +628,8 @@ export default function Agents() {
               {/* Editable name */}
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.agentName}</label>
-                <input className="input" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+                <input className="input" value={editForm.name} onChange={e => { setEditForm(f => ({ ...f, name: e.target.value })); setEditNameError('') }} />
+                {editNameError && <p className="text-red-500 text-xs mt-1">{editNameError}</p>}
               </div>
 
               {/* Assigned User */}

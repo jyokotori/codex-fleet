@@ -318,6 +318,7 @@ export interface TerminalCommandResponse {
 
 export const agentsApi = {
   list: () => request<Agent[]>('/api/agents'),
+  get: (id: string) => request<Agent>(`/api/agents/${id}`),
   create: (data: {
     name: string
     server_id: string
@@ -398,6 +399,8 @@ export const tasksApi = {
       body: JSON.stringify({ title, description, notification_ids }),
     }),
   get: (taskId: string) => request<Task>(`/api/tasks/${taskId}`),
+  abort: (taskId: string) =>
+    request<{ message: string; task_id: string }>(`/api/tasks/${taskId}/abort`, { method: 'POST' }),
 }
 
 // Requirements

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, Tag, X } from 'lucide-react'
+import { ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, Tag, X, StopCircle } from 'lucide-react'
 import { agentsApi, serversApi, tasksApi, workItemsApi, notificationsApi, type TaskSummary } from '../lib/api'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useI18n } from '../hooks/useI18n'
@@ -64,8 +64,8 @@ export default function AgentDetail() {
   }
 
   const { data: agent, isLoading, refetch: refetchAgent } = useQuery({
-    queryKey: ['agents', id],
-    queryFn: () => agentsApi.list().then(agents => agents.find(a => a.id === id)),
+    queryKey: ['agent', id],
+    queryFn: () => agentsApi.get(id!),
     enabled: !!id,
     refetchInterval: 5000,
   })
@@ -326,6 +326,14 @@ export default function AgentDetail() {
                         if (task.work_item_id) reviewMutation.mutate({ workItemId: task.work_item_id, status: 'human_rejected' })
                       }}
                       onOpenResumeTerminal={(threadId, cmd, title) => handleResumeRequest(threadId, cmd, title)}
+                      onAbort={async () => {
+                        try {
+                          await tasksApi.abort(task.id)
+                          qc.invalidateQueries({ queryKey: ['tasks', id] })
+                        } catch (e) {
+                          console.error('Failed to abort task', e)
+                        }
+                      }}
                     />
                     {expandedTaskId === task.id && (
                       <div className="mt-2 ml-4">
@@ -499,7 +507,7 @@ export default function AgentDetail() {
   )
 }
 
-function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, onOpenResumeTerminal }: {
+function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, onOpenResumeTerminal, onAbort }: {
   task: TaskSummary
   agentId: string
   t: ReturnType<typeof useI18n>['t']
@@ -508,8 +516,10 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
   onApprove?: () => void
   onReject?: () => void
   onOpenResumeTerminal?: (threadId: string, command: string, title: string) => void
+  onAbort?: () => void
 }) {
   const [resumeCopied, setResumeCopied] = useState(false)
+  const [aborting, setAborting] = useState(false)
   const statusMap: Record<string, string> = {
     waiting: 'badge-gray', agent_in_progress: 'badge-yellow', agent_completed: 'badge-green',
     agent_failed: 'badge-red', human_approved: 'badge-green', human_rejected: 'badge-red',
@@ -565,6 +575,23 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {task.status === 'agent_in_progress' && onAbort && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!aborting) {
+                  setAborting(true)
+                  onAbort()
+                }
+              }}
+              disabled={aborting}
+              className="px-2 py-1 text-xs font-medium rounded border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20 flex items-center gap-1"
+              title={t.agents.abortTask ?? 'Abort'}
+            >
+              <StopCircle size={12} />
+              {aborting ? (t.common.loading ?? '...') : (t.agents.abortTask ?? 'Abort')}
+            </button>
+          )}
           {canResume && (
             <>
               <button

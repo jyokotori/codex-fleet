@@ -34,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         provision_channels: Arc::new(Mutex::new(HashMap::new())),
         task_channels: Arc::new(Mutex::new(HashMap::new())),
+        task_abort_signals: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let cors = CorsLayer::new()

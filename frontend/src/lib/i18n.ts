@@ -206,6 +206,11 @@ export const translations = {
       leavePageDesc: 'Resume terminals are still open. Leaving will terminate all resume processes.',
       leaveAndKill: 'Leave & terminate',
       fromWorkItem: 'Work Item',
+      abortTask: 'Abort',
+      searchByName: 'Search by name...',
+      filterByUser: 'All users',
+      search: 'Search',
+      nameDuplicate: 'Agent name already exists',
     },
 
     // Provision
@@ -633,6 +638,11 @@ export const translations = {
       leavePageDesc: '恢复终端仍在运行中，离开将终止所有 resume 进程。',
       leaveAndKill: '离开并终止',
       fromWorkItem: '工作项',
+      abortTask: '中止',
+      searchByName: '搜索 Agent 名称...',
+      filterByUser: '全部用户',
+      search: '搜索',
+      nameDuplicate: 'Agent 名称已存在',
     },
 
     provision: {

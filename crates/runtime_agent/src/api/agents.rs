@@ -752,12 +752,13 @@ pub async fn list_agents(
 ) -> Result<Json<Vec<Agent>>> {
     let is_admin = auth.has_role("admin");
 
+    // Exclude heavy fields (provision_log, provision_steps) from list query
     let rows = sqlx::query(
         r#"SELECT a.id, a.name, a.server_id, a.user_id, u.display_name AS user_display_name,
            a.git_repo, a.git_branch, a.git_auth_type, a.git_username,
            a.cli_type, a.codex_config_id, a.agents_md_id, a.docker_config_id,
            a.docker_image, a.docker_container_name, a.container_id,
-           a.workdir, a.use_docker, a.status, a.provision_log, a.provision_steps, a.created_at
+           a.workdir, a.use_docker, a.status, a.created_at
            FROM agents a
            LEFT JOIN users u ON a.user_id = u.id
            ORDER BY a.created_at DESC"#,
@@ -808,8 +809,8 @@ pub async fn list_agents(
                 workdir: r.get("workdir"),
                 use_docker: r.get("use_docker"),
                 status: r.get("status"),
-                provision_log: r.get("provision_log"),
-                provision_steps: r.get("provision_steps"),
+                provision_log: String::new(),
+                provision_steps: serde_json::Value::default(),
                 is_busy,
                 created_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
             })
@@ -819,6 +820,83 @@ pub async fn list_agents(
     sync_agent_statuses(&state, &mut agents).await;
 
     Ok(Json(agents))
+}
+
+/// Get a single agent by ID (full data including provision_log/provision_steps + status sync).
+pub async fn get_agent(
+    State(state): State<AppContext>,
+    Extension(auth): Extension<shared_kernel::AuthContext>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Agent>> {
+    let is_admin = auth.has_role("admin");
+
+    let r = sqlx::query(
+        r#"SELECT a.id, a.name, a.server_id, a.user_id, u.display_name AS user_display_name,
+           a.git_repo, a.git_branch, a.git_auth_type, a.git_username,
+           a.cli_type, a.codex_config_id, a.agents_md_id, a.docker_config_id,
+           a.docker_image, a.docker_container_name, a.container_id,
+           a.workdir, a.use_docker, a.status, a.provision_log, a.provision_steps, a.created_at
+           FROM agents a
+           LEFT JOIN users u ON a.user_id = u.id
+           WHERE a.id = $1"#,
+    )
+    .bind(&agent_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", agent_id)))?;
+
+    let user_id: Option<String> = r.get("user_id");
+    if !is_admin {
+        match &user_id {
+            Some(uid) if uid == &auth.user_id => {}
+            _ => return Err(AppError::Forbidden("Access denied".into())),
+        }
+    }
+
+    let id: String = r.get("id");
+    let is_busy = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM work_items
+            WHERE assigned_agent_id = $1 AND status IN ('agent_in_progress','agent_completed')
+        )"#,
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+
+    let mut agent = Agent {
+        id,
+        name: r.get("name"),
+        server_id: r.get("server_id"),
+        user_id,
+        user_display_name: r.get("user_display_name"),
+        git_repo: r.get("git_repo"),
+        git_branch: r.get("git_branch"),
+        git_auth_type: r.get("git_auth_type"),
+        git_username: r.get("git_username"),
+        cli_type: r.get("cli_type"),
+        codex_config_id: r.get("codex_config_id"),
+        agents_md_id: r.get("agents_md_id"),
+        docker_config_id: r.get("docker_config_id"),
+        docker_image: r.get("docker_image"),
+        docker_container_name: r.get("docker_container_name"),
+        container_id: r.get("container_id"),
+        workdir: r.get("workdir"),
+        use_docker: r.get("use_docker"),
+        status: r.get("status"),
+        provision_log: r.get("provision_log"),
+        provision_steps: r.get("provision_steps"),
+        is_busy,
+        created_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
+    };
+
+    // Sync status for this single agent
+    let mut agents = [agent];
+    sync_agent_statuses(&state, &mut agents).await;
+    agent = agents.into_iter().next().unwrap();
+
+    Ok(Json(agent))
 }
 
 pub async fn create_agent(
@@ -844,6 +922,18 @@ pub async fn create_agent(
         return Err(AppError::BadRequest(
             "Only codex is supported for now".into(),
         ));
+    }
+
+    // Check name uniqueness
+    let name_exists = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM agents WHERE LOWER(name) = LOWER($1)",
+        req.name
+    )
+    .fetch_one(&state.db)
+    .await?
+    .unwrap_or(0);
+    if name_exists > 0 {
+        return Err(AppError::BadRequest("Agent name already exists".into()));
     }
 
     // Always require a real server
@@ -1210,6 +1300,7 @@ async fn provision_agent(
         .await;
         let mut docker_run = format!(
             "docker run -d --name {container} --workdir /workspace \
+             -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e TERM=xterm-256color \
              -v {base}/agent:/agent \
              -v {base}/workspace:/workspace",
             container = container_name,
@@ -1737,7 +1828,22 @@ pub async fn update_agent(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
 
-    let name = req.name.unwrap_or(existing.name);
+    let name = req.name.unwrap_or(existing.name.clone());
+
+    // Check name uniqueness (exclude self)
+    if name != existing.name {
+        let name_exists = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM agents WHERE LOWER(name) = LOWER($1) AND id != $2",
+            name,
+            id
+        )
+        .fetch_one(&state.db)
+        .await?
+        .unwrap_or(0);
+        if name_exists > 0 {
+            return Err(AppError::BadRequest("Agent name already exists".into()));
+        }
+    }
 
     // Detect which configs actually changed (Some means the field was sent)
     let codex_config_changed = req.codex_config_id.is_some()

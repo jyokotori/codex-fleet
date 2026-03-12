@@ -92,7 +92,7 @@ async fn handle_terminal_socket(
     let command = if agent_info.use_docker {
         let container = agent_info.docker_container_name.as_deref().unwrap_or("");
         format!(
-            "docker exec -it {} bash -c 'cd /workspace && exec bash'",
+            "docker exec -it -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e TERM=xterm-256color {} bash -c 'cd /workspace && exec bash'",
             container
         )
     } else {

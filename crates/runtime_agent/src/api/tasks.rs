@@ -4,7 +4,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 use crate::api::agents::{
@@ -113,6 +113,13 @@ pub async fn dispatch_task_for_agent(
         channels.insert(id.clone(), tx.clone());
     }
 
+    // Create abort signal for this task
+    let (abort_tx, abort_rx) = watch::channel(false);
+    {
+        let mut signals = state.task_abort_signals.lock().await;
+        signals.insert(id.clone(), abort_tx);
+    }
+
     // Spawn background task for streaming exec
     let task_id = id.clone();
     let db = state.db.clone();
@@ -126,6 +133,7 @@ pub async fn dispatch_task_for_agent(
     let notif_agent_id = agent_id.to_string();
     let notif_user_id = user_id.clone();
     let notif_username = username.clone();
+    let abort_signals = state.task_abort_signals.clone();
     tokio::spawn(async move {
         let result = run_task_exec(
             &creds.ip,
@@ -138,6 +146,7 @@ pub async fn dispatch_task_for_agent(
             &task_id,
             &db,
             &tx,
+            abort_rx,
         )
         .await;
 
@@ -264,9 +273,12 @@ pub async fn dispatch_task_for_agent(
             shared_kernel::send_task_notification(&db, &notif_ids, status, payload).await;
         }
 
-        // Clean up broadcast channel
+        // Clean up broadcast channel and abort signal
         let mut channels = task_channels.lock().await;
         channels.remove(&task_id);
+        drop(channels);
+        let mut signals = abort_signals.lock().await;
+        signals.remove(&task_id);
     });
 
     Ok(Task {
@@ -474,6 +486,7 @@ async fn run_task_exec(
     task_id: &str,
     db: &sqlx::PgPool,
     tx: &broadcast::Sender<String>,
+    mut abort_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<Option<u32>> {
     let (mut channel, _handle) = open_exec_channel(
         ip,
@@ -499,6 +512,18 @@ async fn run_task_exec(
                 // Timer fired — flush buffered data to DB
                 flush_log_buf(db, task_id, &mut db_buf).await;
                 last_flush = tokio::time::Instant::now();
+                continue;
+            }
+            _ = abort_rx.changed() => {
+                if *abort_rx.borrow() {
+                    // Abort signal received — close the SSH channel
+                    let _ = channel.close().await;
+                    let abort_msg = "\n[aborted] Task was aborted by user\n";
+                    let _ = tx.send(abort_msg.to_string());
+                    db_buf.push_str(abort_msg);
+                    flush_log_buf(db, task_id, &mut db_buf).await;
+                    return Ok(Some(130)); // Use 130 (SIGINT convention)
+                }
                 continue;
             }
         };
@@ -628,6 +653,60 @@ pub async fn list_tasks(
         page,
         per_page,
     }))
+}
+
+pub async fn abort_task(
+    State(state): State<AppContext>,
+    Path(task_id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    // Verify task exists and is in progress
+    let row = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT status, agent_id, work_item_id FROM tasks WHERE id = $1",
+    )
+    .bind(&task_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Task {} not found", task_id)))?;
+
+    let (status, _agent_id, work_item_id) = row;
+
+    if status != "agent_in_progress" {
+        return Err(AppError::Conflict(format!(
+            "Task is not running (status: {})",
+            status
+        )));
+    }
+
+    // Send abort signal
+    let aborted = {
+        let signals = state.task_abort_signals.lock().await;
+        if let Some(tx) = signals.get(&task_id) {
+            tx.send(true).is_ok()
+        } else {
+            false
+        }
+    };
+
+    if !aborted {
+        // No active abort signal — task may have finished already; force-update DB
+        sqlx::query("UPDATE tasks SET status = 'agent_failed', completed_at = NOW() WHERE id = $1 AND status = 'agent_in_progress'")
+            .bind(&task_id)
+            .execute(&state.db)
+            .await?;
+
+        // Also sync work_item
+        if let Some(ref wi_id) = work_item_id {
+            let _ = sqlx::query("UPDATE work_items SET status = 'agent_failed', updated_at = NOW() WHERE id = $1 AND status = 'agent_in_progress'")
+                .bind(wi_id)
+                .execute(&state.db)
+                .await;
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "message": "Task abort signal sent",
+        "task_id": task_id,
+    })))
 }
 
 pub async fn get_task(

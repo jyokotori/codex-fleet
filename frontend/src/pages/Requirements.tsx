@@ -111,7 +111,7 @@ export default function Requirements() {
           {projects.map((p) => (
             <div
               key={p.id}
-              className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 hover:border-sky-300 dark:hover:border-sky-700 transition-colors cursor-pointer group"
+              className="relative bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-5 hover:border-sky-300 dark:hover:border-sky-700 transition-colors cursor-pointer group"
               onClick={() => navigate(`/requirements/${p.id}`)}
             >
               <div className="flex items-start justify-between gap-2 mb-3">
@@ -133,7 +133,7 @@ export default function Requirements() {
               )}
 
               <div
-                className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute bottom-3 right-3 flex items-center gap-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
