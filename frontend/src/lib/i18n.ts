@@ -400,6 +400,8 @@ export const translations = {
       locked: 'Locked',
       lockedYes: 'Yes',
       lockedNo: 'No',
+      searchPlaceholder: 'Search username or display name...',
+      totalUsers: 'users',
     },
 
     // Status badges
@@ -821,6 +823,8 @@ export const translations = {
       locked: '锁定',
       lockedYes: '是',
       lockedNo: '否',
+      searchPlaceholder: '搜索用户名或显示名称...',
+      totalUsers: '个用户',
     },
 
     status: {

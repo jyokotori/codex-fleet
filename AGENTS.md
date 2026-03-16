@@ -16,6 +16,8 @@ The backend architecture is now domain-oriented and split into multiple Rust cra
 
 ## Common Commands
 
+> **Important**: Real credentials (DATABASE_URL, passwords, keys, etc.) are in `.env`, not `.env.example`. Always read `.env` for actual connection strings and secrets when testing or running locally.
+
 ### Docker (recommended)
 
 ```bash
