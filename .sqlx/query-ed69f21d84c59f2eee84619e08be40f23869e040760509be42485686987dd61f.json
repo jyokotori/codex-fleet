@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, ip, port, username, auth_type, os_type, status, created_at FROM servers WHERE id = $1",
+  "query": "SELECT id, name, ip, port, username, auth_type, password_encrypted, os_type, status, created_at FROM servers WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -35,16 +35,21 @@
       },
       {
         "ordinal": 6,
-        "name": "os_type",
+        "name": "password_encrypted",
         "type_info": "Text"
       },
       {
         "ordinal": 7,
-        "name": "status",
+        "name": "os_type",
         "type_info": "Text"
       },
       {
         "ordinal": 8,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -61,10 +66,11 @@
       false,
       false,
       false,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "9ba98ea30af057407d1ddfb7c7ce4cf33b5a5c3ed981fe8c65838636974c7c2b"
+  "hash": "ed69f21d84c59f2eee84619e08be40f23869e040760509be42485686987dd61f"
 }

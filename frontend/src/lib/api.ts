@@ -217,9 +217,9 @@ export interface Server {
 
 export const serversApi = {
   list: () => request<Server[]>('/api/servers'),
-  create: (data: { name: string; ip: string; port: number; username: string; password?: string; os_type?: string }) =>
+  create: (data: { name: string; ip: string; port: number; username: string; password?: string; save_password?: boolean; os_type?: string }) =>
     request<Server>('/api/servers', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: string, data: { name?: string; ip?: string; port?: number; username?: string; os_type?: string }) =>
+  update: (id: string, data: { name?: string; ip?: string; port?: number; username?: string; os_type?: string; password?: string; save_password?: boolean }) =>
     request<Server>(`/api/servers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<{ message: string }>(`/api/servers/${id}`, { method: 'DELETE' }),

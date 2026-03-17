@@ -6,11 +6,11 @@ import { useI18n } from '../hooks/useI18n'
 import { translateSshError } from '../lib/i18n'
 
 interface ServerFormData {
-  name: string; ip: string; port: string; username: string; password: string; os_type: string
+  name: string; ip: string; port: string; username: string; password: string; save_password: boolean; os_type: string
 }
 
 const defaultForm: ServerFormData = {
-  name: '', ip: '', port: '22', username: '', password: '', os_type: 'linux',
+  name: '', ip: '', port: '22', username: '', password: '', save_password: true, os_type: 'linux',
 }
 
 export default function Servers() {
@@ -30,6 +30,7 @@ export default function Servers() {
       port: parseInt(data.port),
       username: data.username,
       password: data.password || undefined,
+      save_password: data.save_password,
       os_type: data.os_type,
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['servers'] }); closeModal() },
@@ -37,7 +38,11 @@ export default function Servers() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: ServerFormData }) =>
-      serversApi.update(id, { name: data.name, ip: data.ip, port: parseInt(data.port), username: data.username, os_type: data.os_type }),
+      serversApi.update(id, {
+        name: data.name, ip: data.ip, port: parseInt(data.port), username: data.username, os_type: data.os_type,
+        password: data.password || undefined,
+        save_password: data.password ? data.save_password : undefined,
+      }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['servers'] }); closeModal() },
   })
 
@@ -58,7 +63,7 @@ export default function Servers() {
   function openCreate() { setEditServer(null); setForm(defaultForm); setShowModal(true) }
   function openEdit(server: ServerType) {
     setEditServer(server)
-    setForm({ name: server.name, ip: server.ip, port: String(server.port), username: server.username, password: '', os_type: server.os_type ?? 'linux' })
+    setForm({ name: server.name, ip: server.ip, port: String(server.port), username: server.username, password: '', save_password: true, os_type: server.os_type ?? 'linux' })
     setShowModal(true)
   }
   function closeModal() { setShowModal(false); setEditServer(null); setForm(defaultForm) }
@@ -178,31 +183,38 @@ export default function Servers() {
                 </div>
               </div>
 
-              {!editServer && (
-                <div>
-                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">
-                    {t.servers.password}
-                    <span className="ml-1.5 text-gray-400 dark:text-gray-600 font-normal">({t.common.optionalIfPasswordless})</span>
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">
+                  {t.servers.password}
+                  <span className="ml-1.5 text-gray-400 dark:text-gray-600 font-normal">({editServer ? t.servers.passwordEditHint : t.common.optionalIfPasswordless})</span>
+                </label>
+                <input
+                  type="password"
+                  className="input"
+                  value={form.password}
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder="••••••"
+                />
+                {form.password && (
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.save_password}
+                      onChange={e => setForm(f => ({ ...f, save_password: e.target.checked }))}
+                      className="accent-sky-500"
+                    />
+                    <span className="text-sm text-gray-600 dark:text-gray-400">{t.servers.savePassword}</span>
                   </label>
-                  <input
-                    type="password"
-                    className="input"
-                    value={form.password}
-                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                    placeholder="••••••"
-                  />
-                </div>
-              )}
+                )}
+              </div>
 
               {/* Info tip */}
-              {!editServer && (
-                <div className="flex gap-2.5 p-3 rounded-lg bg-sky-50 border border-sky-200 dark:bg-sky-900/20 dark:border-sky-800">
-                  <Info size={15} className="text-sky-500 shrink-0 mt-0.5" />
-                  <p className="text-xs text-sky-700 dark:text-sky-300 leading-relaxed">
-                    {t.servers.sshTip}
-                  </p>
-                </div>
-              )}
+              <div className="flex gap-2.5 p-3 rounded-lg bg-sky-50 border border-sky-200 dark:bg-sky-900/20 dark:border-sky-800">
+                <Info size={15} className="text-sky-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-sky-700 dark:text-sky-300 leading-relaxed">
+                  {t.servers.sshTip}
+                </p>
+              </div>
 
               {(createMutation.error || updateMutation.error) && (
                 <div className="text-red-500 dark:text-red-400 text-sm">

@@ -7,6 +7,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::infrastructure::crypto::Crypto;
 use crate::ssh::client::{ensure_ssh_key, read_public_key, SshClientPool};
 use shared_kernel::{AppContext, AppError, Result};
 
@@ -30,8 +31,10 @@ pub struct CreateServerRequest {
     pub port: Option<i64>,
     pub username: String,
     /// Optional: only needed if passwordless SSH is not yet configured.
-    /// Used once to install the backend's public key; never stored.
     pub password: Option<String>,
+    /// If true, encrypt and persist the password in the database.
+    /// Defaults to true.
+    pub save_password: Option<bool>,
     pub os_type: Option<String>,
 }
 
@@ -42,6 +45,10 @@ pub struct UpdateServerRequest {
     pub port: Option<i64>,
     pub username: Option<String>,
     pub os_type: Option<String>,
+    /// Optional: provide a password to re-save (encrypted) into the database.
+    pub password: Option<String>,
+    /// If true, encrypt and persist the password. Defaults to true when password is provided.
+    pub save_password: Option<bool>,
 }
 
 fn require_admin(auth: &shared_kernel::AuthContext) -> Result<()> {
@@ -157,21 +164,47 @@ pub async fn create_server(
             })?;
     }
 
-    // Save server (always passwordless, password never stored)
+    // Save server — optionally persist the encrypted password
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_string();
     let port_i64 = port as i64;
     let os_type = req.os_type.clone().unwrap_or_else(|| "linux".into());
+    let save_password = req.save_password.unwrap_or(true);
+
+    let password_encrypted: Option<String> = if save_password {
+        if let Some(ref pw) = req.password {
+            if !pw.is_empty() {
+                let crypto = Crypto::new(&state.config.master_key);
+                Some(crypto.encrypt(pw).map_err(|e| {
+                    AppError::Internal(format!("Failed to encrypt password: {}", e))
+                })?)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let auth_type = if password_encrypted.is_some() {
+        "password"
+    } else {
+        "passwordless"
+    };
 
     sqlx::query(
-        "INSERT INTO servers (id, name, ip, port, username, auth_type, os_type, status) \
-         VALUES ($1, $2, $3, $4, $5, 'passwordless', $6, 'online')",
+        "INSERT INTO servers (id, name, ip, port, username, auth_type, password_encrypted, os_type, status) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'online')",
     )
     .bind(&id)
     .bind(&req.name)
     .bind(&req.ip)
     .bind(port_i64)
     .bind(&req.username)
+    .bind(auth_type)
+    .bind(&password_encrypted)
     .bind(&os_type)
     .execute(&state.db)
     .await?;
@@ -182,7 +215,7 @@ pub async fn create_server(
         ip: req.ip,
         port: port_i64,
         username: req.username,
-        auth_type: "passwordless".into(),
+        auth_type: auth_type.into(),
         os_type,
         status: "online".into(),
         created_at: now,
@@ -197,7 +230,7 @@ pub async fn update_server(
 ) -> Result<Json<Server>> {
     require_admin(&auth)?;
     let existing = sqlx::query!(
-        "SELECT id, name, ip, port, username, auth_type, os_type, status, created_at FROM servers WHERE id = $1",
+        "SELECT id, name, ip, port, username, auth_type, password_encrypted, os_type, status, created_at FROM servers WHERE id = $1",
         id
     )
     .fetch_optional(&state.db)
@@ -210,15 +243,91 @@ pub async fn update_server(
     let username = req.username.unwrap_or(existing.username);
     let os_type = req.os_type.unwrap_or(existing.os_type);
 
-    sqlx::query("UPDATE servers SET name=$1, ip=$2, port=$3, username=$4, os_type=$5 WHERE id=$6")
-        .bind(&name)
-        .bind(&ip)
-        .bind(port)
-        .bind(&username)
-        .bind(&os_type)
-        .bind(&id)
-        .execute(&state.db)
-        .await?;
+    // Handle password update: encrypt and save if provided with save_password=true
+    let save_password = req.save_password.unwrap_or(true);
+    let (auth_type, password_encrypted) = if let Some(ref pw) = req.password {
+        if !pw.is_empty() && save_password {
+            let crypto = Crypto::new(&state.config.master_key);
+            let encrypted = crypto.encrypt(pw).map_err(|e| {
+                AppError::Internal(format!("Failed to encrypt password: {}", e))
+            })?;
+            ("password".to_string(), Some(encrypted))
+        } else {
+            // Password provided but save_password=false, or password is empty:
+            // do SSH key install only, keep existing auth_type
+            (existing.auth_type.clone(), existing.password_encrypted.clone())
+        }
+    } else {
+        // No password provided — keep existing
+        (existing.auth_type.clone(), existing.password_encrypted.clone())
+    };
+
+    // If a new password is provided, also do SSH key install on the server
+    if let Some(ref pw) = req.password {
+        if !pw.is_empty() {
+            let key_path = ensure_ssh_key()
+                .await
+                .map_err(|e| AppError::Internal(format!("Cannot initialize SSH key: {}", e)))?;
+
+            let passwordless_ok =
+                SshClientPool::connect_passwordless(&ip, port as u16, &username, &key_path)
+                    .await
+                    .is_ok();
+
+            if !passwordless_ok {
+                let client =
+                    SshClientPool::connect_with_password(&ip, port as u16, &username, pw)
+                        .await
+                        .map_err(|e| {
+                            let msg = e.to_string().to_lowercase();
+                            if msg.contains("authentication")
+                                || msg.contains("permission denied")
+                                || msg.contains("incorrect")
+                            {
+                                AppError::BadRequest(format!(
+                                    "Password authentication failed: {}",
+                                    e
+                                ))
+                            } else {
+                                AppError::Ssh(format!("Cannot connect to server: {}", e))
+                            }
+                        })?;
+
+                let pub_key = read_public_key(&key_path).map_err(|e| {
+                    AppError::Internal(format!("Cannot read SSH public key: {}", e))
+                })?;
+
+                let encoded =
+                    base64::engine::general_purpose::STANDARD.encode(pub_key.as_bytes());
+                let install_cmd = format!(
+                    "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+                     touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
+                     KEY=$(echo '{encoded}' | base64 -d) && \
+                     grep -qF \"$KEY\" ~/.ssh/authorized_keys || printf '\\n%s\\n' \"$KEY\" >> ~/.ssh/authorized_keys && \
+                     echo 'ok'"
+                );
+
+                client
+                    .execute(&install_cmd)
+                    .await
+                    .map_err(|e| AppError::Ssh(format!("Failed to install SSH key: {}", e)))?;
+            }
+        }
+    }
+
+    sqlx::query(
+        "UPDATE servers SET name=$1, ip=$2, port=$3, username=$4, os_type=$5, auth_type=$6, password_encrypted=$7 WHERE id=$8",
+    )
+    .bind(&name)
+    .bind(&ip)
+    .bind(port)
+    .bind(&username)
+    .bind(&os_type)
+    .bind(&auth_type)
+    .bind(&password_encrypted)
+    .bind(&id)
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(Server {
         id,
@@ -226,7 +335,7 @@ pub async fn update_server(
         ip,
         port,
         username,
-        auth_type: existing.auth_type,
+        auth_type,
         os_type,
         status: existing.status,
         created_at: existing.created_at.to_string(),
