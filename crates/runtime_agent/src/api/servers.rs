@@ -188,22 +188,15 @@ pub async fn create_server(
         None
     };
 
-    let auth_type = if password_encrypted.is_some() {
-        "password"
-    } else {
-        "passwordless"
-    };
-
     sqlx::query(
         "INSERT INTO servers (id, name, ip, port, username, auth_type, password_encrypted, os_type, status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'online')",
+         VALUES ($1, $2, $3, $4, $5, 'passwordless', $6, $7, 'online')",
     )
     .bind(&id)
     .bind(&req.name)
     .bind(&req.ip)
     .bind(port_i64)
     .bind(&req.username)
-    .bind(auth_type)
     .bind(&password_encrypted)
     .bind(&os_type)
     .execute(&state.db)
@@ -215,7 +208,7 @@ pub async fn create_server(
         ip: req.ip,
         port: port_i64,
         username: req.username,
-        auth_type: auth_type.into(),
+        auth_type: "passwordless".into(),
         os_type,
         status: "online".into(),
         created_at: now,
@@ -245,21 +238,18 @@ pub async fn update_server(
 
     // Handle password update: encrypt and save if provided with save_password=true
     let save_password = req.save_password.unwrap_or(true);
-    let (auth_type, password_encrypted) = if let Some(ref pw) = req.password {
+    let password_encrypted = if let Some(ref pw) = req.password {
         if !pw.is_empty() && save_password {
             let crypto = Crypto::new(&state.config.master_key);
             let encrypted = crypto.encrypt(pw).map_err(|e| {
                 AppError::Internal(format!("Failed to encrypt password: {}", e))
             })?;
-            ("password".to_string(), Some(encrypted))
+            Some(encrypted)
         } else {
-            // Password provided but save_password=false, or password is empty:
-            // do SSH key install only, keep existing auth_type
-            (existing.auth_type.clone(), existing.password_encrypted.clone())
+            existing.password_encrypted.clone()
         }
     } else {
-        // No password provided — keep existing
-        (existing.auth_type.clone(), existing.password_encrypted.clone())
+        existing.password_encrypted.clone()
     };
 
     // If a new password is provided, also do SSH key install on the server
@@ -316,14 +306,13 @@ pub async fn update_server(
     }
 
     sqlx::query(
-        "UPDATE servers SET name=$1, ip=$2, port=$3, username=$4, os_type=$5, auth_type=$6, password_encrypted=$7 WHERE id=$8",
+        "UPDATE servers SET name=$1, ip=$2, port=$3, username=$4, os_type=$5, password_encrypted=$6 WHERE id=$7",
     )
     .bind(&name)
     .bind(&ip)
     .bind(port)
     .bind(&username)
     .bind(&os_type)
-    .bind(&auth_type)
     .bind(&password_encrypted)
     .bind(&id)
     .execute(&state.db)
@@ -335,7 +324,7 @@ pub async fn update_server(
         ip,
         port,
         username,
-        auth_type,
+        auth_type: existing.auth_type,
         os_type,
         status: existing.status,
         created_at: existing.created_at.to_string(),
