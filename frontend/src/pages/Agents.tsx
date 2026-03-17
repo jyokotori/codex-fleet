@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil, Search } from 'lucide-react'
+import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
   agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi, usersApi,
@@ -163,8 +163,11 @@ export default function Agents() {
   const [runtimeConfirm, setRuntimeConfirm] = useState<{ agent: Agent; action: Exclude<AgentRuntimeAction, 'start'> } | null>(null)
   const [searchName, setSearchName] = useState('')
   const [filterUserId, setFilterUserId] = useState('')
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(5)
+  const [liveStatuses, setLiveStatuses] = useState<Record<string, string>>({})
 
-  const { data: agents = [], isLoading } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
+  const { data: agents = [], isLoading, dataUpdatedAt } = useQuery({ queryKey: ['agents'], queryFn: agentsApi.list })
   const { data: servers = [] } = useQuery({
     queryKey: ['servers'],
     queryFn: serversApi.list,
@@ -186,6 +189,56 @@ export default function Agents() {
     if (filterUserId && agent.user_id !== filterUserId) return false
     return true
   })
+
+  const totalPages = Math.ceil(filteredAgents.length / perPage)
+  const safePage = Math.min(page, Math.max(1, totalPages))
+  const pagedAgents = filteredAgents.slice((safePage - 1) * perPage, safePage * perPage)
+
+  // Reset page when search/filter changes
+  const resetPageRef = useRef({ searchName, filterUserId, perPage })
+  useEffect(() => {
+    const prev = resetPageRef.current
+    if (prev.searchName !== searchName || prev.filterUserId !== filterUserId || prev.perPage !== perPage) {
+      setPage(1)
+      resetPageRef.current = { searchName, filterUserId, perPage }
+    }
+  }, [searchName, filterUserId, perPage])
+
+  // Reset live statuses when agents data refreshes
+  const prevUpdatedAt = useRef(dataUpdatedAt)
+  useEffect(() => {
+    if (dataUpdatedAt !== prevUpdatedAt.current) {
+      setLiveStatuses({})
+      prevUpdatedAt.current = dataUpdatedAt
+    }
+  }, [dataUpdatedAt])
+
+  // Async status probing for visible agents with 500ms debounce
+  const abortRef = useRef<AbortController | null>(null)
+  const syncStatusDebounced = useCallback(() => {
+    const ids = pagedAgents
+      .filter(a => a.status !== 'provisioning' && a.status !== 'provision_failed')
+      .map(a => a.id)
+    if (ids.length === 0) return
+
+    // Abort previous in-flight request
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    agentsApi.syncStatus(ids, controller.signal)
+      .then(res => {
+        if (!controller.signal.aborted) {
+          setLiveStatuses(prev => ({ ...prev, ...res.statuses }))
+        }
+      })
+      .catch(() => {})
+  }, [pagedAgents.map(a => a.id).join(',')])
+
+  useEffect(() => {
+    const timer = setTimeout(syncStatusDebounced, 500)
+    return () => clearTimeout(timer)
+  }, [syncStatusDebounced])
 
   function isNameDuplicate(name: string, excludeId?: string): boolean {
     const trimmed = name.trim().toLowerCase()
@@ -403,18 +456,61 @@ export default function Agents() {
           <p className="text-gray-500 dark:text-gray-400">{t.common.noData}</p>
         </div>
       ) : (
-        <div className="grid gap-4">
-          {filteredAgents.map(agent => (
-            <AgentRow key={agent.id} agent={agent} servers={visibleServers} t={t}
-              isAdmin={isAdmin}
-              onRuntimeAction={() => handleRuntimeAction(agent)}
-              onEdit={() => handleEditOpen(agent)}
-              onDispatch={() => { setDispatchAgent(agent); setDispatchTitle(''); setDispatchInput('') }}
-              onCopy={() => handleCopyOpen(agent)}
-              onDelete={() => setDeleteAgent(agent)}
-              runtimePending={runtimeMutation.isPending}
-            />
-          ))}
+        <div className="space-y-4">
+          <div className="grid gap-4">
+            {pagedAgents.map(agent => (
+              <AgentRow key={agent.id} agent={agent} servers={visibleServers} t={t}
+                isAdmin={isAdmin}
+                liveStatus={liveStatuses[agent.id]}
+                onRuntimeAction={() => handleRuntimeAction(agent)}
+                onEdit={() => handleEditOpen(agent)}
+                onDispatch={() => { setDispatchAgent(agent); setDispatchTitle(''); setDispatchInput('') }}
+                onCopy={() => handleCopyOpen(agent)}
+                onDelete={() => setDeleteAgent(agent)}
+                runtimePending={runtimeMutation.isPending}
+              />
+            ))}
+          </div>
+
+          {/* Pagination controls */}
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-sm text-gray-500">{t.agents.totalAgents(filteredAgents.length)}</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-gray-500">{t.agents.perPage}</span>
+                <select
+                  className="input py-1 px-2 text-sm w-auto"
+                  value={perPage}
+                  onChange={e => setPerPage(Number(e.target.value))}
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                </select>
+              </div>
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                    className="btn-secondary btn-sm px-2"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span className="text-sm text-gray-500 min-w-[3rem] text-center">
+                    {safePage} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={safePage >= totalPages}
+                    className="btn-secondary btn-sm px-2"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -796,11 +892,12 @@ export default function Agents() {
   )
 }
 
-function AgentRow({ agent, servers, t, isAdmin, onRuntimeAction, onEdit, onDispatch, onCopy, onDelete, runtimePending }: {
+function AgentRow({ agent, servers, t, isAdmin, liveStatus, onRuntimeAction, onEdit, onDispatch, onCopy, onDelete, runtimePending }: {
   agent: Agent
   servers: Server[]
   t: ReturnType<typeof useI18n>['t']
   isAdmin: boolean
+  liveStatus?: string
   onRuntimeAction: () => void
   onEdit: () => void
   onDispatch: () => void
@@ -810,7 +907,9 @@ function AgentRow({ agent, servers, t, isAdmin, onRuntimeAction, onEdit, onDispa
 }) {
   const navigate = useNavigate()
   const serverLabel = servers.find(s => s.id === agent.server_id)?.name ?? agent.server_id
-  const runtimeAction = getAgentRuntimeAction(agent)
+  const displayStatus = liveStatus ?? agent.status
+  const agentWithLiveStatus = liveStatus ? { ...agent, status: displayStatus } : agent
+  const runtimeAction = getAgentRuntimeAction(agentWithLiveStatus)
   const RuntimeIcon = runtimeAction === 'start' ? Play : runtimeAction === 'pause' ? Square : RotateCcw
   const runtimeLabel = runtimeAction === 'start'
     ? t.agents.start
@@ -837,7 +936,7 @@ function AgentRow({ agent, servers, t, isAdmin, onRuntimeAction, onEdit, onDispa
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <p className="font-medium text-gray-800 dark:text-gray-100">{agent.name}</p>
-          <span className={statusMap[agent.status] ?? 'badge-gray'}>{t.status[agent.status as keyof typeof t.status] ?? agent.status}</span>
+          <span className={statusMap[displayStatus] ?? 'badge-gray'}>{t.status[displayStatus as keyof typeof t.status] ?? displayStatus}</span>
           <span className={agent.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>{agent.cli_type}</span>
           {agent.is_busy && (
             <span className="badge-yellow">{t.requirements.busy}</span>
@@ -853,7 +952,7 @@ function AgentRow({ agent, servers, t, isAdmin, onRuntimeAction, onEdit, onDispa
         </p>
       </div>
       <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-        {canDispatchTask(agent) && (
+        {canDispatchTask(agentWithLiveStatus) && (
           <button onClick={onDispatch} className="btn-primary btn-sm flex items-center gap-1"><Send size={13} />{t.agents.dispatchTask}</button>
         )}
         {isAdmin && runtimeAction && (

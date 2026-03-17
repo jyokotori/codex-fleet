@@ -67,7 +67,6 @@ export default function AgentDetail() {
     queryKey: ['agent', id],
     queryFn: () => agentsApi.get(id!),
     enabled: !!id,
-    refetchInterval: 5000,
   })
 
   // Auto-select provision tab when agent is provisioning or provision failed
@@ -133,6 +132,8 @@ export default function AgentDetail() {
 
   function handleProvisionDone(status: string) {
     refetchAgent()
+    // Invalidate agents list so returning to list shows correct status
+    qc.invalidateQueries({ queryKey: ['agents'] })
     if (status === 'stopped' || status === 'running') {
       setTerminalMounted(true)
       setActiveTab('terminal')

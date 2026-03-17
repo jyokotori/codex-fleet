@@ -2289,6 +2289,7 @@ dependencies = [
  "axum",
  "base64",
  "chrono",
+ "futures",
  "futures-util",
  "rand 0.8.5",
  "russh 0.46.0",

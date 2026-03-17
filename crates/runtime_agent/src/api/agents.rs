@@ -535,11 +535,14 @@ async fn sync_agent_statuses(state: &AppContext, agents: &mut [Agent]) {
 }
 
 pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<String> {
-    match get_executor(state, agent_id).await {
+    // Force-clear cache so dispatch always gets live status
+    state.agent_status_cache.invalidate(agent_id).await;
+
+    let status = match get_executor(state, agent_id).await {
         Ok((executor, agent_info)) => {
             if agent_info.use_docker {
                 sync_docker_agent_status_with_executor(state, agent_id, &executor, &agent_info)
-                    .await
+                    .await?
             } else {
                 // Non-docker: SSH connected successfully → running
                 if agent_info.status != "running" {
@@ -548,7 +551,7 @@ pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<Str
                         .execute(&state.db)
                         .await;
                 }
-                Ok("running".into())
+                "running".into()
             }
         }
         Err(_) => {
@@ -557,9 +560,16 @@ pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<Str
                 .bind(agent_id)
                 .execute(&state.db)
                 .await;
-            Ok("stopped".into())
+            "stopped".into()
         }
-    }
+    };
+
+    // Write back to cache
+    state
+        .agent_status_cache
+        .set(agent_id.to_string(), status.clone())
+        .await;
+    Ok(status)
 }
 
 fn docker_container_name(agent_info: &AgentRow) -> Result<&str> {
@@ -776,7 +786,7 @@ pub async fn list_agents(
     .unwrap_or_default();
     let busy_set: std::collections::HashSet<String> = busy_rows.into_iter().collect();
 
-    let mut agents = rows
+    let agents = rows
         .into_iter()
         .filter_map(|r| {
             let user_id: Option<String> = r.get("user_id");
@@ -817,9 +827,181 @@ pub async fn list_agents(
         })
         .collect::<Vec<_>>();
 
-    sync_agent_statuses(&state, &mut agents).await;
-
     Ok(Json(agents))
+}
+
+#[derive(Deserialize)]
+pub struct SyncStatusRequest {
+    pub agent_ids: Vec<String>,
+}
+
+/// Batch sync agent statuses. Returns cached statuses for hits, probes live for misses.
+pub async fn sync_status(
+    State(state): State<AppContext>,
+    Extension(_auth): Extension<shared_kernel::AuthContext>,
+    Json(req): Json<SyncStatusRequest>,
+) -> Result<Json<serde_json::Value>> {
+    if req.agent_ids.len() > 50 {
+        return Err(AppError::BadRequest(
+            "Maximum 50 agent IDs per request".into(),
+        ));
+    }
+    if req.agent_ids.is_empty() {
+        return Ok(Json(json!({ "statuses": {} })));
+    }
+
+    let cache = &state.agent_status_cache;
+    let cached = cache.get_many(&req.agent_ids).await;
+
+    let miss_ids: Vec<String> = req
+        .agent_ids
+        .iter()
+        .filter(|id| !cached.contains_key(id.as_str()))
+        .cloned()
+        .collect();
+
+    let mut result: HashMap<String, String> = cached;
+
+    if !miss_ids.is_empty() {
+        // Query DB for agent info needed for probing
+        let placeholders: Vec<String> = miss_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", i + 1))
+            .collect();
+        let query_str = format!(
+            "SELECT id, server_id, docker_container_name, use_docker, status FROM agents WHERE id IN ({})",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query(&query_str);
+        for id in &miss_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(&state.db).await?;
+
+        // Group by server_id for concurrent probing
+        let mut docker_by_server: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        let mut host_by_server: HashMap<String, Vec<String>> = HashMap::new();
+        let mut agent_db_status: HashMap<String, String> = HashMap::new();
+
+        for r in &rows {
+            let id: String = r.get("id");
+            let server_id: String = r.get("server_id");
+            let use_docker: bool = r.get("use_docker");
+            let status: String = r.get("status");
+            let container_name: Option<String> = r.get("docker_container_name");
+
+            if status == "provisioning" || status == "provision_failed" {
+                result.insert(id.clone(), status.clone());
+                agent_db_status.insert(id, status);
+                continue;
+            }
+
+            agent_db_status.insert(id.clone(), status);
+
+            if use_docker {
+                if let Some(cn) = container_name.filter(|n| !n.is_empty()) {
+                    docker_by_server
+                        .entry(server_id)
+                        .or_default()
+                        .push((id, cn));
+                }
+            } else {
+                host_by_server.entry(server_id).or_default().push(id);
+            }
+        }
+
+        // Probe all servers concurrently
+        let mut probe_futures = Vec::new();
+
+        for (server_id, targets) in &docker_by_server {
+            let state_clone = state.clone();
+            let server_id = server_id.clone();
+            let targets = targets.clone();
+            probe_futures.push(tokio::spawn(async move {
+                let mut results = Vec::new();
+                match connect_executor_for_server(&state_clone, &server_id).await {
+                    Ok(executor) => {
+                        let container_names: Vec<String> =
+                            targets.iter().map(|(_, cn)| cn.clone()).collect();
+                        match inspect_docker_statuses(&executor, &container_names).await {
+                            Ok(Some(probes)) => {
+                                for (agent_id, cn) in &targets {
+                                    if let Some(probe) = probes.get(cn) {
+                                        if let Some(s) = agent_status_from_docker_probe(probe) {
+                                            results.push((agent_id.clone(), s.to_string()));
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(_) => {}
+                }
+                results
+            }));
+        }
+
+        for (server_id, agent_ids) in &host_by_server {
+            let state_clone = state.clone();
+            let server_id = server_id.clone();
+            let agent_ids = agent_ids.clone();
+            probe_futures.push(tokio::spawn(async move {
+                let ssh_ok = connect_executor_for_server(&state_clone, &server_id)
+                    .await
+                    .is_ok();
+                let status = if ssh_ok { "running" } else { "stopped" };
+                agent_ids
+                    .into_iter()
+                    .map(|id| (id, status.to_string()))
+                    .collect::<Vec<_>>()
+            }));
+        }
+
+        let probe_results = futures::future::join_all(probe_futures).await;
+        let mut cache_entries = Vec::new();
+        let mut db_updates = Vec::new();
+
+        for join_result in probe_results {
+            if let Ok(entries) = join_result {
+                for (agent_id, status) in entries {
+                    // Check if DB status differs
+                    if let Some(db_status) = agent_db_status.get(&agent_id) {
+                        if db_status != &status {
+                            db_updates.push((agent_id.clone(), status.clone()));
+                        }
+                    }
+                    cache_entries.push((agent_id.clone(), status.clone()));
+                    result.insert(agent_id, status);
+                }
+            }
+        }
+
+        // Fill in agents that weren't probed (no container name, etc.) with DB status
+        for id in &miss_ids {
+            if !result.contains_key(id) {
+                if let Some(db_status) = agent_db_status.get(id) {
+                    result.insert(id.clone(), db_status.clone());
+                    cache_entries.push((id.clone(), db_status.clone()));
+                }
+            }
+        }
+
+        // Update DB for changed statuses
+        for (agent_id, status) in &db_updates {
+            let _ = sqlx::query("UPDATE agents SET status = $1 WHERE id = $2")
+                .bind(status)
+                .bind(agent_id)
+                .execute(&state.db)
+                .await;
+        }
+
+        // Update cache
+        cache.set_many(cache_entries).await;
+    }
+
+    Ok(Json(json!({ "statuses": result })))
 }
 
 /// Get a single agent by ID (full data including provision_log/provision_steps + status sync).
@@ -891,10 +1073,20 @@ pub async fn get_agent(
         created_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
     };
 
-    // Sync status for this single agent
-    let mut agents = [agent];
-    sync_agent_statuses(&state, &mut agents).await;
-    agent = agents.into_iter().next().unwrap();
+    // Sync status: check cache first, fallback to live probe
+    if agent.status != "provisioning" && agent.status != "provision_failed" {
+        if let Some(cached) = state.agent_status_cache.get(&agent.id).await {
+            agent.status = cached;
+        } else {
+            let mut agents_arr = [agent];
+            sync_agent_statuses(&state, &mut agents_arr).await;
+            agent = agents_arr.into_iter().next().unwrap();
+            state
+                .agent_status_cache
+                .set(agent.id.clone(), agent.status.clone())
+                .await;
+        }
+    }
 
     Ok(Json(agent))
 }
@@ -1013,6 +1205,7 @@ pub async fn create_agent(
         ch.insert(agent_id.clone(), tx.clone());
     }
     let provision_channels = state.provision_channels.clone();
+    let status_cache = state.agent_status_cache.clone();
 
     tokio::spawn(async move {
         let crypto = Crypto::new(&master_key);
@@ -1045,6 +1238,9 @@ pub async fn create_agent(
                 )
                 .execute(&db)
                 .await;
+                status_cache
+                    .set(agent_id.clone(), "provision_failed".into())
+                    .await;
                 provision_channels.lock().await.remove(&agent_id);
                 return;
             }
@@ -1070,9 +1266,17 @@ pub async fn create_agent(
         {
             Ok(_) => {
                 tracing::info!("Agent {} provisioned successfully", agent_id);
+                // Update cache with final status
+                let final_status = if use_docker { "stopped" } else { "running" };
+                status_cache
+                    .set(agent_id.clone(), final_status.into())
+                    .await;
             }
             Err(e) => {
                 tracing::error!("Agent {} provisioning failed: {}", agent_id, e);
+                status_cache
+                    .set(agent_id.clone(), "provision_failed".into())
+                    .await;
             }
         }
         provision_channels.lock().await.remove(&agent_id);
@@ -2080,12 +2284,16 @@ pub async fn delete_agent(
                             .await;
                     }
                 }
-                let base = agent_base_dir_from_workdir(&agent_info.workdir).ok_or_else(|| {
-                    AppError::Conflict(format!(
-                        "Invalid agent workdir for cleanup: {}",
-                        agent_info.workdir
-                    ))
-                })?;
+
+                // For Docker agents, workdir is the container-internal path (/workspace),
+                // so derive the host-side base dir from the agent id instead.
+                let base = if agent_info.use_docker {
+                    format!("$HOME/.codex-fleet/{}", id)
+                } else {
+                    agent_base_dir_from_workdir(&agent_info.workdir).unwrap_or_else(|| {
+                        format!("$HOME/.codex-fleet/{}", id)
+                    })
+                };
                 tracing::info!(agent_id = %id, base_dir = %base, "Removing agent files");
                 let _ = executor.execute(&format!("rm -rf {}/", base)).await;
             }
@@ -2148,6 +2356,11 @@ pub async fn start_agent(
         .execute(&state.db)
         .await?;
 
+    state
+        .agent_status_cache
+        .set(id.clone(), "running".into())
+        .await;
+
     Ok(Json(
         serde_json::json!({"message": "Agent started", "status": "running"}),
     ))
@@ -2180,6 +2393,11 @@ pub async fn stop_agent(
     sqlx::query!("UPDATE agents SET status = 'stopped' WHERE id = $1", id)
         .execute(&state.db)
         .await?;
+
+    state
+        .agent_status_cache
+        .set(id.clone(), "stopped".into())
+        .await;
 
     Ok(Json(
         serde_json::json!({"message": "Agent stopped", "status": "stopped"}),
@@ -2218,6 +2436,11 @@ pub async fn restart_agent(
     sqlx::query!("UPDATE agents SET status = 'running' WHERE id = $1", id)
         .execute(&state.db)
         .await?;
+
+    state
+        .agent_status_cache
+        .set(id.clone(), "running".into())
+        .await;
 
     Ok(Json(
         serde_json::json!({"message": "Agent restarted", "status": "running"}),

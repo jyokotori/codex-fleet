@@ -1,7 +1,5 @@
 # Codex Fleet
 
-> ⚠️ **Work in progress, actively vibe coding, bugs are expected.**
-
 A web control plane for managing multiple AI coding agents (Codex, etc.). Agents can run on your remote servers or directly on the local machine. Open the browser, create agents, dispatch tasks, and watch them work.
 
 [中文文档 →](./README_CN.md)

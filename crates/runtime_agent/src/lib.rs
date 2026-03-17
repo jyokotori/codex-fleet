@@ -23,6 +23,7 @@ pub fn router() -> Router<AppContext> {
             post(api::servers::test_server_connection),
         )
         .route("/api/agents", get(api::agents::list_agents))
+        .route("/api/agents/sync-status", post(api::agents::sync_status))
         .route("/api/agents", post(api::agents::create_agent))
         .route("/api/agents/{id}", get(api::agents::get_agent).put(api::agents::update_agent).delete(api::agents::delete_agent))
         .route("/api/agents/{id}/start", post(api::agents::start_agent))

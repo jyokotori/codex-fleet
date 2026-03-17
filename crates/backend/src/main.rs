@@ -2,8 +2,9 @@ mod db;
 mod embed;
 
 use axum::{middleware, routing::get, Router};
-use shared_kernel::{AppConfig, AppContext};
+use shared_kernel::{AppConfig, AppContext, AgentStatusCache};
 use std::net::SocketAddr;
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
@@ -35,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         provision_channels: Arc::new(Mutex::new(HashMap::new())),
         task_channels: Arc::new(Mutex::new(HashMap::new())),
         task_abort_signals: Arc::new(Mutex::new(HashMap::new())),
+        agent_status_cache: AgentStatusCache::new(Duration::from_secs(10)),
     };
 
     let cors = CorsLayer::new()

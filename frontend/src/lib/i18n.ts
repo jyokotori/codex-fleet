@@ -211,6 +211,10 @@ export const translations = {
       filterByUser: 'All users',
       search: 'Search',
       nameDuplicate: 'Agent name already exists',
+      perPage: 'Per page',
+      totalAgents: (count: number) => `${count} agent${count === 1 ? '' : 's'}`,
+      prevPage: 'Previous',
+      nextPage: 'Next',
     },
 
     // Provision
@@ -638,6 +642,10 @@ export const translations = {
       filterByUser: '全部用户',
       search: '搜索',
       nameDuplicate: 'Agent 名称已存在',
+      perPage: '每页',
+      totalAgents: (count: number) => `共 ${count} 个 Agent`,
+      prevPage: '上一页',
+      nextPage: '下一页',
     },
 
     provision: {

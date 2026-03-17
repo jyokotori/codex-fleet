@@ -358,6 +358,12 @@ export const agentsApi = {
     request<{ running: boolean; count: number }>(`/api/agents/${id}/check-resume-process?thread_id=${encodeURIComponent(threadId)}`),
   clone: (id: string) =>
     request<Agent>(`/api/agents/${id}/clone`, { method: 'POST' }),
+  syncStatus: (agent_ids: string[], signal?: AbortSignal) =>
+    request<{ statuses: Record<string, string> }>('/api/agents/sync-status', {
+      method: 'POST',
+      body: JSON.stringify({ agent_ids }),
+      signal,
+    }),
 }
 
 // Tasks

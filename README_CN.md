@@ -1,7 +1,5 @@
 # Codex Fleet
 
-> ⚠️ **开发中，正在 vibe coding，可能存在 bug。**
-
 一个用于管理多个 AI 编程 Agent（Codex 等）的 Web 控制台，Agent 可以运行在你的远程服务器上，也可以直接跑在本机。打开浏览器，创建 Agent，发送任务，看着它们干活。
 
 [English →](./README.md)
