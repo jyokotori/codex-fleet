@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { isAdmin, isAuthenticated } from './lib/auth'
+import { isAdmin, isAuthenticated, getTokenRemainingSeconds } from './lib/auth'
+import { scheduleTokenRefresh } from './lib/api'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Servers from './pages/Servers'
@@ -34,6 +36,13 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  useEffect(() => {
+    const remaining = getTokenRemainingSeconds()
+    if (remaining !== null && remaining > 0) {
+      scheduleTokenRefresh(remaining)
+    }
+  }, [])
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

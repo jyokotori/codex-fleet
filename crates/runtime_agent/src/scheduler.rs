@@ -1,7 +1,9 @@
 use std::time::Duration;
 
+use sqlx::Row;
 use shared_kernel::AppContext;
 
+use crate::api::agents::{get_agent_with_credentials, sync_agent_status_with_creds};
 use crate::api::tasks::dispatch_task_for_agent;
 
 pub async fn run_scheduler(state: AppContext) {
@@ -14,99 +16,171 @@ pub async fn run_scheduler(state: AppContext) {
     }
 }
 
+/// Row returned by the single scheduler query.
+struct DispatchCandidate {
+    agent_id: String,
+    work_item_id: String,
+    title: String,
+    description: String,
+    notification_ids: String,
+    assigned_user_id: Option<String>,
+    assigned_username: String,
+}
+
 async fn tick(state: &AppContext) -> anyhow::Result<()> {
-    // Find running agents that are idle (no work_item in agent_in_progress/agent_completed, no running task)
-    let idle_agents = sqlx::query_scalar!(
-        r#"SELECT a.id AS "id!"
+    // Single JOIN query: one work_item per idle running agent, highest priority first.
+    // DISTINCT ON (a.id) ensures DB-level dedup — exactly 1 row per agent.
+    let rows = sqlx::query(
+        r#"SELECT DISTINCT ON (a.id)
+                  a.id AS agent_id,
+                  wi.id AS work_item_id,
+                  wi.title,
+                  wi.description,
+                  wi.notification_ids,
+                  wi.assigned_user_id,
+                  wi.assigned_username
            FROM agents a
+           INNER JOIN work_items wi ON wi.assigned_agent_id = a.id AND wi.status = 'waiting'
            WHERE a.status = 'running'
              AND NOT EXISTS (
-               SELECT 1 FROM work_items wi
-               WHERE wi.assigned_agent_id = a.id AND wi.status IN ('agent_in_progress','agent_completed')
+               SELECT 1 FROM work_items wi2
+               WHERE wi2.assigned_agent_id = a.id AND wi2.status IN ('agent_in_progress','agent_completed')
              )
              AND NOT EXISTS (
                SELECT 1 FROM tasks t
                WHERE t.agent_id = a.id AND t.status = 'agent_in_progress'
-             )"#
+             )
+           ORDER BY a.id,
+                    CASE wi.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
+                    wi.created_at"#,
     )
     .fetch_all(&state.db)
     .await?;
 
-    for agent_id in idle_agents {
-        // Find highest priority waiting work item for this agent
-        let item = sqlx::query!(
-            r#"SELECT id, title, description, notification_ids, assigned_user_id, assigned_username FROM work_items
-               WHERE assigned_agent_id = $1 AND status = 'waiting'
-               ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, created_at
-               LIMIT 1"#,
-            agent_id
-        )
-        .fetch_optional(&state.db)
-        .await?;
+    let candidates: Vec<DispatchCandidate> = rows
+        .into_iter()
+        .map(|r| DispatchCandidate {
+            agent_id: r.get("agent_id"),
+            work_item_id: r.get("work_item_id"),
+            title: r.get("title"),
+            description: r.get("description"),
+            notification_ids: r.get("notification_ids"),
+            assigned_user_id: r.get("assigned_user_id"),
+            assigned_username: r.get("assigned_username"),
+        })
+        .collect();
 
-        let item = match item {
-            Some(i) => i,
-            None => continue,
-        };
+    for candidate in candidates {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = dispatch_one(&state, candidate).await {
+                tracing::warn!("Scheduler dispatch error: {e}");
+            }
+        });
+    }
 
-        // Use a transaction to atomically claim the work item and dispatch
-        let mut tx = state.db.begin().await?;
+    Ok(())
+}
 
-        // Re-verify status = 'waiting' with FOR UPDATE lock
-        let still_waiting = sqlx::query_scalar!(
-            r#"SELECT id AS "id!" FROM work_items WHERE id = $1 AND status = 'waiting' FOR UPDATE"#,
-            item.id
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
+async fn revert_work_item(db: &sqlx::PgPool, work_item_id: &str) {
+    let _ = sqlx::query("UPDATE work_items SET status = 'waiting', updated_at = NOW() WHERE id = $1")
+        .bind(work_item_id)
+        .execute(db)
+        .await;
+}
 
-        if still_waiting.is_none() {
-            // Another scheduler tick or user action already claimed it
-            tx.rollback().await?;
-            continue;
+async fn dispatch_one(state: &AppContext, c: DispatchCandidate) -> anyhow::Result<()> {
+    // Per-agent mutex: skip if already dispatching for this agent
+    let lock = state.agent_lock(&c.agent_id).await;
+    let guard = match lock.try_lock() {
+        Ok(g) => g,
+        Err(_) => {
+            tracing::debug!("Scheduler: agent {} already dispatching, skipping", c.agent_id);
+            return Ok(());
         }
+    };
 
-        // Dispatch task (this uses the main db pool, not the transaction)
-        let notif_ids: Vec<String> =
-            serde_json::from_str(&item.notification_ids).unwrap_or_default();
-        match dispatch_task_for_agent(
-            state,
-            &agent_id,
-            &item.title,
-            &item.description,
-            Some(item.id.clone()),
-            notif_ids,
-            item.assigned_user_id.clone(),
-            item.assigned_username.clone(),
-        )
-        .await
-        {
-            Ok(task) => {
-                // Update work item: status = agent_in_progress, link execution_id
-                sqlx::query!(
-                    "UPDATE work_items SET status = 'agent_in_progress', execution_id = $1, updated_at = NOW() WHERE id = $2",
-                    task.id,
-                    item.id
-                )
-                .execute(&mut *tx)
+    // Atomic claim: UPDATE ... WHERE status = 'waiting' with rows_affected check
+    let claim = sqlx::query(
+        "UPDATE work_items SET status = 'agent_in_progress', updated_at = NOW() WHERE id = $1 AND status = 'waiting'",
+    )
+    .bind(&c.work_item_id)
+    .execute(&state.db)
+    .await?;
+
+    if claim.rows_affected() != 1 {
+        drop(guard);
+        return Ok(());
+    }
+
+    // Fetch credentials and sync agent status
+    let (creds, agent_info) = match get_agent_with_credentials(state, &c.agent_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            revert_work_item(&state.db, &c.work_item_id).await;
+            drop(guard);
+            return Err(e.into());
+        }
+    };
+
+    let synced_status = match sync_agent_status_with_creds(state, &c.agent_id, &creds, &agent_info).await {
+        Ok(s) => s,
+        Err(e) => {
+            revert_work_item(&state.db, &c.work_item_id).await;
+            drop(guard);
+            return Err(e.into());
+        }
+    };
+
+    if synced_status != "running" {
+        revert_work_item(&state.db, &c.work_item_id).await;
+        drop(guard);
+        tracing::info!(
+            "Scheduler: agent {} is {}, reverting work item {}",
+            c.agent_id,
+            synced_status,
+            c.work_item_id
+        );
+        return Ok(());
+    }
+
+    let notif_ids: Vec<String> =
+        serde_json::from_str(&c.notification_ids).unwrap_or_default();
+
+    match dispatch_task_for_agent(
+        state,
+        &c.agent_id,
+        &c.title,
+        &c.description,
+        Some(c.work_item_id.clone()),
+        notif_ids,
+        c.assigned_user_id.clone(),
+        c.assigned_username.clone(),
+    )
+    .await
+    {
+        Ok(task) => {
+            sqlx::query("UPDATE work_items SET execution_id = $1, updated_at = NOW() WHERE id = $2")
+                .bind(&task.id)
+                .bind(&c.work_item_id)
+                .execute(&state.db)
                 .await?;
-                tx.commit().await?;
-                tracing::info!(
-                    "Scheduler dispatched work item {} to agent {}",
-                    item.id,
-                    agent_id
-                );
-            }
-            Err(e) => {
-                tx.rollback().await?;
-                tracing::warn!(
-                    "Scheduler failed to dispatch work item {} to agent {}: {e}",
-                    item.id,
-                    agent_id
-                );
-            }
+            tracing::info!(
+                "Scheduler dispatched work item {} to agent {}",
+                c.work_item_id,
+                c.agent_id
+            );
+        }
+        Err(e) => {
+            revert_work_item(&state.db, &c.work_item_id).await;
+            tracing::warn!(
+                "Scheduler failed to dispatch work item {} to agent {}: {e}",
+                c.work_item_id,
+                c.agent_id
+            );
         }
     }
 
+    drop(guard);
     Ok(())
 }

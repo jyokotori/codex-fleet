@@ -1,13 +1,52 @@
+import { clearAuth } from './auth'
+
 const BASE_URL = ''
 
 function getToken(): string | null {
   return localStorage.getItem('token')
 }
 
-// Prevent multiple concurrent refresh attempts
-let refreshPromise: Promise<boolean> | null = null
+// --- Proactive token refresh scheduler ---
 
-async function tryRefreshToken(): Promise<boolean> {
+let refreshTimerId: ReturnType<typeof setTimeout> | null = null
+const authChannel = new BroadcastChannel('auth')
+
+export function scheduleTokenRefresh(expiresInSeconds: number) {
+  clearScheduledRefresh()
+  const refreshAfterMs = expiresInSeconds * 0.8 * 1000 // refresh at 80% lifetime
+  if (refreshAfterMs <= 0) return
+  refreshTimerId = setTimeout(async () => {
+    const ok = await doRefreshToken()
+    if (!ok) console.warn('Proactive token refresh failed')
+  }, refreshAfterMs)
+}
+
+export function clearScheduledRefresh() {
+  if (refreshTimerId !== null) {
+    clearTimeout(refreshTimerId)
+    refreshTimerId = null
+  }
+}
+
+// Listen for token updates from other tabs
+authChannel.onmessage = (event) => {
+  if (event.data.type === 'token_refreshed') {
+    localStorage.setItem('token', event.data.access_token)
+    localStorage.setItem('refresh_token', event.data.refresh_token)
+    localStorage.setItem('token_expires_in', String(event.data.expires_in))
+    localStorage.setItem('token_obtained_at', String(Math.floor(Date.now() / 1000)))
+    if (event.data.user) localStorage.setItem('user', JSON.stringify(event.data.user))
+    scheduleTokenRefresh(event.data.expires_in)
+  } else if (event.data.type === 'logout') {
+    clearScheduledRefresh()
+    clearAuth()
+    window.location.href = '/login'
+  }
+}
+
+// --- Token refresh core logic ---
+
+async function doRefreshToken(): Promise<boolean> {
   const refreshToken = localStorage.getItem('refresh_token')
   if (!refreshToken) return false
 
@@ -22,11 +61,28 @@ async function tryRefreshToken(): Promise<boolean> {
     const data = await res.json()
     localStorage.setItem('token', data.access_token)
     localStorage.setItem('refresh_token', data.refresh_token)
+    localStorage.setItem('token_expires_in', String(data.expires_in))
+    localStorage.setItem('token_obtained_at', String(Math.floor(Date.now() / 1000)))
     if (data.user) localStorage.setItem('user', JSON.stringify(data.user))
+
+    // Chain next refresh
+    scheduleTokenRefresh(data.expires_in)
+    // Notify other tabs
+    authChannel.postMessage({ type: 'token_refreshed', ...data })
     return true
   } catch {
     return false
   }
+}
+
+// Prevent multiple concurrent refresh attempts
+let refreshPromise: Promise<boolean> | null = null
+
+async function tryRefreshToken(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = doRefreshToken().finally(() => { refreshPromise = null })
+  }
+  return refreshPromise
 }
 
 async function request<T>(
@@ -46,10 +102,7 @@ async function request<T>(
 
   // On 401, try refresh token before giving up
   if (res.status === 401 && !path.startsWith('/api/auth/')) {
-    if (!refreshPromise) {
-      refreshPromise = tryRefreshToken().finally(() => { refreshPromise = null })
-    }
-    const refreshed = await refreshPromise
+    const refreshed = await tryRefreshToken()
     if (refreshed) {
       // Retry with new token
       const newHeaders = { ...headers, Authorization: `Bearer ${getToken()}` }
@@ -68,9 +121,9 @@ async function request<T>(
 
     // Refresh failed or still 401 → redirect to login
     if (res.status === 401 && !path.startsWith('/api/auth/')) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('refresh_token')
-      localStorage.removeItem('user')
+      clearScheduledRefresh()
+      authChannel.postMessage({ type: 'logout' })
+      clearAuth()
       window.location.href = '/login'
     }
 

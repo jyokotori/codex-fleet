@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Zap, Languages, ChevronDown } from 'lucide-react'
-import { authApi } from '../lib/api'
+import { authApi, scheduleTokenRefresh } from '../lib/api'
 import { saveAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
 import type { Locale } from '../lib/i18n'
@@ -36,6 +36,7 @@ export default function Login() {
     try {
       const data = await authApi.login(username, password)
       saveAuth(data)
+      scheduleTokenRefresh(data.expires_in)
       navigate('/')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t.auth.signIn + ' failed')

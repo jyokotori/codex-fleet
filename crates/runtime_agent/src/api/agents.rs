@@ -534,17 +534,31 @@ async fn sync_agent_statuses(state: &AppContext, agents: &mut [Agent]) {
     }
 }
 
-pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<String> {
-    // Force-clear cache so dispatch always gets live status
+/// Sync agent status using pre-fetched server credentials (no additional DB queries for agent/server data).
+pub async fn sync_agent_status_with_creds(
+    state: &AppContext,
+    agent_id: &str,
+    creds: &ServerCredentials,
+    agent_info: &AgentRow,
+) -> Result<String> {
     state.agent_status_cache.invalidate(agent_id).await;
 
-    let status = match get_executor(state, agent_id).await {
-        Ok((executor, agent_info)) => {
+    let status = match SshClientPool::connect(
+        &creds.ip,
+        creds.port,
+        &creds.username,
+        &creds.auth_type,
+        creds.password.as_deref(),
+        creds.ssh_key_content.as_deref(),
+    )
+    .await
+    {
+        Ok(client) => {
+            let executor = Executor::Ssh(client);
             if agent_info.use_docker {
-                sync_docker_agent_status_with_executor(state, agent_id, &executor, &agent_info)
+                sync_docker_agent_status_with_executor(state, agent_id, &executor, agent_info)
                     .await?
             } else {
-                // Non-docker: SSH connected successfully → running
                 if agent_info.status != "running" {
                     let _ = sqlx::query("UPDATE agents SET status = 'running' WHERE id = $1")
                         .bind(agent_id)
@@ -555,7 +569,6 @@ pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<Str
             }
         }
         Err(_) => {
-            // SSH failed → stopped
             let _ = sqlx::query("UPDATE agents SET status = 'stopped' WHERE id = $1")
                 .bind(agent_id)
                 .execute(&state.db)
@@ -564,12 +577,17 @@ pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<Str
         }
     };
 
-    // Write back to cache
     state
         .agent_status_cache
         .set(agent_id.to_string(), status.clone())
         .await;
     Ok(status)
+}
+
+#[allow(dead_code)]
+pub async fn sync_agent_status(state: &AppContext, agent_id: &str) -> Result<String> {
+    let (creds, agent_info) = get_server_credentials(state, agent_id).await?;
+    sync_agent_status_with_creds(state, agent_id, &creds, &agent_info).await
 }
 
 fn docker_container_name(agent_info: &AgentRow) -> Result<&str> {
@@ -2741,6 +2759,47 @@ pub struct ServerCredentials {
     pub auth_type: String,
     pub password: Option<String>,
     pub ssh_key_content: Option<String>,
+}
+
+/// Get agent info + server credentials in a single JOIN query (used by scheduler/dispatch).
+pub async fn get_agent_with_credentials(
+    state: &AppContext,
+    agent_id: &str,
+) -> Result<(ServerCredentials, AgentRow)> {
+    let row = sqlx::query(
+        "SELECT a.docker_container_name, a.workdir, a.use_docker, a.status,
+                s.ip, s.port, s.username, s.auth_type, s.password_encrypted, s.ssh_key_content
+         FROM agents a
+         JOIN servers s ON s.id = a.server_id
+         WHERE a.id = $1",
+    )
+    .bind(agent_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", agent_id)))?;
+
+    let crypto = Crypto::new(&state.config.master_key);
+    let password: Option<String> = row
+        .get::<Option<String>, _>("password_encrypted")
+        .as_deref()
+        .and_then(|p| crypto.decrypt(p).ok());
+
+    Ok((
+        ServerCredentials {
+            ip: row.get("ip"),
+            port: row.get::<i64, _>("port") as u16,
+            username: row.get("username"),
+            auth_type: row.get("auth_type"),
+            password,
+            ssh_key_content: row.get("ssh_key_content"),
+        },
+        AgentRow {
+            docker_container_name: row.get("docker_container_name"),
+            workdir: row.get("workdir"),
+            use_docker: row.get("use_docker"),
+            status: row.get("status"),
+        },
+    ))
 }
 
 /// Get server credentials and agent info for an agent (used by WS handlers that need raw SSH).

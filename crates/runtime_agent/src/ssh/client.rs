@@ -1,6 +1,9 @@
 use async_ssh2_tokio::client::{AuthMethod, Client, ServerCheckMethod};
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing::debug;
+
+const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct SshClient {
     client: Client,
@@ -28,8 +31,12 @@ impl SshClientPool {
         key_path: &std::path::Path,
     ) -> anyhow::Result<SshClient> {
         let auth = AuthMethod::with_key_file(key_path.to_str().unwrap(), None::<&str>);
-        let client =
-            Client::connect((ip, port), username, auth, ServerCheckMethod::NoCheck).await?;
+        let client = tokio::time::timeout(
+            SSH_CONNECT_TIMEOUT,
+            Client::connect((ip, port), username, auth, ServerCheckMethod::NoCheck),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("SSH connection timed out after 10s"))??;
         Ok(SshClient { client })
     }
 
@@ -41,8 +48,12 @@ impl SshClientPool {
         password: &str,
     ) -> anyhow::Result<SshClient> {
         let auth = AuthMethod::with_password(password);
-        let client =
-            Client::connect((ip, port), username, auth, ServerCheckMethod::NoCheck).await?;
+        let client = tokio::time::timeout(
+            SSH_CONNECT_TIMEOUT,
+            Client::connect((ip, port), username, auth, ServerCheckMethod::NoCheck),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("SSH connection timed out after 10s"))??;
         Ok(SshClient { client })
     }
 
@@ -67,8 +78,12 @@ impl SshClientPool {
             "key" => {
                 let key = ssh_key.ok_or_else(|| anyhow::anyhow!("SSH key required"))?;
                 let auth = AuthMethod::with_key(key, None::<&str>);
-                let client =
-                    Client::connect((ip, port), username, auth, ServerCheckMethod::NoCheck).await?;
+                let client = tokio::time::timeout(
+                    SSH_CONNECT_TIMEOUT,
+                    Client::connect((ip, port), username, auth, ServerCheckMethod::NoCheck),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("SSH connection timed out after 10s"))??;
                 Ok(SshClient { client })
             }
             _ => Err(anyhow::anyhow!("Unknown auth_type: {}", auth_type)),

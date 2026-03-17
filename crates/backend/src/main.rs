@@ -6,7 +6,7 @@ use shared_kernel::{AppConfig, AppContext, AgentStatusCache};
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
         task_channels: Arc::new(Mutex::new(HashMap::new())),
         task_abort_signals: Arc::new(Mutex::new(HashMap::new())),
         agent_status_cache: AgentStatusCache::new(Duration::from_secs(10)),
+        agent_dispatch_locks: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let cors = CorsLayer::new()

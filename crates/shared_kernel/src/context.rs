@@ -92,4 +92,23 @@ pub struct AppContext {
     pub task_channels: Arc<Mutex<HashMap<String, TaskTx>>>,
     pub task_abort_signals: Arc<Mutex<HashMap<String, AbortTx>>>,
     pub agent_status_cache: AgentStatusCache,
+    pub agent_dispatch_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
+}
+
+impl AppContext {
+    /// Get or create a per-agent dispatch lock.
+    pub async fn agent_lock(&self, agent_id: &str) -> Arc<Mutex<()>> {
+        // Fast path: read lock
+        {
+            let map = self.agent_dispatch_locks.read().await;
+            if let Some(lock) = map.get(agent_id) {
+                return lock.clone();
+            }
+        }
+        // Slow path: write lock
+        let mut map = self.agent_dispatch_locks.write().await;
+        map.entry(agent_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
 }

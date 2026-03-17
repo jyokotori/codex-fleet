@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 use crate::api::agents::{
-    codex_home_prefix, get_server_credentials, sync_agent_status, HOST_ENV_SETUP,
+    codex_home_prefix, get_agent_with_credentials, sync_agent_status_with_creds, HOST_ENV_SETUP,
 };
 use crate::ssh::terminal::open_exec_channel;
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
@@ -40,8 +40,18 @@ pub async fn dispatch_task_for_agent(
     user_id: Option<String>,
     username: String,
 ) -> Result<Task> {
-    let _ = sync_agent_status(state, agent_id).await?;
-    let (creds, agent_info) = get_server_credentials(state, agent_id).await?;
+    let (creds, agent_info) = get_agent_with_credentials(state, agent_id).await?;
+    let _ = sync_agent_status_with_creds(state, agent_id, &creds, &agent_info).await?;
+    // Re-fetch status after sync (agent_info.status may be stale)
+    let agent_info = {
+        let fresh_status = state.agent_status_cache.get(agent_id).await.unwrap_or(agent_info.status.clone());
+        crate::api::agents::AgentRow {
+            docker_container_name: agent_info.docker_container_name,
+            workdir: agent_info.workdir,
+            use_docker: agent_info.use_docker,
+            status: fresh_status,
+        }
+    };
 
     if agent_info.status == "provisioning" || agent_info.status == "error" {
         return Err(AppError::Conflict(format!(

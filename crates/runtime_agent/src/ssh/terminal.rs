@@ -1,8 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use russh::client::{self, Handle, Msg};
 use russh::keys::key;
 use russh::Channel;
+
+const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct ClientHandler;
 
@@ -30,7 +33,12 @@ pub async fn connect_russh(
         ..Default::default()
     };
 
-    let mut handle = client::connect(Arc::new(config), (ip, port), ClientHandler).await?;
+    let mut handle = tokio::time::timeout(
+        SSH_CONNECT_TIMEOUT,
+        client::connect(Arc::new(config), (ip, port), ClientHandler),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("SSH connection timed out after 10s"))??;
 
     match auth_type {
         "password" => {
