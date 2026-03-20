@@ -57,6 +57,32 @@ cd frontend && npm install && npm run dev
 
 Frontend dev server: **http://localhost:5173** (`/api` and `/ws` are proxied to the backend)
 
+### Building a Custom Agent Docker Image (Recommended)
+
+If you plan to run agents in Docker mode, it is recommended to pre-build a dedicated programming image with all necessary tools installed, rather than using a bare base image each time.
+
+You can reference [codex-universal Dockerfile](https://github.com/openai/codex-universal/blob/main/Dockerfile) for a well-structured example.
+
+```bash
+# 1. Start a container from a base image
+docker run -it --name my-codex-env ubuntu:24.04 bash
+
+# 2. Inside the container, install the tools you need
+#    e.g. git, curl, node, python, codex-cli, etc.
+apt-get update && apt-get install -y git curl build-essential ...
+
+# 3. Exit the container
+exit
+
+# 4. Commit the container as your custom image
+docker commit my-codex-env my-codex-image:latest
+
+# 5. Clean up the temporary container
+docker rm my-codex-env
+```
+
+Then select `my-codex-image:latest` as the Docker image when creating an agent.
+
 ---
 
 ## Current

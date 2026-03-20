@@ -57,6 +57,32 @@ cd frontend && npm install && npm run dev
 
 前端开发地址：**http://localhost:5173** （`/api` 和 `/ws` 会自动代理到后端）
 
+### 构建专用 Agent Docker 镜像（推荐）
+
+如果使用 Docker 模式运行 Agent，建议提前构建一个预装好开发工具的专用镜像，而不是每次都用裸的基础镜像。
+
+可以参考 [codex-universal Dockerfile](https://github.com/openai/codex-universal/blob/main/Dockerfile) 作为示例。
+
+```bash
+# 1. 从基础镜像启动一个容器
+docker run -it --name my-codex-env ubuntu:24.04 bash
+
+# 2. 在容器内安装所需工具
+#    例如 git, curl, node, python, codex-cli 等
+apt-get update && apt-get install -y git curl build-essential ...
+
+# 3. 退出容器
+exit
+
+# 4. 将容器提交为自定义镜像
+docker commit my-codex-env my-codex-image:latest
+
+# 5. 清理临时容器
+docker rm my-codex-env
+```
+
+创建 Agent 时选择 `my-codex-image:latest` 作为 Docker 镜像即可。
+
 ---
 
 ## 当前功能
