@@ -154,7 +154,6 @@ export default function AgentDetail() {
     : [
         { key: 'tasks', label: t.agentDetail.tasks },
         { key: 'terminal', label: t.agentDetail.terminal },
-        { key: 'provision', label: t.provision?.title ?? 'Provision' },
       ]
 
   async function handleResumeRequest(threadId: string, command: string, title: string) {
