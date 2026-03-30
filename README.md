@@ -113,7 +113,7 @@ Before manual dispatch, the agent must be idle and its synced status must be `ru
 Create projects and work items, assign them to agents or users, link them to agent executions, and review agent results from the requirement detail page.
 
 ### Live Logs & Terminal
-- **Logs tab** — shows real-time output from the agent session and auto-scrolls
+- **Logs tab** — shows real-time output from the agent session and auto-scrolls; structured task events are rendered as separate blocks for agent messages, command executions, file changes, tool calls, and web searches, with Markdown/GFM rendering for agent replies plus expandable command output and diffs
 - **Terminal tab** — full interactive terminal, so you can type commands directly in the runtime environment (container or host)
 - **Copy command** — non-Docker agents copy a direct SSH command to the host; Docker agents copy an SSH command that enters the container shell
 
