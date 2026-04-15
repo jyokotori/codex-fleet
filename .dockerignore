@@ -1,0 +1,9 @@
+.git
+.github
+.env
+.env.*
+target
+frontend/node_modules
+frontend/dist
+crates/backend/frontend-dist
+.DS_Store
