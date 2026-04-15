@@ -33,7 +33,7 @@ cp .env.example .env   # change credentials before using in production
 docker compose up -d
 ```
 
-Open **http://localhost:3000**
+Open **http://localhost:3001**
 
 Default admin login: **`codex` / `codex`**
 
@@ -125,6 +125,9 @@ Store reusable configurations centrally and attach them to any agent at any time
 
 ### Notifications
 Configure webhooks so task progress, completion, failure, approval, or rejection is pushed automatically.
+
+### Plane Integration
+Integrate with [Plane](https://plane.so) for bidirectional issue sync. Plane issues moved to "Todo" are automatically dispatched to agents via agent group bindings, and results are written back as state transitions and comments. See [Plane Integration Guide](./docs/plane-integration.md) for setup instructions.
 
 ### User & Access Management
 - JWT access token + refresh token

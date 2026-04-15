@@ -33,7 +33,7 @@ cp .env.example .env   # 生产环境请修改账号密码等配置
 docker compose up -d
 ```
 
-访问 **http://localhost:3000**
+访问 **http://localhost:3001**
 
 默认管理员账号：**`codex` / `codex`**
 
@@ -125,6 +125,9 @@ docker rm my-codex-env
 
 ### 通知
 配置 Webhook，任务进度、完成、失败、通过或打回时自动推送通知。
+
+### Plane 集成
+与 [Plane](https://plane.so) 双向联动。Plane 中 Issue 移到「Todo」后自动派发给 Agent 组中的空闲 Agent，执行结果会回写为 Plane 状态变更和评论。详见 [Plane 集成指南](./docs/plane-integration.md)。
 
 ### 用户与权限管理
 - JWT 访问令牌 + Refresh Token
