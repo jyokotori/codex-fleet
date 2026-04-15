@@ -5,6 +5,7 @@ pub struct AuthContext {
     pub user_id: String,
     pub username: String,
     pub display_name: String,
+    pub email: String,
     pub status: String,
     pub roles: Vec<String>,
     pub permissions: Vec<String>,

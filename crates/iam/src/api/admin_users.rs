@@ -19,6 +19,7 @@ pub struct AdminUserItem {
     pub id: String,
     pub username: String,
     pub display_name: String,
+    pub email: String,
     pub status: String,
     pub failed_attempts: i32,
     pub locked_until: Option<String>,
@@ -31,6 +32,7 @@ pub struct CreateUserRequest {
     pub username: String,
     pub display_name: String,
     pub password: String,
+    pub email: Option<String>,
     pub roles: Option<Vec<String>>,
 }
 
@@ -52,6 +54,7 @@ pub fn router() -> Router<AppContext> {
     Router::new()
         .route("/users", get(list_users))
         .route("/users", post(create_user))
+        .route("/users/{id}", patch(update_user))
         .route("/users/{id}/reset-password", post(reset_password))
         .route("/users/{id}/status", patch(update_status))
         .route("/users/{id}/unlock", post(unlock_user))
@@ -74,7 +77,7 @@ pub async fn list_users(
     require_permission(&auth, "user:list")?;
 
     let rows = sqlx::query(
-        "SELECT id, username, display_name, status, failed_attempts, locked_until, created_at FROM users ORDER BY created_at DESC",
+        "SELECT id, username, display_name, email, status, failed_attempts, locked_until, created_at FROM users ORDER BY created_at DESC",
     )
     .fetch_all(&state.db)
     .await?;
@@ -101,6 +104,7 @@ pub async fn list_users(
                 id: user_id.clone(),
                 username: r.get("username"),
                 display_name: r.get("display_name"),
+                email: r.get("email"),
                 status: r.get("status"),
                 failed_attempts: r.get("failed_attempts"),
                 locked_until: r
@@ -138,13 +142,15 @@ pub async fn create_user(
 
     let user_id = Uuid::new_v4().to_string();
     let password_hash = hash_password(&req.password)?;
+    let email = req.email.unwrap_or_default();
 
     sqlx::query(
-        "INSERT INTO users (id, username, display_name, password_hash, status, failed_attempts, created_at, updated_at) VALUES ($1, $2, $3, $4, 'active', 0, NOW(), NOW())",
+        "INSERT INTO users (id, username, display_name, email, password_hash, status, failed_attempts, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 'active', 0, NOW(), NOW())",
     )
     .bind(&user_id)
     .bind(req.username.trim())
     .bind(req.display_name.trim())
+    .bind(&email)
     .bind(password_hash)
     .execute(&state.db)
     .await?;
@@ -181,12 +187,45 @@ pub async fn create_user(
         id: user_id,
         username: req.username.trim().to_string(),
         display_name: req.display_name.trim().to_string(),
+        email,
         status: "active".into(),
         failed_attempts: 0,
         locked_until: None,
         roles: applied_roles,
         created_at: Utc::now().to_rfc3339(),
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRequest {
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+}
+
+pub async fn update_user(
+    State(state): State<AppContext>,
+    Extension(auth): Extension<AuthContext>,
+    Path(user_id): Path<String>,
+    Json(req): Json<UpdateUserRequest>,
+) -> Result<Json<serde_json::Value>> {
+    require_permission(&auth, "user:create")?;
+
+    if let Some(ref name) = req.display_name {
+        sqlx::query("UPDATE users SET display_name = $1, updated_at = NOW() WHERE id = $2")
+            .bind(name.trim())
+            .bind(&user_id)
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(ref email) = req.email {
+        sqlx::query("UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2")
+            .bind(email.trim())
+            .bind(&user_id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    Ok(Json(serde_json::json!({"message": "User updated"})))
 }
 
 pub async fn reset_password(

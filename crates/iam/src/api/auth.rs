@@ -38,6 +38,7 @@ pub struct LoginUser {
     pub id: String,
     pub username: String,
     pub display_name: String,
+    pub email: String,
     pub status: String,
     pub roles: Vec<String>,
 }
@@ -63,6 +64,7 @@ pub fn protected_auth_router() -> Router<AppContext> {
 pub fn me_router() -> Router<AppContext> {
     Router::new()
         .route("/me", get(me))
+        .route("/me/profile", put(update_my_profile))
         .route("/me/password", put(change_my_password))
         .route("/users", get(list_users_simple))
 }
@@ -194,6 +196,7 @@ pub async fn login(
             id: auth.user_id,
             username: auth.username,
             display_name: auth.display_name,
+            email: auth.email,
             status: auth.status,
             roles: auth.roles,
         },
@@ -264,6 +267,7 @@ pub async fn refresh(
             id: auth.user_id,
             username: auth.username,
             display_name: auth.display_name,
+            email: auth.email,
             status: auth.status,
             roles: auth.roles,
         },
@@ -296,9 +300,34 @@ pub async fn me(Extension(auth): Extension<AuthContext>) -> Result<Json<LoginUse
         id: auth.user_id,
         username: auth.username,
         display_name: auth.display_name,
+        email: auth.email,
         status: auth.status,
         roles: auth.roles,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+}
+
+pub async fn update_my_profile(
+    State(state): State<AppContext>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<UpdateProfileRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let display_name = req.display_name.unwrap_or(auth.display_name);
+    let email = req.email.unwrap_or(auth.email);
+
+    sqlx::query("UPDATE users SET display_name = $1, email = $2, updated_at = NOW() WHERE id = $3")
+        .bind(&display_name)
+        .bind(&email)
+        .bind(&auth.user_id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(Json(serde_json::json!({"message": "Profile updated"})))
 }
 
 pub async fn change_my_password(
@@ -347,11 +376,12 @@ pub struct SimpleUser {
     pub id: String,
     pub username: String,
     pub display_name: String,
+    pub email: String,
 }
 
 pub async fn list_users_simple(State(state): State<AppContext>) -> Result<Json<Vec<SimpleUser>>> {
     let rows = sqlx::query(
-        "SELECT id, username, display_name FROM users WHERE status = 'active' ORDER BY display_name ASC",
+        "SELECT id, username, display_name, email FROM users WHERE status = 'active' ORDER BY display_name ASC",
     )
     .fetch_all(&state.db)
     .await?;
@@ -362,6 +392,7 @@ pub async fn list_users_simple(State(state): State<AppContext>) -> Result<Json<V
             id: r.get("id"),
             username: r.get("username"),
             display_name: r.get("display_name"),
+            email: r.get("email"),
         })
         .collect();
 

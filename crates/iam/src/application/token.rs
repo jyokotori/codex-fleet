@@ -124,7 +124,7 @@ pub fn issue_tokens(
 
 pub async fn fetch_auth_context(db: &sqlx::PgPool, user_id: &str) -> Result<AuthContext> {
     let user_row =
-        sqlx::query("SELECT id, username, display_name, status FROM users WHERE id = $1")
+        sqlx::query("SELECT id, username, display_name, email, status FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_optional(db)
             .await?
@@ -163,6 +163,7 @@ pub async fn fetch_auth_context(db: &sqlx::PgPool, user_id: &str) -> Result<Auth
         user_id: user_row.get("id"),
         username: user_row.get("username"),
         display_name: user_row.get("display_name"),
+        email: user_row.get("email"),
         status: user_row.get("status"),
         roles,
         permissions,
