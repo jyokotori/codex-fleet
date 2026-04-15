@@ -16,6 +16,11 @@ pub struct AppConfig {
     pub initial_admin_display_name: String,
     pub external_api_header: String,
     pub external_api_secret: String,
+    // Plane integration
+    pub plane_base_url: String,
+    pub plane_workspace_slug: String,
+    pub plane_api_key: String,
+    pub plane_webhook_secret: String,
 }
 
 impl AppConfig {
@@ -68,6 +73,10 @@ impl AppConfig {
             external_api_header: env::var("EXTERNAL_API_HEADER")
                 .unwrap_or_else(|_| "X-Agent-Secret".into()),
             external_api_secret: env::var("EXTERNAL_API_SECRET").unwrap_or_default(),
+            plane_base_url: env::var("PLANE_BASE_URL").unwrap_or_default(),
+            plane_workspace_slug: env::var("PLANE_WORKSPACE_SLUG").unwrap_or_default(),
+            plane_api_key: env::var("PLANE_API_KEY").unwrap_or_default(),
+            plane_webhook_secret: env::var("PLANE_WEBHOOK_SECRET").unwrap_or_default(),
         }
     }
 }

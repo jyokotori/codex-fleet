@@ -493,6 +493,7 @@ export interface SimpleUser {
   id: string
   username: string
   display_name: string
+  email: string
 }
 
 export const usersApi = {
@@ -557,4 +558,73 @@ export const notificationsApi = {
     request<NotificationConfig>(`/api/notifications/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<{ message: string }>(`/api/notifications/${id}`, { method: 'DELETE' }),
+}
+
+// Agent Groups
+export interface AgentGroup {
+  id: string
+  name: string
+  agent_ids: string[]
+  created_at: string
+}
+
+export const agentGroupsApi = {
+  list: () => request<AgentGroup[]>('/api/agent-groups'),
+  create: (data: { name: string; agent_ids?: string[] }) =>
+    request<AgentGroup>('/api/agent-groups', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: { name?: string; agent_ids?: string[] }) =>
+    request<AgentGroup>(`/api/agent-groups/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<void>(`/api/agent-groups/${id}`, { method: 'DELETE' }),
+}
+
+// Plane Integration
+export interface PlaneProject {
+  id: string
+  name: string
+  identifier: string
+}
+
+export interface PlaneBinding {
+  id: string
+  plane_project_id: string
+  plane_project_name: string
+  plane_project_identifier: string
+  agent_group_id: string
+  agent_group_name: string
+  enabled: boolean
+  created_at: string
+}
+
+export interface PlaneTask {
+  id: string
+  plane_issue_id: string
+  plane_project_id: string
+  title: string
+  description: string
+  priority: string
+  assignee_email: string
+  status: string
+  agent_id: string | null
+  task_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const planeApi = {
+  listProjects: () => request<PlaneProject[]>('/api/plane/projects'),
+  listBindings: () => request<PlaneBinding[]>('/api/plane/bindings'),
+  createBinding: (data: {
+    plane_project_id: string
+    plane_project_name: string
+    plane_project_identifier: string
+    agent_group_id: string
+  }) => request<{ id: string }>('/api/plane/bindings', { method: 'POST', body: JSON.stringify(data) }),
+  updateBinding: (id: string, data: { agent_group_id?: string }) =>
+    request<void>(`/api/plane/bindings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteBinding: (id: string) =>
+    request<void>(`/api/plane/bindings/${id}`, { method: 'DELETE' }),
+  toggleBinding: (id: string) =>
+    request<void>(`/api/plane/bindings/${id}/toggle`, { method: 'POST' }),
+  listTasks: () => request<PlaneTask[]>('/api/plane/tasks'),
 }

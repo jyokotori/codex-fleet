@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO plane_tasks (id, plane_issue_id, plane_project_id, title, description, priority, assignee_email, status)\n           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "02bd90e372a57bcd6659f53ef961395cc0583947b831cbd494696e039922410c"
+}

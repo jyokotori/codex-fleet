@@ -80,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .merge(public_routes)
+        .merge(runtime_agent::webhook_router())
         .merge(protected_api)
         .merge(external_api)
         .merge(ws_routes)

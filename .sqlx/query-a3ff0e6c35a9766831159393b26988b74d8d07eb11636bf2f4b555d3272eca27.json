@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE plane_bindings SET enabled = NOT enabled WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a3ff0e6c35a9766831159393b26988b74d8d07eb11636bf2f4b555d3272eca27"
+}

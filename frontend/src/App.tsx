@@ -15,6 +15,8 @@ import WIPSection from './pages/configs/WIPSection'
 import Notifications from './pages/Notifications'
 import Requirements from './pages/Requirements'
 import RequirementDetail from './pages/RequirementDetail'
+import AgentGroups from './pages/AgentGroups'
+import PlaneIntegration from './pages/PlaneIntegration'
 import Users from './pages/admin/Users'
 import Layout from './components/Layout'
 
@@ -70,6 +72,8 @@ export default function App() {
         <Route path="notifications" element={<Notifications />} />
         <Route path="requirements" element={<Requirements />} />
         <Route path="requirements/:projectId" element={<RequirementDetail />} />
+        <Route path="agent-groups" element={<AgentGroups />} />
+        <Route path="plane" element={<PlaneIntegration />} />
         <Route
           path="admin/users"
           element={(

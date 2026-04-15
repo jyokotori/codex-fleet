@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO plane_bindings (id, plane_project_id, plane_project_name, plane_project_identifier, agent_group_id)\n           VALUES ($1, $2, $3, $4, $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6e0f628c42eb6ca666ddddf060c622b9545a7079fd28835ad68a6b62d2569d46"
+}

@@ -9,6 +9,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use shared_kernel::{AppContext, AppError, Result};
+use crate::infrastructure::plane_client::PlaneClient;
 
 // ── Response types ─────────────────────────────────────────────────────────
 
@@ -521,6 +522,72 @@ pub async fn update_work_item(
                             payload,
                         )
                         .await;
+                    });
+                }
+            }
+        }
+
+        // ── Plane write-back for approved/rejected ──
+        if let Some(ref exec_id) = execution_id {
+            if let Ok(Some(pt_row)) = sqlx::query(
+                "SELECT id, plane_issue_id, plane_project_id FROM plane_tasks WHERE task_id = $1"
+            )
+            .bind(exec_id)
+            .fetch_optional(&state.db)
+            .await
+            {
+                let plane_issue_id: String = pt_row.get("plane_issue_id");
+                let plane_project_id: String = pt_row.get("plane_project_id");
+                let config = &state.config;
+
+                if !config.plane_base_url.is_empty() && !config.plane_api_key.is_empty() {
+                    let client = PlaneClient::new(
+                        &config.plane_base_url,
+                        &config.plane_workspace_slug,
+                        &config.plane_api_key,
+                    );
+                    let status_for_plane = status.clone();
+                    let reviewer = "codex-fleet".to_string();
+
+                    tokio::spawn(async move {
+                        let current = match client.get_issue_state_name(&plane_project_id, &plane_issue_id).await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Plane write-back: failed to get state for {plane_issue_id}: {e}");
+                                return;
+                            }
+                        };
+
+                        if status_for_plane == "human_approved" {
+                            if current == "Human Review" {
+                                let _ = client.update_issue_state(&plane_project_id, &plane_issue_id, "Done").await;
+                                let comment = format!("<p>Approved by <strong>{}</strong></p>", html_escape::encode_text(&reviewer));
+                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                            } else {
+                                tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected Human Review), not updating");
+                                let comment = format!(
+                                    "<p>Approved in codex-fleet by <strong>{}</strong>, but Plane state is <strong>{}</strong> (expected Human Review), not updating state.</p>",
+                                    html_escape::encode_text(&reviewer),
+                                    html_escape::encode_text(&current),
+                                );
+                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                            }
+                        } else {
+                            // human_rejected
+                            if current == "Human Review" {
+                                let _ = client.update_issue_state(&plane_project_id, &plane_issue_id, "Review Failed").await;
+                                let comment = format!("<p>Rejected by <strong>{}</strong></p>", html_escape::encode_text(&reviewer));
+                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                            } else {
+                                tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected Human Review), not updating");
+                                let comment = format!(
+                                    "<p>Rejected in codex-fleet by <strong>{}</strong>, but Plane state is <strong>{}</strong> (expected Human Review), not updating state.</p>",
+                                    html_escape::encode_text(&reviewer),
+                                    html_escape::encode_text(&current),
+                                );
+                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                            }
+                        }
                     });
                 }
             }

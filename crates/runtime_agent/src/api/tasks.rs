@@ -4,6 +4,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
@@ -11,6 +12,7 @@ use crate::api::agents::{
     codex_home_prefix, get_agent_with_credentials, sync_agent_status_with_creds, HOST_ENV_SETUP,
 };
 use crate::ssh::terminal::open_exec_channel;
+use crate::infrastructure::plane_client::PlaneClient;
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
 
 /// Check if an agent is currently busy (has active work items or running tasks).
@@ -144,6 +146,7 @@ pub async fn dispatch_task_for_agent(
     let notif_user_id = user_id.clone();
     let notif_username = username.clone();
     let abort_signals = state.task_abort_signals.clone();
+    let plane_config = state.config.clone();
     tokio::spawn(async move {
         let result = run_task_exec(
             &creds.ip,
@@ -246,6 +249,71 @@ pub async fn dispatch_task_for_agent(
             )
             .execute(&db)
             .await;
+        }
+
+        // ── Plane write-back ──
+        // Check if this task is linked to a plane_task
+        if let Ok(Some(pt_row)) = sqlx::query(
+            "SELECT id, plane_issue_id, plane_project_id FROM plane_tasks WHERE task_id = $1 AND status = 'dispatched'"
+        )
+        .bind(&task_id)
+        .fetch_optional(&db)
+        .await
+        {
+            let pt_id: String = pt_row.get("id");
+            let plane_issue_id: String = pt_row.get("plane_issue_id");
+            let plane_project_id: String = pt_row.get("plane_project_id");
+
+            if !plane_config.plane_base_url.is_empty() && !plane_config.plane_api_key.is_empty() {
+                let client = PlaneClient::new(
+                    &plane_config.plane_base_url,
+                    &plane_config.plane_workspace_slug,
+                    &plane_config.plane_api_key,
+                );
+
+                if status == "agent_completed" {
+                    // Update plane_task status
+                    let _ = sqlx::query("UPDATE plane_tasks SET status = 'completed', updated_at = NOW() WHERE id = $1")
+                        .bind(&pt_id).execute(&db).await;
+                    // Set Plane → "Human Review" (unconditional — actually done)
+                    if let Err(e) = client.update_issue_state(&plane_project_id, &plane_issue_id, "Human Review").await {
+                        tracing::warn!("Plane write-back: failed to set Human Review for {plane_issue_id}: {e}");
+                    }
+                    // Comment with result_md
+                    let comment = format!("<h3>Agent completed</h3><pre>{}</pre>",
+                        html_escape::encode_text(&result_md));
+                    if let Err(e) = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await {
+                        tracing::warn!("Plane write-back: failed to add comment for {plane_issue_id}: {e}");
+                    }
+                } else {
+                    // agent_failed
+                    let _ = sqlx::query("UPDATE plane_tasks SET status = 'failed', updated_at = NOW() WHERE id = $1")
+                        .bind(&pt_id).execute(&db).await;
+                    // Check current state before setting Review Failed
+                    match client.get_issue_state_name(&plane_project_id, &plane_issue_id).await {
+                        Ok(current) if current == "In Progress" => {
+                            if let Err(e) = client.update_issue_state(&plane_project_id, &plane_issue_id, "Review Failed").await {
+                                tracing::warn!("Plane write-back: failed to set Review Failed for {plane_issue_id}: {e}");
+                            }
+                            let comment = format!("<h3>Agent task failed</h3><pre>{}</pre>",
+                                html_escape::encode_text(&result_md));
+                            let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                        }
+                        Ok(current) => {
+                            tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected In Progress), not updating");
+                            let comment = format!(
+                                "<p>Agent task failed, but Plane state is <strong>{}</strong> (expected In Progress), not updating state.</p><pre>{}</pre>",
+                                html_escape::encode_text(&current),
+                                html_escape::encode_text(&result_md)
+                            );
+                            let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Plane write-back: failed to get state for {plane_issue_id}: {e}");
+                        }
+                    }
+                }
+            }
         }
 
         // Send webhook notifications
