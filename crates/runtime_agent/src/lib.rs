@@ -87,12 +87,24 @@ pub fn router() -> Router<AppContext> {
             put(api::agent_groups::update_agent_group).delete(api::agent_groups::delete_agent_group),
         )
         .route(
-            "/api/plane/projects",
-            get(api::plane::list_plane_projects),
+            "/api/plane/workspaces",
+            get(api::plane::list_workspaces).post(api::plane::create_workspace),
         )
         .route(
-            "/api/plane/bindings",
-            get(api::plane::list_plane_bindings).post(api::plane::create_plane_binding),
+            "/api/plane/workspaces/{id}",
+            put(api::plane::update_workspace).delete(api::plane::delete_workspace),
+        )
+        .route(
+            "/api/plane/workspaces/{id}/toggle",
+            post(api::plane::toggle_workspace),
+        )
+        .route(
+            "/api/plane/workspaces/{id}/projects",
+            get(api::plane::list_workspace_projects),
+        )
+        .route(
+            "/api/plane/workspaces/{id}/bindings",
+            get(api::plane::list_workspace_bindings).post(api::plane::create_workspace_binding),
         )
         .route(
             "/api/plane/bindings/{id}",
@@ -111,7 +123,7 @@ pub fn router() -> Router<AppContext> {
 /// Public webhook routes (no auth required — called by external services like Plane).
 pub fn webhook_router() -> Router<AppContext> {
     Router::new().route(
-        "/api/webhooks/plane",
+        "/api/webhooks/plane/{workspace_id}",
         post(api::webhooks::plane_webhook),
     )
 }

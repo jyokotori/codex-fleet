@@ -8,6 +8,7 @@ CREATE TABLE users (
     id TEXT NOT NULL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
     failed_attempts INTEGER NOT NULL DEFAULT 0,
@@ -123,6 +124,7 @@ CREATE TABLE agents (
     id TEXT NOT NULL PRIMARY KEY,
     name TEXT NOT NULL,
     server_id TEXT NOT NULL DEFAULT '__local__',
+    user_id TEXT REFERENCES users(id),
     git_repo TEXT NOT NULL DEFAULT '',
     git_branch TEXT NOT NULL DEFAULT 'main',
     git_auth_type TEXT NOT NULL DEFAULT 'none',
@@ -141,6 +143,18 @@ CREATE TABLE agents (
     provision_log TEXT NOT NULL DEFAULT '',
     provision_steps JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE agent_groups (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE agent_group_members (
+    group_id TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, agent_id)
 );
 
 CREATE TABLE projects (
@@ -175,13 +189,11 @@ CREATE TABLE tasks (
 CREATE TABLE work_items (
     id TEXT NOT NULL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    parent_id TEXT REFERENCES work_items(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('epic', 'story', 'task')),
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'waiting'
-        CHECK (status IN ('waiting','agent_in_progress','agent_completed','agent_failed',
-                          'human_approved','human_rejected','cancelled','closed')),
+        CHECK (status IN ('backlog','waiting','agent_in_progress','agent_completed','agent_failed',
+                          'human_approved','human_rejected','cancelled')),
     priority TEXT NOT NULL DEFAULT 'medium'
         CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
     assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
@@ -189,6 +201,51 @@ CREATE TABLE work_items (
     assigned_username TEXT NOT NULL DEFAULT '',
     execution_id TEXT,
     notification_ids TEXT NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- Plane Integration
+-- ============================================================
+
+CREATE TABLE plane_workspaces (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    workspace_slug TEXT NOT NULL,
+    api_key TEXT NOT NULL,
+    webhook_secret TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (base_url, workspace_slug)
+);
+
+CREATE TABLE plane_bindings (
+    id TEXT NOT NULL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES plane_workspaces(id) ON DELETE CASCADE,
+    plane_project_id TEXT NOT NULL,
+    plane_project_name TEXT NOT NULL,
+    plane_project_identifier TEXT NOT NULL DEFAULT '',
+    agent_group_id TEXT NOT NULL REFERENCES agent_groups(id),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (workspace_id, plane_project_id)
+);
+
+CREATE TABLE plane_tasks (
+    id TEXT NOT NULL PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES plane_workspaces(id) ON DELETE CASCADE,
+    plane_issue_id TEXT NOT NULL,
+    plane_project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    priority TEXT NOT NULL DEFAULT 'none',
+    assignee_email TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    agent_id TEXT REFERENCES agents(id),
+    task_id TEXT REFERENCES tasks(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -219,9 +276,11 @@ CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
 
 CREATE INDEX idx_work_items_project ON work_items(project_id);
-CREATE INDEX idx_work_items_parent ON work_items(parent_id);
 CREATE INDEX idx_work_items_agent ON work_items(assigned_agent_id);
 CREATE INDEX idx_work_items_user ON work_items(assigned_user_id);
 CREATE INDEX idx_work_items_scheduler
     ON work_items (assigned_agent_id, status, priority, created_at)
     WHERE status = 'waiting' AND assigned_agent_id IS NOT NULL;
+
+CREATE INDEX idx_plane_tasks_status_created ON plane_tasks(status, created_at);
+CREATE INDEX idx_plane_tasks_workspace_project ON plane_tasks(workspace_id, plane_project_id);

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE plane_workspaces SET enabled = NOT enabled, updated_at = NOW() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "466d95c6a53ffa8a5361d2dcd4e7f92f037d3ecfc23638c5990d25d21cabeb86"
+}

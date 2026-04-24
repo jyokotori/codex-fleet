@@ -530,7 +530,11 @@ pub async fn update_work_item(
         // ── Plane write-back for approved/rejected ──
         if let Some(ref exec_id) = execution_id {
             if let Ok(Some(pt_row)) = sqlx::query(
-                "SELECT id, plane_issue_id, plane_project_id FROM plane_tasks WHERE task_id = $1"
+                r#"SELECT pt.id, pt.plane_issue_id, pt.plane_project_id,
+                          pw.base_url, pw.workspace_slug, pw.api_key
+                   FROM plane_tasks pt
+                   INNER JOIN plane_workspaces pw ON pw.id = pt.workspace_id
+                   WHERE pt.task_id = $1"#,
             )
             .bind(exec_id)
             .fetch_optional(&state.db)
@@ -538,58 +542,54 @@ pub async fn update_work_item(
             {
                 let plane_issue_id: String = pt_row.get("plane_issue_id");
                 let plane_project_id: String = pt_row.get("plane_project_id");
-                let config = &state.config;
+                let base_url: String = pt_row.get("base_url");
+                let workspace_slug: String = pt_row.get("workspace_slug");
+                let api_key: String = pt_row.get("api_key");
 
-                if !config.plane_base_url.is_empty() && !config.plane_api_key.is_empty() {
-                    let client = PlaneClient::new(
-                        &config.plane_base_url,
-                        &config.plane_workspace_slug,
-                        &config.plane_api_key,
-                    );
-                    let status_for_plane = status.clone();
-                    let reviewer = "codex-fleet".to_string();
+                let client = PlaneClient::new(&base_url, &workspace_slug, &api_key);
+                let status_for_plane = status.clone();
+                let reviewer = "codex-fleet".to_string();
 
-                    tokio::spawn(async move {
-                        let current = match client.get_issue_state_name(&plane_project_id, &plane_issue_id).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::warn!("Plane write-back: failed to get state for {plane_issue_id}: {e}");
-                                return;
-                            }
-                        };
-
-                        if status_for_plane == "human_approved" {
-                            if current == "Human Review" {
-                                let _ = client.update_issue_state(&plane_project_id, &plane_issue_id, "Done").await;
-                                let comment = format!("<p>Approved by <strong>{}</strong></p>", html_escape::encode_text(&reviewer));
-                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
-                            } else {
-                                tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected Human Review), not updating");
-                                let comment = format!(
-                                    "<p>Approved in codex-fleet by <strong>{}</strong>, but Plane state is <strong>{}</strong> (expected Human Review), not updating state.</p>",
-                                    html_escape::encode_text(&reviewer),
-                                    html_escape::encode_text(&current),
-                                );
-                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
-                            }
-                        } else {
-                            // human_rejected
-                            if current == "Human Review" {
-                                let _ = client.update_issue_state(&plane_project_id, &plane_issue_id, "Review Failed").await;
-                                let comment = format!("<p>Rejected by <strong>{}</strong></p>", html_escape::encode_text(&reviewer));
-                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
-                            } else {
-                                tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected Human Review), not updating");
-                                let comment = format!(
-                                    "<p>Rejected in codex-fleet by <strong>{}</strong>, but Plane state is <strong>{}</strong> (expected Human Review), not updating state.</p>",
-                                    html_escape::encode_text(&reviewer),
-                                    html_escape::encode_text(&current),
-                                );
-                                let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
-                            }
+                tokio::spawn(async move {
+                    let current = match client.get_issue_state_name(&plane_project_id, &plane_issue_id).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Plane write-back: failed to get state for {plane_issue_id}: {e}");
+                            return;
                         }
-                    });
-                }
+                    };
+
+                    if status_for_plane == "human_approved" {
+                        if current == "Human Review" {
+                            let _ = client.update_issue_state(&plane_project_id, &plane_issue_id, "Done").await;
+                            let comment = format!("<p>Approved by <strong>{}</strong></p>", html_escape::encode_text(&reviewer));
+                            let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                        } else {
+                            tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected Human Review), not updating");
+                            let comment = format!(
+                                "<p>Approved in codex-fleet by <strong>{}</strong>, but Plane state is <strong>{}</strong> (expected Human Review), not updating state.</p>",
+                                html_escape::encode_text(&reviewer),
+                                html_escape::encode_text(&current),
+                            );
+                            let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                        }
+                    } else {
+                        // human_rejected
+                        if current == "Human Review" {
+                            let _ = client.update_issue_state(&plane_project_id, &plane_issue_id, "Review Failed").await;
+                            let comment = format!("<p>Rejected by <strong>{}</strong></p>", html_escape::encode_text(&reviewer));
+                            let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                        } else {
+                            tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected Human Review), not updating");
+                            let comment = format!(
+                                "<p>Rejected in codex-fleet by <strong>{}</strong>, but Plane state is <strong>{}</strong> (expected Human Review), not updating state.</p>",
+                                html_escape::encode_text(&reviewer),
+                                html_escape::encode_text(&current),
+                            );
+                            let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
+                        }
+                    }
+                });
             }
         }
     }

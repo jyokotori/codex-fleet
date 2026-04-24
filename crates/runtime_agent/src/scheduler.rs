@@ -193,21 +193,24 @@ async fn dispatch_one(state: &AppContext, c: DispatchCandidate) -> anyhow::Resul
 
 struct PlanePendingTask {
     id: String,
+    workspace_id: String,
     plane_issue_id: String,
     plane_project_id: String,
     assignee_email: String,
+    base_url: String,
+    workspace_slug: String,
+    api_key: String,
 }
 
 async fn plane_tick(state: &AppContext) -> anyhow::Result<()> {
-    let config = &state.config;
-    if config.plane_base_url.is_empty() || config.plane_api_key.is_empty() {
-        return Ok(()); // Plane not configured
-    }
-
+    // Only pick up pending tasks whose workspace is currently enabled.
     let rows = sqlx::query(
-        r#"SELECT id, plane_issue_id, plane_project_id, assignee_email
-           FROM plane_tasks WHERE status = 'pending'
-           ORDER BY created_at ASC"#,
+        r#"SELECT pt.id, pt.workspace_id, pt.plane_issue_id, pt.plane_project_id, pt.assignee_email,
+                  pw.base_url, pw.workspace_slug, pw.api_key
+           FROM plane_tasks pt
+           INNER JOIN plane_workspaces pw ON pw.id = pt.workspace_id AND pw.enabled = true
+           WHERE pt.status = 'pending'
+           ORDER BY pt.created_at ASC"#,
     )
     .fetch_all(&state.db)
     .await?;
@@ -220,22 +223,20 @@ async fn plane_tick(state: &AppContext) -> anyhow::Result<()> {
         .into_iter()
         .map(|r| PlanePendingTask {
             id: r.get("id"),
+            workspace_id: r.get("workspace_id"),
             plane_issue_id: r.get("plane_issue_id"),
             plane_project_id: r.get("plane_project_id"),
             assignee_email: r.get("assignee_email"),
+            base_url: r.get("base_url"),
+            workspace_slug: r.get("workspace_slug"),
+            api_key: r.get("api_key"),
         })
         .collect();
 
-    let client = PlaneClient::new(
-        &config.plane_base_url,
-        &config.plane_workspace_slug,
-        &config.plane_api_key,
-    );
-
     for task in tasks {
         let state = state.clone();
-        let client = client.clone();
         tokio::spawn(async move {
+            let client = PlaneClient::new(&task.base_url, &task.workspace_slug, &task.api_key);
             if let Err(e) = plane_dispatch_one(&state, &client, task).await {
                 tracing::warn!("Plane scheduler dispatch error: {e}");
             }
@@ -250,10 +251,11 @@ async fn plane_dispatch_one(
     client: &PlaneClient,
     task: PlanePendingTask,
 ) -> anyhow::Result<()> {
-    // Find binding for this project
+    // Find binding for this (workspace, project)
     let binding = sqlx::query(
-        "SELECT agent_group_id FROM plane_bindings WHERE plane_project_id = $1 AND enabled = true LIMIT 1",
+        "SELECT agent_group_id FROM plane_bindings WHERE workspace_id = $1 AND plane_project_id = $2 AND enabled = true LIMIT 1",
     )
+    .bind(&task.workspace_id)
     .bind(&task.plane_project_id)
     .fetch_optional(&state.db)
     .await?;

@@ -1,11 +1,12 @@
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use shared_kernel::AppContext;
+use sqlx::Row;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -40,14 +41,41 @@ fn verify_signature(secret: &str, body: &[u8], headers: &HeaderMap) -> bool {
     }
 }
 
-/// Receive Plane webhook events.
+/// Receive Plane webhook events for a specific workspace.
 /// Only processes work items moved to "Todo" state → inserts into plane_tasks queue.
 pub async fn plane_webhook(
     State(state): State<AppContext>,
+    Path(workspace_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> StatusCode {
-    if !verify_signature(&state.config.plane_webhook_secret, &body, &headers) {
+    // Look up workspace (must exist and be enabled)
+    let row = match sqlx::query("SELECT webhook_secret, enabled FROM plane_workspaces WHERE id = $1")
+        .bind(&workspace_id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Plane webhook: db error looking up workspace {workspace_id}: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
+
+    let (webhook_secret, enabled): (String, bool) = match row {
+        Some(r) => (r.get("webhook_secret"), r.get("enabled")),
+        None => {
+            warn!("Plane webhook: unknown workspace_id={workspace_id}");
+            return StatusCode::NOT_FOUND;
+        }
+    };
+
+    if !enabled {
+        warn!("Plane webhook: workspace {workspace_id} is disabled, ignoring");
+        return StatusCode::OK;
+    }
+
+    if !verify_signature(&webhook_secret, &body, &headers) {
         return StatusCode::UNAUTHORIZED;
     }
 
@@ -105,9 +133,10 @@ pub async fn plane_webhook(
     // Insert into plane_tasks queue (no dedup — same issue can re-enter after Review Failed)
     let id = Uuid::new_v4().to_string();
     match sqlx::query!(
-        r#"INSERT INTO plane_tasks (id, plane_issue_id, plane_project_id, title, description, priority, assignee_email, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')"#,
+        r#"INSERT INTO plane_tasks (id, workspace_id, plane_issue_id, plane_project_id, title, description, priority, assignee_email, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')"#,
         id,
+        workspace_id,
         issue_id,
         project_id,
         title,
@@ -120,8 +149,8 @@ pub async fn plane_webhook(
     {
         Ok(_) => {
             info!(
-                "Plane webhook: queued issue '{}' ({}) as plane_task {} [assignee={}]",
-                title, issue_id, id, assignee_email
+                "Plane webhook [{}]: queued issue '{}' ({}) as plane_task {} [assignee={}]",
+                workspace_id, title, issue_id, id, assignee_email
             );
         }
         Err(e) => {

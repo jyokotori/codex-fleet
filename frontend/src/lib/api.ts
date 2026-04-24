@@ -579,6 +579,17 @@ export const agentGroupsApi = {
 }
 
 // Plane Integration
+export interface PlaneWorkspace {
+  id: string
+  name: string
+  workspace_url: string
+  api_key_masked: string
+  webhook_secret_masked: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface PlaneProject {
   id: string
   name: string
@@ -587,6 +598,7 @@ export interface PlaneProject {
 
 export interface PlaneBinding {
   id: string
+  workspace_id: string
   plane_project_id: string
   plane_project_name: string
   plane_project_identifier: string
@@ -598,6 +610,7 @@ export interface PlaneBinding {
 
 export interface PlaneTask {
   id: string
+  workspace_id: string
   plane_issue_id: string
   plane_project_id: string
   title: string
@@ -612,19 +625,44 @@ export interface PlaneTask {
 }
 
 export const planeApi = {
-  listProjects: () => request<PlaneProject[]>('/api/plane/projects'),
-  listBindings: () => request<PlaneBinding[]>('/api/plane/bindings'),
-  createBinding: (data: {
+  // Workspaces
+  listWorkspaces: () => request<PlaneWorkspace[]>('/api/plane/workspaces'),
+  createWorkspace: (data: {
+    name: string
+    workspace_url: string
+    api_key: string
+    webhook_secret?: string
+  }) => request<{ id: string }>('/api/plane/workspaces', { method: 'POST', body: JSON.stringify(data) }),
+  updateWorkspace: (id: string, data: {
+    name?: string
+    workspace_url?: string
+    api_key?: string
+    webhook_secret?: string
+  }) => request<void>(`/api/plane/workspaces/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteWorkspace: (id: string) =>
+    request<void>(`/api/plane/workspaces/${id}`, { method: 'DELETE' }),
+  toggleWorkspace: (id: string) =>
+    request<void>(`/api/plane/workspaces/${id}/toggle`, { method: 'POST' }),
+
+  // Projects (scoped to workspace)
+  listWorkspaceProjects: (workspaceId: string) =>
+    request<PlaneProject[]>(`/api/plane/workspaces/${workspaceId}/projects`),
+
+  // Bindings (scoped to workspace)
+  listWorkspaceBindings: (workspaceId: string) =>
+    request<PlaneBinding[]>(`/api/plane/workspaces/${workspaceId}/bindings`),
+  createBinding: (workspaceId: string, data: {
     plane_project_id: string
     plane_project_name: string
     plane_project_identifier: string
     agent_group_id: string
-  }) => request<{ id: string }>('/api/plane/bindings', { method: 'POST', body: JSON.stringify(data) }),
+  }) => request<{ id: string }>(`/api/plane/workspaces/${workspaceId}/bindings`, { method: 'POST', body: JSON.stringify(data) }),
   updateBinding: (id: string, data: { agent_group_id?: string }) =>
     request<void>(`/api/plane/bindings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteBinding: (id: string) =>
     request<void>(`/api/plane/bindings/${id}`, { method: 'DELETE' }),
   toggleBinding: (id: string) =>
     request<void>(`/api/plane/bindings/${id}/toggle`, { method: 'POST' }),
+
   listTasks: () => request<PlaneTask[]>('/api/plane/tasks'),
 }
