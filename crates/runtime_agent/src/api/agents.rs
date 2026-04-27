@@ -1697,33 +1697,29 @@ async fn provision_agent(
         emit(db, agent_id, tx, ev_step_skipped(2, "no-docker mode")).await;
     }
 
-    // Step 3: Install CLI + git (inside docker if use_docker)
-    emit(
-        db,
-        agent_id,
-        tx,
-        ev_step_start(3, "Install CLI & environment"),
-    )
-    .await;
+    // Step 3: Link agent config dir into the CLI's config location
+    emit(db, agent_id, tx, ev_step_start(3, "Link config directory")).await;
 
-    if cli_type == "codex" {
-        let mut codex_found = false;
-        let check_substep = if use_docker {
-            "Checking codex in container"
-        } else {
-            "Checking codex on host"
-        };
-        emit(db, agent_id, tx, ev_substep(3, check_substep)).await;
-        let check_script = "command -v codex >/dev/null 2>&1 && codex --version 2>/dev/null";
-        let check_cmd = if use_docker {
-            target_shell_command(true, container_name, check_script)
-        } else {
-            format!("{}{}", HOST_ENV_SETUP, check_script)
-        };
+    if !use_docker {
+        emit(db, agent_id, tx, ev_step_skipped(3, "no-docker mode")).await;
+    } else if cli_type != "codex" {
+        emit(
+            db,
+            agent_id,
+            tx,
+            ev_step_skipped(3, &format!("cli_type={}", cli_type)),
+        )
+        .await;
+    } else {
+        let link_cmd = target_shell_command(
+            true,
+            container_name,
+            "mkdir -p /root && if [ -e /root/.codex ] && [ ! -L /root/.codex ]; then mv /root/.codex /root/.codex_backup_$(date +%Y%m%d%H%M%S); fi && ln -sfn /agent /root/.codex",
+        );
         match stream_cmd(
             handle,
-            &check_cmd,
-            "command -v codex && codex --version",
+            &link_cmd,
+            "ln -sfn /agent /root/.codex",
             db,
             agent_id,
             tx,
@@ -1731,237 +1727,30 @@ async fn provision_agent(
         )
         .await
         {
-            Ok(0) => {
+            Ok(0) => {}
+            Ok(code) => {
                 emit(
                     db,
                     agent_id,
                     tx,
-                    ev_substep(3, "codex already installed, skipping install"),
+                    ev_warn(
+                        3,
+                        &format!("link /agent -> /root/.codex failed (exit {})", code),
+                    ),
                 )
                 .await;
-                codex_found = true;
             }
-            _ => {}
-        }
-
-        if !codex_found {
-            emit(db, agent_id, tx, ev_substep(3, "Checking npm")).await;
-            let ensure_npm_script = r#"if command -v npm >/dev/null 2>&1; then
-  echo "npm already installed"
-  exit 0
-fi
-run_pm() {
-  if [ "$(id -u)" -eq 0 ]; then "$@";
-  elif command -v sudo >/dev/null 2>&1; then sudo "$@";
-  else "$@";
-  fi
-}
-if command -v apt-get >/dev/null 2>&1; then
-  run_pm apt-get update -qq && DEBIAN_FRONTEND=noninteractive run_pm apt-get install -y nodejs npm -qq
-elif command -v dnf >/dev/null 2>&1; then
-  run_pm dnf install -y nodejs npm
-elif command -v yum >/dev/null 2>&1; then
-  run_pm yum install -y nodejs npm
-elif command -v apk >/dev/null 2>&1; then
-  run_pm apk add --no-cache nodejs npm
-else
-  echo "npm not found and no supported package manager"
-  exit 1
-fi"#;
-            let ensure_npm_cmd =
-                target_shell_command(use_docker, container_name, ensure_npm_script);
-            match stream_cmd(
-                handle,
-                &ensure_npm_cmd,
-                "Checking/installing npm",
-                db,
-                agent_id,
-                tx,
-                3,
-            )
-            .await
-            {
-                Ok(0) => {}
-                Ok(code) => {
-                    let err = format!("Step 3 failed: npm check/install (exit code {})", code);
-                    fail_provision(db, agent_id, tx, 3, &err).await;
-                    return Err(anyhow::anyhow!(err));
-                }
-                Err(e) => {
-                    let err = format!("Step 3 failed: npm check/install: {}", e);
-                    fail_provision(db, agent_id, tx, 3, &err).await;
-                    return Err(anyhow::anyhow!(err));
-                }
-            }
-
-            emit(
-                db,
-                agent_id,
-                tx,
-                ev_substep(3, "Installing @openai/codex (may take a few minutes)"),
-            )
-            .await;
-            let install_codex_script = r#"if npm i -g @openai/codex@latest; then
-  exit 0
-fi
-if command -v sudo >/dev/null 2>&1; then
-  sudo npm i -g @openai/codex@latest
-else
-  exit 1
-fi"#;
-            let install_codex_cmd =
-                target_shell_command(use_docker, container_name, install_codex_script);
-            match stream_cmd(
-                handle,
-                &install_codex_cmd,
-                "npm i -g @openai/codex@latest",
-                db,
-                agent_id,
-                tx,
-                3,
-            )
-            .await
-            {
-                Ok(0) => {}
-                Ok(code) => {
-                    let err = format!("Step 3 failed: codex install (exit code {})", code);
-                    fail_provision(db, agent_id, tx, 3, &err).await;
-                    return Err(anyhow::anyhow!(err));
-                }
-                Err(e) => {
-                    let err = format!("Step 3 failed: codex install: {}", e);
-                    fail_provision(db, agent_id, tx, 3, &err).await;
-                    return Err(anyhow::anyhow!(err));
-                }
-            }
-        }
-
-        if use_docker {
-            emit(db, agent_id, tx, ev_substep(3, "Linking config directory")).await;
-            let link_cmd = target_shell_command(
-                true,
-                container_name,
-                "mkdir -p /root && if [ -e /root/.codex ] && [ ! -L /root/.codex ]; then mv /root/.codex /root/.codex_backup_$(date +%Y%m%d%H%M%S); fi && ln -sfn /agent /root/.codex",
-            );
-            match stream_cmd(
-                handle,
-                &link_cmd,
-                "ln -sfn /agent /root/.codex",
-                db,
-                agent_id,
-                tx,
-                3,
-            )
-            .await
-            {
-                Ok(code) if code != 0 => {
-                    emit(
-                        db,
-                        agent_id,
-                        tx,
-                        ev_warn(
-                            3,
-                            &format!("link /agent -> /root/.codex failed (exit {})", code),
-                        ),
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    emit(
-                        db,
-                        agent_id,
-                        tx,
-                        ev_warn(3, &format!("link /agent -> /root/.codex failed: {}", e)),
-                    )
-                    .await;
-                }
-                _ => {}
-            }
-        }
-    } else {
-        emit(
-            db,
-            agent_id,
-            tx,
-            ev_step_output(
-                3,
-                &format!("(cli_type={}, skipping codex install)", cli_type),
-            ),
-        )
-        .await;
-    }
-
-    // Install git (check first)
-    emit(db, agent_id, tx, ev_substep(3, "Checking git")).await;
-    let ensure_git_script = r#"if command -v git >/dev/null 2>&1; then
-  echo "git already installed"
-  exit 0
-fi
-run_pm() {
-  if [ "$(id -u)" -eq 0 ]; then "$@";
-  elif command -v sudo >/dev/null 2>&1; then sudo "$@";
-  else "$@";
-  fi
-}
-if command -v apt-get >/dev/null 2>&1; then
-  run_pm apt-get update -qq && DEBIAN_FRONTEND=noninteractive run_pm apt-get install -y git -qq
-elif command -v dnf >/dev/null 2>&1; then
-  run_pm dnf install -y git
-elif command -v yum >/dev/null 2>&1; then
-  run_pm yum install -y git
-elif command -v apk >/dev/null 2>&1; then
-  run_pm apk add --no-cache git
-else
-  echo "git not found and no supported package manager"
-  exit 1
-fi"#;
-    let ensure_git_cmd = target_shell_command(use_docker, container_name, ensure_git_script);
-    match stream_cmd(
-        handle,
-        &ensure_git_cmd,
-        "Checking/installing git",
-        db,
-        agent_id,
-        tx,
-        3,
-    )
-    .await
-    {
-        Ok(0) => {
-            emit(db, agent_id, tx, ev_step_done(3)).await;
-        }
-        Ok(code) => {
-            if git_repo.is_empty() {
+            Err(e) => {
                 emit(
                     db,
                     agent_id,
                     tx,
-                    ev_warn(3, &format!("git install failed (exit {})", code)),
+                    ev_warn(3, &format!("link /agent -> /root/.codex failed: {}", e)),
                 )
                 .await;
-                emit(db, agent_id, tx, ev_step_done(3)).await;
-            } else {
-                let err = format!("Step 3 failed: git install (exit code {})", code);
-                fail_provision(db, agent_id, tx, 3, &err).await;
-                return Err(anyhow::anyhow!(err));
             }
         }
-        Err(e) => {
-            if git_repo.is_empty() {
-                emit(
-                    db,
-                    agent_id,
-                    tx,
-                    ev_warn(3, &format!("git install failed: {}", e)),
-                )
-                .await;
-                emit(db, agent_id, tx, ev_step_done(3)).await;
-            } else {
-                let err = format!("Step 3 failed: git install: {}", e);
-                fail_provision(db, agent_id, tx, 3, &err).await;
-                return Err(anyhow::anyhow!(err));
-            }
-        }
+        emit(db, agent_id, tx, ev_step_done(3)).await;
     }
 
     // Step 4: Git clone / sync (skip if no git_repo)

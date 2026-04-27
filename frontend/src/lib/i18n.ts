@@ -226,7 +226,7 @@ export const translations = {
       steps: {
         1: 'Create dirs & write configs',
         2: 'Docker setup',
-        3: 'Install CLI & environment',
+        3: 'Link config directory',
         4: 'Git clone / sync',
       } as Record<number, string>,
       status: {
@@ -646,7 +646,7 @@ export const translations = {
       steps: {
         1: '创建目录 & 写入配置',
         2: 'Docker 启动 & 初始化',
-        3: '安装 CLI & 环境',
+        3: '链接配置目录',
         4: 'Git clone / 同步',
       } as Record<number, string>,
       status: {
