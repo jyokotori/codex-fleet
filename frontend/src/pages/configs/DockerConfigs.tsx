@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Edit2, Copy, Container, X } from 'lucide-react'
-import { dockerConfigsApi, type DockerConfig, type PortMapping, type EnvVar, type VolumeMapping } from '../../lib/api'
+import { dockerConfigsApi, type DockerConfig, type PortMapping, type EnvVar } from '../../lib/api'
 import { useI18n } from '../../hooks/useI18n'
 
 // ─── Form state ─────────────────────────────────────────────────────────────
@@ -10,7 +10,6 @@ interface FormState {
   name: string
   port_mappings: PortMapping[]
   env_vars: EnvVar[]
-  volume_mappings: VolumeMapping[]
   init_script: string
 }
 
@@ -18,7 +17,6 @@ const emptyForm = (): FormState => ({
   name: '',
   port_mappings: [],
   env_vars: [],
-  volume_mappings: [],
   init_script: '',
 })
 
@@ -26,7 +24,6 @@ const fromConfig = (c: DockerConfig): FormState => ({
   name: c.name,
   port_mappings: c.port_mappings,
   env_vars: c.env_vars,
-  volume_mappings: c.volume_mappings,
   init_script: c.init_script,
 })
 
@@ -185,102 +182,11 @@ function EnvVarsEditor({
   )
 }
 
-function VolumeMappingsEditor({
-  rows,
-  onChange,
-  t,
-}: {
-  rows: VolumeMapping[]
-  onChange: (v: VolumeMapping[]) => void
-  t: ReturnType<typeof useI18n>['t']
-}) {
-  function add() {
-    onChange([...rows, { host_path: '', container_path: '', mode: 'rw' }])
-  }
-  function remove(i: number) {
-    onChange(rows.filter((_, idx) => idx !== i))
-  }
-  function update(i: number, field: keyof VolumeMapping, val: string) {
-    onChange(rows.map((r, idx) => (idx === i ? { ...r, [field]: val } : r)))
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t.configs.volumeMappings}</span>
-        <button type="button" onClick={add} className="text-xs text-sky-600 dark:text-sky-400 hover:underline">
-          {t.configs.addVolume}
-        </button>
-      </div>
-      {rows.length > 0 && (
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 w-[42%]">{t.configs.hostPath}</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{t.configs.containerPath}</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 w-[80px]">{t.configs.mountMode}</th>
-                <th className="w-8" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {rows.map((row, i) => (
-                <tr key={i} className="bg-white dark:bg-gray-900">
-                  <td className="px-2 py-1.5">
-                    <input
-                      className="input py-1 text-sm w-full font-mono"
-                      placeholder="/host/data"
-                      value={row.host_path}
-                      onChange={e => update(i, 'host_path', e.target.value)}
-                    />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <input
-                      className="input py-1 text-sm w-full font-mono"
-                      placeholder="/app/data"
-                      value={row.container_path}
-                      onChange={e => update(i, 'container_path', e.target.value)}
-                    />
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-gray-600 text-xs font-mono w-fit">
-                      {(['rw', 'ro'] as const).map(m => (
-                        <button
-                          key={m}
-                          type="button"
-                          onClick={() => update(i, 'mode', m)}
-                          className={`px-2.5 py-1 transition-colors ${
-                            row.mode === m
-                              ? 'bg-sky-500 text-white'
-                              : 'bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-                          }`}
-                        >
-                          {m}
-                        </button>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-2 py-1.5 text-center">
-                    <button type="button" onClick={() => remove(i)} className="text-gray-400 hover:text-red-500 dark:hover:text-red-400">
-                      <X size={14} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Summary helpers ─────────────────────────────────────────────────────────
 
 function ConfigSummary({ config }: { config: DockerConfig }) {
   const ports = config.port_mappings
   const envs = config.env_vars
-  const vols = config.volume_mappings
 
   return (
     <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
@@ -297,19 +203,13 @@ function ConfigSummary({ config }: { config: DockerConfig }) {
           {envs.length} var{envs.length !== 1 ? 's' : ''}
         </span>
       )}
-      {vols.length > 0 && (
-        <span>
-          <span className="text-gray-400 dark:text-gray-500">Volumes: </span>
-          {vols.length} mount{vols.length !== 1 ? 's' : ''}
-        </span>
-      )}
       {config.init_script.trim() && (
         <span>
           <span className="text-gray-400 dark:text-gray-500">Init script: </span>
           {config.init_script.split('\n').filter(Boolean).length} line{config.init_script.split('\n').filter(Boolean).length !== 1 ? 's' : ''}
         </span>
       )}
-      {ports.length === 0 && envs.length === 0 && vols.length === 0 && !config.init_script.trim() && (
+      {ports.length === 0 && envs.length === 0 && !config.init_script.trim() && (
         <span className="italic">empty config</span>
       )}
     </div>
@@ -487,13 +387,6 @@ export default function DockerConfigs() {
                 <EnvVarsEditor
                   rows={form.env_vars}
                   onChange={v => setForm(f => ({ ...f, env_vars: v }))}
-                  t={t}
-                />
-
-                {/* Volume Mappings */}
-                <VolumeMappingsEditor
-                  rows={form.volume_mappings}
-                  onChange={v => setForm(f => ({ ...f, volume_mappings: v }))}
                   t={t}
                 />
 

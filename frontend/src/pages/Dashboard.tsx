@@ -75,7 +75,7 @@ export default function Dashboard() {
                     <Bot size={16} className="text-gray-400" />
                     <div>
                       <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{agent.name}</p>
-                      <p className="text-xs text-gray-500">{agent.cli_type}</p>
+                      <p className="text-xs text-gray-500">{agent.cli_inits.map(ci => ci.cli_type).join(', ') || '—'}</p>
                     </div>
                   </div>
                   <AgentStatusBadge status={agent.status} t={t} />

@@ -4,8 +4,10 @@ import { Plus, Trash2, ToggleLeft, ToggleRight, Plane, Pencil, ChevronDown, Chev
 import {
   planeApi,
   agentGroupsApi,
+  clisApi,
   type PlaneWorkspace,
   type PlaneBinding,
+  type PlaneBindingLabelInput,
   type PlaneProject,
   type PlaneTask,
 } from '../lib/api'
@@ -18,7 +20,7 @@ export default function PlaneIntegration() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('workspaces')
   const [wsModal, setWsModal] = useState<{ mode: 'create' } | { mode: 'edit'; ws: PlaneWorkspace } | null>(null)
-  const [bindingModal, setBindingModal] = useState<PlaneWorkspace | null>(null)
+  const [bindingModal, setBindingModal] = useState<{ workspace: PlaneWorkspace; binding?: PlaneBinding } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const { data: workspaces = [] } = useQuery({ queryKey: ['plane-workspaces'], queryFn: planeApi.listWorkspaces })
@@ -117,7 +119,8 @@ export default function PlaneIntegration() {
                       deleteWorkspaceMut.mutate(ws.id)
                     }
                   }}
-                  onAddBinding={() => setBindingModal(ws)}
+                  onAddBinding={() => setBindingModal({ workspace: ws })}
+                  onEditBinding={(b) => setBindingModal({ workspace: ws, binding: b })}
                 />
               ))}
             </div>
@@ -177,10 +180,11 @@ export default function PlaneIntegration() {
 
       {bindingModal && (
         <BindingModal
-          workspace={bindingModal}
+          workspace={bindingModal.workspace}
+          binding={bindingModal.binding}
           onClose={() => setBindingModal(null)}
           onSaved={() => {
-            qc.invalidateQueries({ queryKey: ['plane-bindings', bindingModal.id] })
+            qc.invalidateQueries({ queryKey: ['plane-bindings', bindingModal.workspace.id] })
             setBindingModal(null)
           }}
         />
@@ -199,6 +203,7 @@ function WorkspaceCard({
   onToggle,
   onDelete,
   onAddBinding,
+  onEditBinding,
 }: {
   workspace: PlaneWorkspace
   expanded: boolean
@@ -207,6 +212,7 @@ function WorkspaceCard({
   onToggle: () => void
   onDelete: () => void
   onAddBinding: () => void
+  onEditBinding: (b: PlaneBinding) => void
 }) {
   const { t } = useI18n()
   const qc = useQueryClient()
@@ -304,46 +310,66 @@ function WorkspaceCard({
             {bindings.length === 0 ? (
               <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">{t.plane.noBindings}</p>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b dark:border-gray-700">
-                    <th className="text-left py-2 px-2 font-medium text-gray-500 dark:text-gray-400">{t.plane.planeProject}</th>
-                    <th className="text-left py-2 px-2 font-medium text-gray-500 dark:text-gray-400">{t.plane.agentGroup}</th>
-                    <th className="text-center py-2 px-2 font-medium text-gray-500 dark:text-gray-400">Status</th>
-                    <th className="text-right py-2 px-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bindings.map((b: PlaneBinding) => (
-                    <tr key={b.id} className="border-b dark:border-gray-700/50">
-                      <td className="py-2 px-2 dark:text-white">
-                        <span className="font-medium">{b.plane_project_name}</span>
-                        {b.plane_project_identifier && (
-                          <span className="text-gray-400 ml-2 text-xs">{b.plane_project_identifier}</span>
+              <div className="space-y-2">
+                {bindings.map((b: PlaneBinding) => (
+                  <div key={b.id} className="border rounded-lg dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium dark:text-white">{b.plane_project_name}</span>
+                          {b.plane_project_identifier && (
+                            <span className="text-gray-400 text-xs">{b.plane_project_identifier}</span>
+                          )}
+                          <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                            {b.agent_group_name || b.agent_group_id.slice(0, 8)}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">
+                          <span className="font-mono">{b.accept_state_name}</span>
+                          <span className="mx-1.5">→</span>
+                          <span className="font-mono">{b.in_progress_state_name}</span>
+                          <span className="mx-1.5">→</span>
+                          <span className="font-mono">{b.completion_state_name}</span>
+                        </div>
+                        {b.labels.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {b.labels.map(lb => (
+                              <span
+                                key={lb.label_id}
+                                className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
+                              >
+                                <span className="font-medium">{lb.label_name}</span>
+                                <span className="text-gray-400">→</span>
+                                <span className="font-mono">{lb.cli_type}</span>
+                                <span className="text-[10px] text-gray-400">p{lb.priority}</span>
+                              </span>
+                            ))}
+                          </div>
                         )}
-                      </td>
-                      <td className="py-2 px-2 dark:text-gray-300">{b.agent_group_name || b.agent_group_id.slice(0, 8)}</td>
-                      <td className="py-2 px-2 text-center">
-                        <button onClick={() => toggleBindingMut.mutate(b.id)} className="inline-flex items-center gap-1">
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => toggleBindingMut.mutate(b.id)} title={b.enabled ? 'Disable' : 'Enable'}>
                           {b.enabled ? (
-                            <ToggleRight size={18} className="text-green-500" />
+                            <ToggleRight size={20} className="text-green-500" />
                           ) : (
-                            <ToggleLeft size={18} className="text-gray-400" />
+                            <ToggleLeft size={20} className="text-gray-400" />
                           )}
                         </button>
-                      </td>
-                      <td className="py-2 px-2 text-right">
+                        <button onClick={() => onEditBinding(b)} className="p-1 text-gray-500 hover:text-sky-600" title="Edit">
+                          <Pencil size={14} />
+                        </button>
                         <button
                           onClick={() => { if (confirm('Delete binding?')) deleteBindingMut.mutate(b.id) }}
                           className="p-1 text-gray-500 hover:text-red-600"
+                          title="Delete"
                         >
                           <Trash2 size={14} />
                         </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -484,83 +510,334 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-// ── Binding Create Modal (scoped to workspace) ──
+// ── Binding Create/Edit Modal (scoped to workspace) ──
+
+interface LabelRow {
+  label_id: string
+  cli_type: string
+  priority: number
+}
 
 function BindingModal({
   workspace,
+  binding,
   onClose,
   onSaved,
 }: {
   workspace: PlaneWorkspace
+  binding?: PlaneBinding
   onClose: () => void
   onSaved: () => void
 }) {
   const { t } = useI18n()
-  const [projectId, setProjectId] = useState('')
-  const [groupId, setGroupId] = useState('')
+  const isEdit = !!binding
+  const [projectId, setProjectId] = useState(binding?.plane_project_id ?? '')
+  const [groupId, setGroupId] = useState(binding?.agent_group_id ?? '')
+  const [acceptStateId, setAcceptStateId] = useState(binding?.accept_state_id ?? '')
+  const [inProgressStateId, setInProgressStateId] = useState(binding?.in_progress_state_id ?? '')
+  const [completionStateId, setCompletionStateId] = useState(binding?.completion_state_id ?? '')
+  const [labelRows, setLabelRows] = useState<LabelRow[]>(
+    binding?.labels.map(l => ({ label_id: l.label_id, cli_type: l.cli_type, priority: l.priority })) ?? []
+  )
+  const [error, setError] = useState<string | null>(null)
 
   const { data: projects = [], isError: projectsError } = useQuery({
     queryKey: ['plane-projects', workspace.id],
     queryFn: () => planeApi.listWorkspaceProjects(workspace.id),
   })
   const { data: groups = [] } = useQuery({ queryKey: ['agent-groups'], queryFn: agentGroupsApi.list })
+  const { data: clis = [] } = useQuery({ queryKey: ['clis'], queryFn: clisApi.list })
+
+  const { data: states = [], isLoading: statesLoading } = useQuery({
+    queryKey: ['plane-states', workspace.id, projectId],
+    queryFn: () => planeApi.listProjectStates(workspace.id, projectId),
+    enabled: !!projectId,
+  })
+  const { data: labels = [], isLoading: labelsLoading } = useQuery({
+    queryKey: ['plane-labels', workspace.id, projectId],
+    queryFn: () => planeApi.listProjectLabels(workspace.id, projectId),
+    enabled: !!projectId,
+  })
+
+  // When project changes (in create mode), reset state/label selections
+  function handleProjectChange(pid: string) {
+    setProjectId(pid)
+    if (!isEdit) {
+      setAcceptStateId('')
+      setInProgressStateId('')
+      setCompletionStateId('')
+      setLabelRows([])
+    }
+  }
+
+  function addLabelRow() {
+    const usedIds = new Set(labelRows.map(r => r.label_id))
+    const firstUnused = labels.find(l => !usedIds.has(l.id))
+    const nextPriority = labelRows.length === 0 ? 0 : Math.max(...labelRows.map(r => r.priority)) + 1
+    setLabelRows([
+      ...labelRows,
+      { label_id: firstUnused?.id ?? '', cli_type: 'codex', priority: nextPriority },
+    ])
+  }
+  function updateLabelRow(idx: number, patch: Partial<LabelRow>) {
+    setLabelRows(rows => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+  function removeLabelRow(idx: number) {
+    setLabelRows(rows => rows.filter((_, i) => i !== idx))
+  }
 
   const mut = useMutation({
-    mutationFn: () => {
-      const project = projects.find((p: PlaneProject) => p.id === projectId)
+    mutationFn: async () => {
+      setError(null)
+      const project = projects.find(p => p.id === projectId)
       if (!project) throw new Error('Select a project')
+      const accept = states.find(s => s.id === acceptStateId)
+      const inProgress = states.find(s => s.id === inProgressStateId)
+      const completion = states.find(s => s.id === completionStateId)
+      if (!accept || !inProgress || !completion) throw new Error('Select all three states')
+
+      const labelInputs: PlaneBindingLabelInput[] = labelRows.map(r => {
+        const lb = labels.find(l => l.id === r.label_id)
+        if (!lb) throw new Error(`Unknown label ${r.label_id}`)
+        return {
+          label_id: lb.id,
+          label_name: lb.name,
+          cli_type: r.cli_type,
+          priority: r.priority,
+        }
+      })
+
+      if (labelInputs.length === 0) throw new Error('At least one label is required')
+      const seenIds = new Set<string>()
+      const seenPri = new Set<number>()
+      for (const li of labelInputs) {
+        if (seenIds.has(li.label_id)) throw new Error(`Duplicate label: ${li.label_name}`)
+        if (seenPri.has(li.priority)) throw new Error(`Duplicate priority: ${li.priority}`)
+        seenIds.add(li.label_id)
+        seenPri.add(li.priority)
+      }
+      const runnableCli = clis.find(c => !c.wip)?.value ?? 'codex'
+      if (!labelInputs.some(li => clis.find(c => c.value === li.cli_type && !c.wip))) {
+        throw new Error(`At least one label must use a runnable CLI (e.g. ${runnableCli})`)
+      }
+
+      if (isEdit && binding) {
+        return planeApi.updateBinding(binding.id, {
+          agent_group_id: groupId,
+          accept_state_id: accept.id,
+          accept_state_name: accept.name,
+          in_progress_state_id: inProgress.id,
+          in_progress_state_name: inProgress.name,
+          completion_state_id: completion.id,
+          completion_state_name: completion.name,
+          labels: labelInputs,
+        })
+      }
       return planeApi.createBinding(workspace.id, {
         plane_project_id: project.id,
         plane_project_name: project.name,
         plane_project_identifier: project.identifier,
         agent_group_id: groupId,
+        accept_state_id: accept.id,
+        accept_state_name: accept.name,
+        in_progress_state_id: inProgress.id,
+        in_progress_state_name: inProgress.name,
+        completion_state_id: completion.id,
+        completion_state_name: completion.name,
+        labels: labelInputs,
       })
     },
     onSuccess: onSaved,
+    onError: (e: Error) => setError(e.message),
   })
 
+  const stateOption = (s: { id: string; name: string; group: string }) =>
+    `${s.name}${s.group ? ` (${s.group})` : ''}`
+  const usedLabelIds = new Set(labelRows.map(r => r.label_id))
+
+  const canSubmit =
+    !!projectId && !!groupId && !!acceptStateId && !!inProgressStateId && !!completionStateId && labelRows.length > 0
+
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <h2 className="text-lg font-bold mb-1 dark:text-white">{t.plane.addBinding}</h2>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 w-full max-w-2xl my-8"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-bold mb-1 dark:text-white">
+          {isEdit ? 'Edit binding' : t.plane.addBinding}
+        </h2>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{workspace.name}</p>
         {projectsError && (
           <p className="text-amber-600 dark:text-amber-400 text-sm mb-4">{t.plane.projectsFetchFailed}</p>
         )}
         <div className="space-y-4">
-          <Field label={t.plane.planeProject}>
-            <select
-              value={projectId}
-              onChange={e => setProjectId(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            >
-              <option value="">{t.plane.selectProject}</option>
-              {projects.map((p: PlaneProject) => (
-                <option key={p.id} value={p.id}>{p.name} ({p.identifier})</option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t.plane.agentGroup}>
-            <select
-              value={groupId}
-              onChange={e => setGroupId(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            >
-              <option value="">{t.plane.selectGroup}</option>
-              {groups.map(g => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t.plane.planeProject}>
+              <select
+                value={projectId}
+                onChange={e => handleProjectChange(e.target.value)}
+                disabled={isEdit}
+                className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white disabled:opacity-60"
+              >
+                <option value="">{t.plane.selectProject}</option>
+                {projects.map((p: PlaneProject) => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.identifier})</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t.plane.agentGroup}>
+              <select
+                value={groupId}
+                onChange={e => setGroupId(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              >
+                <option value="">{t.plane.selectGroup}</option>
+                {groups.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          {projectId && (
+            <>
+              <div>
+                <label className="block text-sm font-medium mb-2 dark:text-gray-300">States</label>
+                {statesLoading ? (
+                  <p className="text-xs text-gray-500">Loading states…</p>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    <Field label="Accept (entry)">
+                      <select
+                        value={acceptStateId}
+                        onChange={e => setAcceptStateId(e.target.value)}
+                        className="w-full px-2 py-1.5 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      >
+                        <option value="">— select —</option>
+                        {states.map(s => <option key={s.id} value={s.id}>{stateOption(s)}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="In progress">
+                      <select
+                        value={inProgressStateId}
+                        onChange={e => setInProgressStateId(e.target.value)}
+                        className="w-full px-2 py-1.5 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      >
+                        <option value="">— select —</option>
+                        {states.map(s => <option key={s.id} value={s.id}>{stateOption(s)}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Completion">
+                      <select
+                        value={completionStateId}
+                        onChange={e => setCompletionStateId(e.target.value)}
+                        className="w-full px-2 py-1.5 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      >
+                        <option value="">— select —</option>
+                        {states.map(s => <option key={s.id} value={s.id}>{stateOption(s)}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium dark:text-gray-300">Labels → CLI</label>
+                  <button
+                    type="button"
+                    onClick={addLabelRow}
+                    disabled={labelsLoading || labels.length === 0 || usedLabelIds.size >= labels.length}
+                    className="text-xs text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-50"
+                  >
+                    + Add label
+                  </button>
+                </div>
+                {labelsLoading ? (
+                  <p className="text-xs text-gray-500">Loading labels…</p>
+                ) : labels.length === 0 ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    No labels in this project. Create a label in Plane first.
+                  </p>
+                ) : labelRows.length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                    Add at least one label, with a non-WIP CLI.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {labelRows.map((row, idx) => {
+                      const otherIds = new Set(labelRows.filter((_, i) => i !== idx).map(r => r.label_id))
+                      const lb = labels.find(l => l.id === row.label_id)
+                      return (
+                        <div
+                          key={idx}
+                          className="flex items-center gap-2 border rounded-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 px-2 py-2"
+                        >
+                          {lb?.color && (
+                            <span
+                              className="w-3 h-3 rounded-full shrink-0"
+                              style={{ backgroundColor: lb.color }}
+                              title={lb.color}
+                            />
+                          )}
+                          <select
+                            value={row.label_id}
+                            onChange={e => updateLabelRow(idx, { label_id: e.target.value })}
+                            className="flex-1 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                          >
+                            <option value="">— label —</option>
+                            {labels.map(l => (
+                              <option key={l.id} value={l.id} disabled={otherIds.has(l.id)}>
+                                {l.name}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={row.cli_type}
+                            onChange={e => updateLabelRow(idx, { cli_type: e.target.value })}
+                            className="w-40 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                          >
+                            {clis.map(c => (
+                              <option key={c.value} value={c.value}>
+                                {c.label}{c.wip ? ' (WIP)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            value={row.priority}
+                            onChange={e => updateLabelRow(idx, { priority: parseInt(e.target.value, 10) || 0 })}
+                            className="w-16 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            title="Priority (lower = higher priority on conflict)"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeLabelRow(idx)}
+                            className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 text-sm"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         </div>
         <div className="flex justify-end gap-2 mt-6">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">{t.common.cancel}</button>
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">
+            {t.common.cancel}
+          </button>
           <button
             onClick={() => mut.mutate()}
-            disabled={!projectId || !groupId || mut.isPending}
+            disabled={!canSubmit || mut.isPending}
             className="px-4 py-2 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-50"
           >
-            {t.common.create}
+            {mut.isPending ? '...' : isEdit ? t.common.save : t.common.create}
           </button>
         </div>
       </div>

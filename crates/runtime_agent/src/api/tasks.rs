@@ -29,6 +29,9 @@ pub async fn is_agent_busy(db: &sqlx::PgPool, agent_id: &str) -> Result<bool> {
 }
 
 /// Core task dispatch logic shared by the HTTP handler and the scheduler.
+///
+/// Callers must hold `state.agent_lock(agent_id)` to keep the busy-check
+/// atomic with respect to other dispatchers.
 pub async fn dispatch_task_for_agent(
     state: &AppContext,
     agent_id: &str,
@@ -230,12 +233,16 @@ pub async fn dispatch_task_for_agent(
         .await;
 
         // ── Plane write-back ──
-        // Check if this task is linked to a plane_task; join workspace to get credentials.
+        // Both success and failure transition to the binding's completion_state.
         if let Ok(Some(pt_row)) = sqlx::query(
             r#"SELECT pt.id, pt.plane_issue_id, pt.plane_project_id,
-                      pw.base_url, pw.workspace_slug, pw.api_key
+                      pw.base_url, pw.workspace_slug, pw.api_key,
+                      pb.completion_state_id
                FROM plane_tasks pt
                INNER JOIN plane_workspaces pw ON pw.id = pt.workspace_id
+               LEFT JOIN plane_bindings pb
+                 ON pb.workspace_id = pt.workspace_id
+                AND pb.plane_project_id = pt.plane_project_id
                WHERE pt.task_id = $1 AND pt.status = 'dispatched'"#,
         )
         .bind(&task_id)
@@ -248,50 +255,47 @@ pub async fn dispatch_task_for_agent(
             let base_url: String = pt_row.get("base_url");
             let workspace_slug: String = pt_row.get("workspace_slug");
             let api_key: String = pt_row.get("api_key");
+            let completion_state_id: Option<String> = pt_row.try_get("completion_state_id").ok();
 
             let client = PlaneClient::new(&base_url, &workspace_slug, &api_key);
 
-            if status == "agent_completed" {
-                // Update plane_task status
-                let _ = sqlx::query("UPDATE plane_tasks SET status = 'completed', updated_at = NOW() WHERE id = $1")
-                    .bind(&pt_id).execute(&db).await;
-                // Set Plane → "Human Review" (unconditional — actually done)
-                if let Err(e) = client.update_issue_state(&plane_project_id, &plane_issue_id, "Human Review").await {
-                    tracing::warn!("Plane write-back: failed to set Human Review for {plane_issue_id}: {e}");
-                }
-                // Comment with result_md
-                let comment = format!("<h3>Agent completed</h3><pre>{}</pre>",
-                    html_escape::encode_text(&result_md));
-                if let Err(e) = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await {
-                    tracing::warn!("Plane write-back: failed to add comment for {plane_issue_id}: {e}");
+            let (new_status, header) = if status == "agent_completed" {
+                ("completed", "Agent completed")
+            } else {
+                ("failed", "Agent task failed")
+            };
+
+            let _ = sqlx::query("UPDATE plane_tasks SET status = $1, updated_at = NOW() WHERE id = $2")
+                .bind(new_status)
+                .bind(&pt_id)
+                .execute(&db)
+                .await;
+
+            if let Some(state_id) = completion_state_id.as_deref() {
+                if let Err(e) = client
+                    .update_issue_state_by_id(&plane_project_id, &plane_issue_id, state_id)
+                    .await
+                {
+                    tracing::warn!(
+                        "Plane write-back: failed to set completion state for {plane_issue_id}: {e}"
+                    );
                 }
             } else {
-                // agent_failed
-                let _ = sqlx::query("UPDATE plane_tasks SET status = 'failed', updated_at = NOW() WHERE id = $1")
-                    .bind(&pt_id).execute(&db).await;
-                // Check current state before setting Review Failed
-                match client.get_issue_state_name(&plane_project_id, &plane_issue_id).await {
-                    Ok(current) if current == "In Progress" => {
-                        if let Err(e) = client.update_issue_state(&plane_project_id, &plane_issue_id, "Review Failed").await {
-                            tracing::warn!("Plane write-back: failed to set Review Failed for {plane_issue_id}: {e}");
-                        }
-                        let comment = format!("<h3>Agent task failed</h3><pre>{}</pre>",
-                            html_escape::encode_text(&result_md));
-                        let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
-                    }
-                    Ok(current) => {
-                        tracing::warn!("Plane write-back: issue {plane_issue_id} state is '{current}' (expected In Progress), not updating");
-                        let comment = format!(
-                            "<p>Agent task failed, but Plane state is <strong>{}</strong> (expected In Progress), not updating state.</p><pre>{}</pre>",
-                            html_escape::encode_text(&current),
-                            html_escape::encode_text(&result_md)
-                        );
-                        let _ = client.add_comment(&plane_project_id, &plane_issue_id, &comment).await;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Plane write-back: failed to get state for {plane_issue_id}: {e}");
-                    }
-                }
+                tracing::warn!(
+                    "Plane write-back: binding for {plane_issue_id} no longer exists; skipping state transition"
+                );
+            }
+
+            let comment = format!(
+                "<h3>{}</h3><pre>{}</pre>",
+                header,
+                html_escape::encode_text(&result_md)
+            );
+            if let Err(e) = client
+                .add_comment(&plane_project_id, &plane_issue_id, &comment)
+                .await
+            {
+                tracing::warn!("Plane write-back: failed to add comment for {plane_issue_id}: {e}");
             }
         }
 
@@ -442,13 +446,18 @@ pub async fn create_task(
         ));
     }
 
-    // Block dispatch if agent is busy
+    let title = req.title.unwrap_or_default();
+    let notification_ids = req.notification_ids.unwrap_or_default();
+
+    // Acquire per-agent dispatch lock so busy-check + INSERT is atomic
+    // across HTTP handlers and the scheduler.
+    let lock = state.agent_lock(&agent_id).await;
+    let _guard = lock.lock().await;
+
     if is_agent_busy(&state.db, &agent_id).await? {
         return Err(AppError::Conflict("Agent is busy".into()));
     }
 
-    let title = req.title.unwrap_or_default();
-    let notification_ids = req.notification_ids.unwrap_or_default();
     let task = dispatch_task_for_agent(
         &state,
         &agent_id,

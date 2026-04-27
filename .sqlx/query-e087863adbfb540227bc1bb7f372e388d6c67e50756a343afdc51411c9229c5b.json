@@ -1,11 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE docker_configs SET name=$1, port_mappings=$2, env_vars=$3, volume_mappings=$4, init_script=$5, updated_at=$6 WHERE id=$7",
+  "query": "UPDATE docker_configs SET name=$1, port_mappings=$2, env_vars=$3, init_script=$4, updated_at=$5 WHERE id=$6",
   "describe": {
     "columns": [],
     "parameters": {
       "Left": [
-        "Text",
         "Text",
         "Text",
         "Text",
@@ -16,5 +15,5 @@
     },
     "nullable": []
   },
-  "hash": "d7673def48cb9a2345bdb938db300b39fdceba0b7de8357a8408993e8193ee41"
+  "hash": "e087863adbfb540227bc1bb7f372e388d6c67e50756a343afdc51411c9229c5b"
 }

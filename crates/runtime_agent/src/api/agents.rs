@@ -37,6 +37,33 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+async fn fetch_agent_cli_inits(
+    db: &sqlx::PgPool,
+    agent_id: &str,
+) -> std::result::Result<Vec<AgentCliInit>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT cli_type, codex_config_id, agents_md_id, priority
+           FROM agent_cli_inits WHERE agent_id = $1
+           ORDER BY priority ASC"#,
+        agent_id
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| AgentCliInit {
+            cli_type: r.cli_type,
+            codex_config_id: r.codex_config_id,
+            agents_md_id: r.agents_md_id,
+            priority: r.priority,
+        })
+        .collect())
+}
+
+fn agent_workspace_volume(agent_id: &str) -> String {
+    format!("codex-agent-{}-ws", agent_id)
+}
+
 fn agent_workspace_dir(agent_id: &str) -> String {
     format!("$HOME/.codex-fleet/{}/workspace", agent_id)
 }
@@ -149,6 +176,15 @@ mod tests {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentCliInit {
+    pub cli_type: String,
+    pub codex_config_id: Option<String>,
+    pub agents_md_id: Option<String>,
+    #[serde(default)]
+    pub priority: i32,
+}
+
 #[derive(Serialize, Clone)]
 pub struct Agent {
     pub id: String,
@@ -160,9 +196,7 @@ pub struct Agent {
     pub git_branch: String,
     pub git_auth_type: String,
     pub git_username: Option<String>,
-    pub cli_type: String,
-    pub codex_config_id: Option<String>,
-    pub agents_md_id: Option<String>,
+    pub cli_inits: Vec<AgentCliInit>,
     pub docker_config_id: Option<String>,
     pub docker_image: String,
     pub docker_container_name: Option<String>,
@@ -186,9 +220,8 @@ pub struct CreateAgentRequest {
     pub git_auth_type: Option<String>,
     pub git_username: Option<String>,
     pub git_password: Option<String>,
-    pub cli_type: String,
-    pub codex_config_id: Option<String>,
-    pub agents_md_id: Option<String>,
+    #[serde(default)]
+    pub cli_inits: Vec<AgentCliInit>,
     pub docker_config_id: Option<String>,
     pub docker_image: Option<String>,
     pub use_docker: Option<bool>,
@@ -198,8 +231,8 @@ pub struct CreateAgentRequest {
 pub struct UpdateAgentRequest {
     pub name: Option<String>,
     pub user_id: Option<String>,
-    pub codex_config_id: Option<String>,
-    pub agents_md_id: Option<String>,
+    /// When provided, completely replaces existing cli_inits.
+    pub cli_inits: Option<Vec<AgentCliInit>>,
 }
 
 fn unix_now() -> i64 {
@@ -779,12 +812,10 @@ pub async fn list_agents(
     Extension(auth): Extension<shared_kernel::AuthContext>,
 ) -> Result<Json<Vec<Agent>>> {
     let is_admin = auth.has_role("admin");
-
-    // Exclude heavy fields (provision_log, provision_steps) from list query
     let rows = sqlx::query(
         r#"SELECT a.id, a.name, a.server_id, a.user_id, u.display_name AS user_display_name,
            a.git_repo, a.git_branch, a.git_auth_type, a.git_username,
-           a.cli_type, a.codex_config_id, a.agents_md_id, a.docker_config_id,
+           a.docker_config_id,
            a.docker_image, a.docker_container_name, a.container_id,
            a.workdir, a.use_docker, a.status, a.created_at
            FROM agents a
@@ -804,6 +835,29 @@ pub async fn list_agents(
     .unwrap_or_default();
     let busy_set: std::collections::HashSet<String> = busy_rows.into_iter().collect();
 
+    // Batch-fetch cli_inits for all agents
+    let cli_init_rows = sqlx::query!(
+        r#"SELECT agent_id, cli_type, codex_config_id, agents_md_id, priority
+           FROM agent_cli_inits
+           ORDER BY priority ASC"#,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let mut cli_inits_by_agent: std::collections::HashMap<String, Vec<AgentCliInit>> =
+        std::collections::HashMap::new();
+    for r in cli_init_rows {
+        cli_inits_by_agent
+            .entry(r.agent_id)
+            .or_default()
+            .push(AgentCliInit {
+                cli_type: r.cli_type,
+                codex_config_id: r.codex_config_id,
+                agents_md_id: r.agents_md_id,
+                priority: r.priority,
+            });
+    }
+
     let agents = rows
         .into_iter()
         .filter_map(|r| {
@@ -817,6 +871,7 @@ pub async fn list_agents(
             }
             let id: String = r.get("id");
             let is_busy = busy_set.contains(&id);
+            let cli_inits = cli_inits_by_agent.remove(&id).unwrap_or_default();
             Some(Agent {
                 id,
                 name: r.get("name"),
@@ -827,9 +882,7 @@ pub async fn list_agents(
                 git_branch: r.get("git_branch"),
                 git_auth_type: r.get("git_auth_type"),
                 git_username: r.get("git_username"),
-                cli_type: r.get("cli_type"),
-                codex_config_id: r.get("codex_config_id"),
-                agents_md_id: r.get("agents_md_id"),
+                cli_inits,
                 docker_config_id: r.get("docker_config_id"),
                 docker_image: r.get("docker_image"),
                 docker_container_name: r.get("docker_container_name"),
@@ -1033,7 +1086,7 @@ pub async fn get_agent(
     let r = sqlx::query(
         r#"SELECT a.id, a.name, a.server_id, a.user_id, u.display_name AS user_display_name,
            a.git_repo, a.git_branch, a.git_auth_type, a.git_username,
-           a.cli_type, a.codex_config_id, a.agents_md_id, a.docker_config_id,
+           a.docker_config_id,
            a.docker_image, a.docker_container_name, a.container_id,
            a.workdir, a.use_docker, a.status, a.provision_log, a.provision_steps, a.created_at
            FROM agents a
@@ -1065,6 +1118,8 @@ pub async fn get_agent(
     .await
     .unwrap_or(false);
 
+    let cli_inits = fetch_agent_cli_inits(&state.db, &id).await.unwrap_or_default();
+
     let mut agent = Agent {
         id,
         name: r.get("name"),
@@ -1075,9 +1130,7 @@ pub async fn get_agent(
         git_branch: r.get("git_branch"),
         git_auth_type: r.get("git_auth_type"),
         git_username: r.get("git_username"),
-        cli_type: r.get("cli_type"),
-        codex_config_id: r.get("codex_config_id"),
-        agents_md_id: r.get("agents_md_id"),
+        cli_inits,
         docker_config_id: r.get("docker_config_id"),
         docker_image: r.get("docker_image"),
         docker_container_name: r.get("docker_container_name"),
@@ -1128,9 +1181,33 @@ pub async fn create_agent(
 
     let use_docker = req.use_docker.unwrap_or(true);
 
-    if req.cli_type != "codex" {
+    if req.cli_inits.is_empty() {
         return Err(AppError::BadRequest(
-            "Only codex is supported for now".into(),
+            "cli_inits must contain at least one entry".into(),
+        ));
+    }
+    let mut runnable = false;
+    let mut seen_cli = std::collections::HashSet::new();
+    for c in &req.cli_inits {
+        if !shared_kernel::cli_is_supported(&c.cli_type) {
+            return Err(AppError::BadRequest(format!(
+                "unsupported cli_type: {}",
+                c.cli_type
+            )));
+        }
+        if !seen_cli.insert(c.cli_type.clone()) {
+            return Err(AppError::BadRequest(format!(
+                "duplicate cli_type in cli_inits: {}",
+                c.cli_type
+            )));
+        }
+        if shared_kernel::cli_is_runnable(&c.cli_type) {
+            runnable = true;
+        }
+    }
+    if !runnable {
+        return Err(AppError::BadRequest(
+            "cli_inits must include at least one non-WIP CLI".into(),
         ));
     }
 
@@ -1183,18 +1260,31 @@ pub async fn create_agent(
 
     let container_name_db = docker_container_name.as_deref().unwrap_or("");
 
+    let mut tx = state.db.begin().await?;
     sqlx::query!(
         r#"INSERT INTO agents (id, name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,
-           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
+           git_password_encrypted, docker_config_id,
            docker_image, docker_container_name, workdir, use_docker, status, provision_log, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'provisioning', '', $18)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'provisioning', '', $15)"#,
         id, req.name, req.server_id, req.user_id, git_repo, git_branch, git_auth_type, req.git_username,
-        git_password_encrypted, req.cli_type, req.codex_config_id, req.agents_md_id,
+        git_password_encrypted,
         req.docker_config_id, docker_image, container_name_db, workdir,
         use_docker, now
     )
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+
+    for c in &req.cli_inits {
+        let cid = Uuid::new_v4().to_string();
+        sqlx::query!(
+            r#"INSERT INTO agent_cli_inits (id, agent_id, cli_type, codex_config_id, agents_md_id, priority)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
+            cid, id, c.cli_type, c.codex_config_id, c.agents_md_id, c.priority,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
 
     // Provision asynchronously
     let agent_id = id.clone();
@@ -1202,9 +1292,7 @@ pub async fn create_agent(
     let git_branch_clone = git_branch.clone();
     let docker_image_clone = docker_image.clone();
     let container_name_clone = container_name_db.to_string();
-    let cli_type_clone = req.cli_type.clone();
-    let codex_config_id_clone = req.codex_config_id.clone();
-    let agents_md_id_clone = req.agents_md_id.clone();
+    let cli_inits_clone = req.cli_inits.clone();
     let docker_config_id_clone = req.docker_config_id.clone();
     let db = state.db.clone();
     let master_key = state.config.master_key.clone();
@@ -1269,9 +1357,7 @@ pub async fn create_agent(
             &db,
             &agent_id,
             &tx,
-            &cli_type_clone,
-            codex_config_id_clone.as_deref(),
-            agents_md_id_clone.as_deref(),
+            &cli_inits_clone,
             docker_config_id_clone.as_deref(),
             &git_repo_clone,
             &git_branch_clone,
@@ -1321,9 +1407,7 @@ pub async fn create_agent(
         git_branch,
         git_auth_type,
         git_username: req.git_username,
-        cli_type: req.cli_type,
-        codex_config_id: req.codex_config_id,
-        agents_md_id: req.agents_md_id,
+        cli_inits: req.cli_inits,
         docker_config_id: req.docker_config_id,
         docker_image,
         docker_container_name,
@@ -1344,9 +1428,7 @@ async fn provision_agent(
     db: &sqlx::PgPool,
     agent_id: &str,
     tx: &broadcast::Sender<String>,
-    cli_type: &str,
-    codex_config_id: Option<&str>,
-    agents_md_id: Option<&str>,
+    cli_inits: &[AgentCliInit],
     docker_config_id: Option<&str>,
     git_repo: &str,
     git_branch: &str,
@@ -1358,6 +1440,12 @@ async fn provision_agent(
     let remote_home = resolve_remote_home(handle).await?;
     let base_dir = format!("{}/.codex-fleet/{}", remote_home, agent_id);
     let workspace_dir = format!("{}/workspace", base_dir);
+
+    // Pick the first codex init (if any) for legacy single-CLI provisioning.
+    // Other CLIs are tracked but their config files aren't materialised yet.
+    let codex_init = cli_inits.iter().find(|c| c.cli_type == "codex");
+    let codex_config_id = codex_init.and_then(|c| c.codex_config_id.as_deref());
+    let agents_md_id = codex_init.and_then(|c| c.agents_md_id.as_deref());
 
     // Persist the host-side workspace path for both docker and non-docker agents.
     let _ = sqlx::query("UPDATE agents SET workdir = $1 WHERE id = $2")
@@ -1521,17 +1609,19 @@ async fn provision_agent(
         )
         .await;
         let mut docker_run = format!(
-            "docker run -d --name {container} --workdir /workspace \
+            "docker volume create {volname} >/dev/null 2>&1 || true; \
+             docker run -d --name {container} --workdir /workspace \
              -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e TERM=xterm-256color \
              -v {base}/agent:/agent \
-             -v {base}/workspace:/workspace",
+             -v {volname}:/workspace",
             container = container_name,
             base = base_dir,
+            volname = agent_workspace_volume(agent_id),
         );
 
         if let Some(dc_id) = docker_config_id {
             if let Ok(dc) = sqlx::query!(
-                "SELECT port_mappings, env_vars, volume_mappings FROM docker_configs WHERE id = $1",
+                "SELECT port_mappings, env_vars FROM docker_configs WHERE id = $1",
                 dc_id
             )
             .fetch_one(db)
@@ -1574,24 +1664,6 @@ async fn provision_agent(
                                 ev_step_output(2, &format!("Injecting {} env var(s)", env_count)),
                             )
                             .await;
-                        }
-                    }
-                }
-                if let Ok(vols) = serde_json::from_str::<serde_json::Value>(&dc.volume_mappings) {
-                    if let Some(arr) = vols.as_array() {
-                        for v in arr {
-                            let host = v.get("host_path").and_then(|v| v.as_str()).unwrap_or("");
-                            let cont = v
-                                .get("container_path")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let mode = v.get("mode").and_then(|v| v.as_str()).unwrap_or("rw");
-                            if !host.is_empty() && !cont.is_empty() {
-                                docker_run.push_str(&format!(
-                                    " -v {}",
-                                    shell_quote(&format!("{}:{}:{}", host, cont, mode))
-                                ));
-                            }
                         }
                     }
                 }
@@ -1702,12 +1774,12 @@ async fn provision_agent(
 
     if !use_docker {
         emit(db, agent_id, tx, ev_step_skipped(3, "no-docker mode")).await;
-    } else if cli_type != "codex" {
+    } else if codex_init.is_none() {
         emit(
             db,
             agent_id,
             tx,
-            ev_step_skipped(3, &format!("cli_type={}", cli_type)),
+            ev_step_skipped(3, "no codex init configured"),
         )
         .await;
     } else {
@@ -1830,7 +1902,6 @@ pub async fn update_agent(
     require_admin(&auth)?;
     let existing = sqlx::query!(
         r#"SELECT id, name, server_id, user_id,
-           cli_type, codex_config_id, agents_md_id,
            docker_container_name, workdir, use_docker, created_at
            FROM agents WHERE id = $1"#,
         id
@@ -1841,7 +1912,6 @@ pub async fn update_agent(
 
     let name = req.name.unwrap_or(existing.name.clone());
 
-    // Check name uniqueness (exclude self)
     if name != existing.name {
         let name_exists = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM agents WHERE LOWER(name) = LOWER($1) AND id != $2",
@@ -1856,24 +1926,6 @@ pub async fn update_agent(
         }
     }
 
-    // Detect which configs actually changed (Some means the field was sent)
-    let codex_config_changed = req.codex_config_id.is_some()
-        && req.codex_config_id != existing.codex_config_id;
-    let agents_md_changed = req.agents_md_id.is_some()
-        && req.agents_md_id != existing.agents_md_id;
-
-    // New values (empty string → None = "no config")
-    let codex_config_id = if req.codex_config_id.is_some() {
-        req.codex_config_id.clone().filter(|s| !s.is_empty())
-    } else {
-        existing.codex_config_id.clone()
-    };
-    let agents_md_id = if req.agents_md_id.is_some() {
-        req.agents_md_id.clone().filter(|s| !s.is_empty())
-    } else {
-        existing.agents_md_id.clone()
-    };
-
     // user_id: if explicitly provided (even as null/empty) update it; otherwise keep existing
     let user_id = if req.user_id.is_some() {
         req.user_id.clone().filter(|s| !s.is_empty())
@@ -1881,147 +1933,72 @@ pub async fn update_agent(
         existing.user_id.clone()
     };
 
+    // Validate cli_inits if provided
+    if let Some(inits) = &req.cli_inits {
+        if inits.is_empty() {
+            return Err(AppError::BadRequest("cli_inits cannot be empty".into()));
+        }
+        let mut runnable = false;
+        let mut seen = std::collections::HashSet::new();
+        for c in inits {
+            if !shared_kernel::cli_is_supported(&c.cli_type) {
+                return Err(AppError::BadRequest(format!(
+                    "unsupported cli_type: {}",
+                    c.cli_type
+                )));
+            }
+            if !seen.insert(c.cli_type.clone()) {
+                return Err(AppError::BadRequest(format!(
+                    "duplicate cli_type: {}",
+                    c.cli_type
+                )));
+            }
+            if shared_kernel::cli_is_runnable(&c.cli_type) {
+                runnable = true;
+            }
+        }
+        if !runnable {
+            return Err(AppError::BadRequest(
+                "cli_inits must include at least one non-WIP CLI".into(),
+            ));
+        }
+    }
+
+    let mut tx = state.db.begin().await?;
     sqlx::query!(
-        "UPDATE agents SET name=$1, codex_config_id=$2, agents_md_id=$3, user_id=$4 WHERE id=$5",
-        name, codex_config_id, agents_md_id, user_id, id
+        "UPDATE agents SET name=$1, user_id=$2 WHERE id=$3",
+        name,
+        user_id,
+        id
     )
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    // Previous config IDs (for knowing whether there was an old file to backup)
-    let old_codex_config_id = existing.codex_config_id.clone();
-    let old_agents_md_id = existing.agents_md_id.clone();
-
-    if codex_config_changed || agents_md_changed {
-        let db = state.db.clone();
-        let master_key = state.config.master_key.clone();
-        let server_id = existing.server_id.clone();
-        let agent_workdir = existing.workdir.clone();
-        let new_codex_config_id = codex_config_id.clone();
-        let new_agents_md_id = agents_md_id.clone();
-
-        let server = sqlx::query!(
-            "SELECT ip, port, username, auth_type, password_encrypted, ssh_key_content FROM servers WHERE id = $1",
-            server_id
-        )
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Server {} not found", server_id)))?;
-
-        tokio::spawn(async move {
-            let crypto = Crypto::new(&master_key);
-            let password = server.password_encrypted
-                .as_deref()
-                .and_then(|p| crypto.decrypt(p).ok());
-            let executor = match SshClientPool::connect(
-                &server.ip,
-                server.port as u16,
-                &server.username,
-                &server.auth_type,
-                password.as_deref(),
-                server.ssh_key_content.as_deref(),
+    if let Some(inits) = &req.cli_inits {
+        sqlx::query!("DELETE FROM agent_cli_inits WHERE agent_id = $1", id)
+            .execute(&mut *tx)
+            .await?;
+        for c in inits {
+            let cid = Uuid::new_v4().to_string();
+            sqlx::query!(
+                r#"INSERT INTO agent_cli_inits (id, agent_id, cli_type, codex_config_id, agents_md_id, priority)
+                   VALUES ($1, $2, $3, $4, $5, $6)"#,
+                cid, id, c.cli_type, c.codex_config_id, c.agents_md_id, c.priority,
             )
-            .await
-            {
-                Ok(c) => Executor::Ssh(c),
-                Err(e) => {
-                    tracing::error!("update_agent async connect failed: {}", e);
-                    return;
-                }
-            };
-            let Some(base_dir) = agent_base_dir_from_workdir(&agent_workdir) else {
-                tracing::error!("update_agent async invalid workdir: {}", agent_workdir);
-                return;
-            };
-            let agent_dir = format!("{}/agent", base_dir);
-            let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-
-            // --- Codex config (config.toml + auth.json) ---
-            if codex_config_changed {
-                // Backup old files if a previous config existed
-                if old_codex_config_id.is_some() {
-                    let _ = executor.execute(&format!(
-                        "[ -f {dir}/config.toml ] && mv {dir}/config.toml {dir}/config.toml_backup_{ts}; \
-                         [ -f {dir}/auth.json ] && mv {dir}/auth.json {dir}/auth.json_backup_{ts}",
-                        dir = agent_dir, ts = ts
-                    )).await;
-                }
-
-                // Write new files if a new config is selected
-                if let Some(cid) = new_codex_config_id {
-                    if let Ok(row) = sqlx::query!(
-                        "SELECT config_toml, auth_json FROM codex_configs WHERE id = $1",
-                        cid
-                    )
-                    .fetch_one(&db)
-                    .await
-                    {
-                        let crypto = Crypto::new(&master_key);
-                        let auth_json_content = if row.auth_json.starts_with("enc:") {
-                            crypto
-                                .decrypt(row.auth_json.trim_start_matches("enc:"))
-                                .unwrap_or(row.auth_json.clone())
-                        } else {
-                            row.auth_json.clone()
-                        };
-
-                        if !row.config_toml.is_empty() {
-                            let b64 = BASE64.encode(row.config_toml.as_bytes());
-                            let cmd = format!(
-                                "echo '{}' | base64 -d > {}/config.toml",
-                                b64, agent_dir
-                            );
-                            let _ = executor.execute(&cmd).await;
-                        }
-                        if !auth_json_content.is_empty() {
-                            let b64 = BASE64.encode(auth_json_content.as_bytes());
-                            let cmd = format!(
-                                "echo '{}' | base64 -d > {}/auth.json",
-                                b64, agent_dir
-                            );
-                            let _ = executor.execute(&cmd).await;
-                        }
-                    }
-                }
-                // If new_codex_config_id is None, we only backed up — no new file written
-            }
-
-            // --- AGENTS.md ---
-            if agents_md_changed {
-                // Backup old file if a previous config existed
-                if old_agents_md_id.is_some() {
-                    let _ = executor.execute(&format!(
-                        "[ -f {dir}/AGENTS.md ] && mv {dir}/AGENTS.md {dir}/AGENTS.md_backup_{ts}",
-                        dir = agent_dir, ts = ts
-                    )).await;
-                }
-
-                // Write new file if a new config is selected
-                if let Some(md_id) = new_agents_md_id {
-                    if let Ok(row) =
-                        sqlx::query!("SELECT content FROM company_configs WHERE id = $1", md_id)
-                            .fetch_one(&db)
-                            .await
-                    {
-                        if !row.content.is_empty() {
-                            let b64 = BASE64.encode(row.content.as_bytes());
-                            let cmd = format!(
-                                "echo '{}' | base64 -d > {}/AGENTS.md",
-                                b64, agent_dir
-                            );
-                            let _ = executor.execute(&cmd).await;
-                        }
-                    }
-                }
-                // If new_agents_md_id is None, we only backed up — no new file written
-            }
-        });
+            .execute(&mut *tx)
+            .await?;
+        }
     }
+
+    tx.commit().await?;
+
+    // Note: live config-file rewrite on the remote agent is no longer triggered
+    // automatically. The agent should be re-provisioned to pick up cli_inits changes.
 
     let updated = sqlx::query(
         r#"SELECT a.id, a.name, a.server_id, a.user_id, u.display_name AS user_display_name,
            a.git_repo, a.git_branch, a.git_auth_type, a.git_username,
-           a.cli_type, a.codex_config_id, a.agents_md_id, a.docker_config_id,
+           a.docker_config_id,
            a.docker_image, a.docker_container_name, a.container_id,
            a.workdir, a.use_docker, a.status, a.provision_log, a.provision_steps, a.created_at
            FROM agents a LEFT JOIN users u ON a.user_id = u.id
@@ -2030,6 +2007,8 @@ pub async fn update_agent(
     .bind(&id)
     .fetch_one(&state.db)
     .await?;
+
+    let cli_inits = fetch_agent_cli_inits(&state.db, &id).await.unwrap_or_default();
 
     let agent = Agent {
         id: updated.get("id"),
@@ -2041,9 +2020,7 @@ pub async fn update_agent(
         git_branch: updated.get("git_branch"),
         git_auth_type: updated.get("git_auth_type"),
         git_username: updated.get("git_username"),
-        cli_type: updated.get("cli_type"),
-        codex_config_id: updated.get("codex_config_id"),
-        agents_md_id: updated.get("agents_md_id"),
+        cli_inits,
         docker_config_id: updated.get("docker_config_id"),
         docker_image: updated.get("docker_image"),
         docker_container_name: updated.get("docker_container_name"),
@@ -2262,7 +2239,7 @@ pub async fn clone_agent(
     require_admin(&auth)?;
     let row = sqlx::query!(
         r#"SELECT name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,
-           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
+           git_password_encrypted, docker_config_id,
            docker_image, use_docker
            FROM agents WHERE id = $1"#,
         id
@@ -2270,6 +2247,8 @@ pub async fn clone_agent(
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
+
+    let cli_inits = fetch_agent_cli_inits(&state.db, &id).await.unwrap_or_default();
 
     let new_id = Uuid::new_v4().to_string();
     let name = format!("{} (copy)", row.name);
@@ -2281,18 +2260,31 @@ pub async fn clone_agent(
     };
     let now = Utc::now();
 
+    let mut tx = state.db.begin().await?;
     sqlx::query!(
         r#"INSERT INTO agents (id, name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,
-           git_password_encrypted, cli_type, codex_config_id, agents_md_id, docker_config_id,
+           git_password_encrypted, docker_config_id,
            docker_image, docker_container_name, workdir, use_docker,
            status, provision_log, provision_steps, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'stopped', '', '{}', $18)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'stopped', '', '{}', $15)"#,
         new_id, name, row.server_id, row.user_id, row.git_repo, row.git_branch, row.git_auth_type, row.git_username,
-        row.git_password_encrypted, row.cli_type, row.codex_config_id, row.agents_md_id, row.docker_config_id,
+        row.git_password_encrypted, row.docker_config_id,
         row.docker_image, docker_container_name, workdir, row.use_docker, now
     )
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+
+    for c in &cli_inits {
+        let cid = Uuid::new_v4().to_string();
+        sqlx::query!(
+            r#"INSERT INTO agent_cli_inits (id, agent_id, cli_type, codex_config_id, agents_md_id, priority)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
+            cid, new_id, c.cli_type, c.codex_config_id, c.agents_md_id, c.priority,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
 
     // Resolve user display name
     let user_display_name = if let Some(ref uid) = row.user_id {
@@ -2317,9 +2309,7 @@ pub async fn clone_agent(
             git_branch: row.git_branch,
             git_auth_type: row.git_auth_type,
             git_username: row.git_username,
-            cli_type: row.cli_type,
-            codex_config_id: row.codex_config_id,
-            agents_md_id: row.agents_md_id,
+            cli_inits,
             docker_config_id: row.docker_config_id,
             docker_image: row.docker_image,
             docker_container_name,

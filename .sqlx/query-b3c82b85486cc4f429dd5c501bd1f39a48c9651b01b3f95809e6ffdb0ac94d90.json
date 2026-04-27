@@ -1,11 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO docker_configs (id, name, port_mappings, env_vars, volume_mappings, init_script, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+  "query": "INSERT INTO docker_configs (id, name, port_mappings, env_vars, init_script, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
   "describe": {
     "columns": [],
     "parameters": {
       "Left": [
-        "Text",
         "Text",
         "Text",
         "Text",
@@ -17,5 +16,5 @@
     },
     "nullable": []
   },
-  "hash": "48019ff241753a0583918dac98244fc2eb3e323793cd954215e38eb9971caf7f"
+  "hash": "b3c82b85486cc4f429dd5c501bd1f39a48c9651b01b3f95809e6ffdb0ac94d90"
 }

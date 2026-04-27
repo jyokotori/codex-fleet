@@ -96,7 +96,6 @@ CREATE TABLE docker_configs (
     name TEXT NOT NULL,
     port_mappings TEXT NOT NULL DEFAULT '[]',
     env_vars TEXT NOT NULL DEFAULT '[]',
-    volume_mappings TEXT NOT NULL DEFAULT '[]',
     init_script TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -130,9 +129,6 @@ CREATE TABLE agents (
     git_auth_type TEXT NOT NULL DEFAULT 'none',
     git_username TEXT,
     git_password_encrypted TEXT,
-    cli_type TEXT NOT NULL DEFAULT 'codex',
-    codex_config_id TEXT REFERENCES codex_configs(id),
-    agents_md_id TEXT REFERENCES company_configs(id),
     docker_config_id TEXT REFERENCES docker_configs(id),
     docker_image TEXT NOT NULL DEFAULT 'ubuntu:24.04',
     docker_container_name TEXT,
@@ -143,6 +139,17 @@ CREATE TABLE agents (
     provision_log TEXT NOT NULL DEFAULT '',
     provision_steps JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE agent_cli_inits (
+    id TEXT NOT NULL PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    cli_type TEXT NOT NULL CHECK (cli_type IN ('codex','claude_code','gemini_cli','opencode')),
+    codex_config_id TEXT REFERENCES codex_configs(id),
+    agents_md_id TEXT REFERENCES company_configs(id),
+    priority INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (agent_id, cli_type)
 );
 
 CREATE TABLE agent_groups (
@@ -199,9 +206,26 @@ CREATE TABLE plane_bindings (
     plane_project_name TEXT NOT NULL,
     plane_project_identifier TEXT NOT NULL DEFAULT '',
     agent_group_id TEXT NOT NULL REFERENCES agent_groups(id),
+    accept_state_id TEXT NOT NULL,
+    accept_state_name TEXT NOT NULL,
+    in_progress_state_id TEXT NOT NULL,
+    in_progress_state_name TEXT NOT NULL,
+    completion_state_id TEXT NOT NULL,
+    completion_state_name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (workspace_id, plane_project_id)
+);
+
+CREATE TABLE plane_binding_labels (
+    id TEXT NOT NULL PRIMARY KEY,
+    binding_id TEXT NOT NULL REFERENCES plane_bindings(id) ON DELETE CASCADE,
+    label_id TEXT NOT NULL,
+    label_name TEXT NOT NULL,
+    cli_type TEXT NOT NULL CHECK (cli_type IN ('codex','claude_code','gemini_cli','opencode')),
+    priority INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (binding_id, label_id)
 );
 
 CREATE TABLE plane_tasks (
@@ -213,7 +237,8 @@ CREATE TABLE plane_tasks (
     description TEXT NOT NULL DEFAULT '',
     priority TEXT NOT NULL DEFAULT 'none',
     assignee_email TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','dispatched','completed','failed','rejected','cancelled')),
     agent_id TEXT REFERENCES agents(id),
     task_id TEXT REFERENCES tasks(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -247,3 +272,7 @@ CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
 
 CREATE INDEX idx_plane_tasks_status_created ON plane_tasks(status, created_at);
 CREATE INDEX idx_plane_tasks_workspace_project ON plane_tasks(workspace_id, plane_project_id);
+CREATE UNIQUE INDEX plane_tasks_active_uq ON plane_tasks(workspace_id, plane_issue_id)
+    WHERE status IN ('pending','dispatched');
+CREATE INDEX idx_plane_binding_labels_binding ON plane_binding_labels(binding_id);
+CREATE INDEX idx_agent_cli_inits_agent ON agent_cli_inits(agent_id);

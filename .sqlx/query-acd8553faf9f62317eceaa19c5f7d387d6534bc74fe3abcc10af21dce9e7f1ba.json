@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO plane_binding_labels (id, binding_id, label_id, label_name, cli_type, priority)\n                   VALUES ($1, $2, $3, $4, $5, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acd8553faf9f62317eceaa19c5f7d387d6534bc74fe3abcc10af21dce9e7f1ba"
+}

@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT agent_id, cli_type, codex_config_id, agents_md_id, priority\n           FROM agent_cli_inits\n           ORDER BY priority ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "cli_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "codex_config_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "agents_md_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "priority",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "2a51e43d80383445ecb2687e27d0e578fb059dabce50c18209d31571e87cb3da"
+}

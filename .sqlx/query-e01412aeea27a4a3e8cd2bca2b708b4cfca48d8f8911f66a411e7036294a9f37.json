@@ -1,62 +1,62 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, server_id, user_id,\n           cli_type, codex_config_id, agents_md_id,\n           docker_container_name, workdir, use_docker, created_at\n           FROM agents WHERE id = $1",
+  "query": "SELECT name, server_id, user_id, git_repo, git_branch, git_auth_type, git_username,\n           git_password_encrypted, docker_config_id,\n           docker_image, use_docker\n           FROM agents WHERE id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 1,
         "name": "name",
         "type_info": "Text"
       },
       {
-        "ordinal": 2,
+        "ordinal": 1,
         "name": "server_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "user_id",
         "type_info": "Text"
       },
       {
+        "ordinal": 3,
+        "name": "git_repo",
+        "type_info": "Text"
+      },
+      {
         "ordinal": 4,
-        "name": "cli_type",
+        "name": "git_branch",
         "type_info": "Text"
       },
       {
         "ordinal": 5,
-        "name": "codex_config_id",
+        "name": "git_auth_type",
         "type_info": "Text"
       },
       {
         "ordinal": 6,
-        "name": "agents_md_id",
+        "name": "git_username",
         "type_info": "Text"
       },
       {
         "ordinal": 7,
-        "name": "docker_container_name",
+        "name": "git_password_encrypted",
         "type_info": "Text"
       },
       {
         "ordinal": 8,
-        "name": "workdir",
+        "name": "docker_config_id",
         "type_info": "Text"
       },
       {
         "ordinal": 9,
-        "name": "use_docker",
-        "type_info": "Bool"
+        "name": "docker_image",
+        "type_info": "Text"
       },
       {
         "ordinal": 10,
-        "name": "created_at",
-        "type_info": "Timestamptz"
+        "name": "use_docker",
+        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -67,16 +67,16 @@
     "nullable": [
       false,
       false,
-      false,
       true,
       false,
-      true,
-      true,
-      true,
       false,
+      false,
+      true,
+      true,
+      true,
       false,
       false
     ]
   },
-  "hash": "74646f2fc52b19900dc3c4240ea32382d4e201a003692fa6af5856abd344d495"
+  "hash": "e01412aeea27a4a3e8cd2bca2b708b4cfca48d8f8911f66a411e7036294a9f37"
 }

@@ -71,6 +71,15 @@ pub fn router() -> Router<AppContext> {
             get(api::plane::list_workspace_projects),
         )
         .route(
+            "/api/plane/workspaces/{id}/projects/{pid}/states",
+            get(api::plane::list_project_states),
+        )
+        .route(
+            "/api/plane/workspaces/{id}/projects/{pid}/labels",
+            get(api::plane::list_project_labels),
+        )
+        .route("/api/clis", get(api::plane::list_clis))
+        .route(
             "/api/plane/workspaces/{id}/bindings",
             get(api::plane::list_workspace_bindings).post(api::plane::create_workspace_binding),
         )

@@ -117,13 +117,13 @@ Before manual dispatch, the agent must be idle and its synced status must be `ru
 Store reusable configurations centrally and attach them to any agent at any time:
 - **Codex Configs** — combine `config.toml` and `auth.json` into a named config bundle
 - **AGENTS.md** — reusable agent instruction files
-- **Docker Configs** — reusable Docker runtime configurations (ports, mounts, environment variables, init scripts)
+- **Docker Configs** — reusable Docker runtime configurations (ports, environment variables, init scripts; agents always mount a managed `/workspace` named volume)
 
 ### Notifications
 Configure webhooks so task progress, completion, and failure are pushed automatically.
 
 ### Plane Integration
-Integrate with [Plane](https://plane.so) for bidirectional issue sync. Plane issues moved to "Todo" are automatically dispatched to agents via agent group bindings, and results are written back as state transitions and comments. See [Plane Integration Guide](./docs/plane-integration.md) for setup instructions.
+Integrate with [Plane](https://plane.so) for bidirectional issue sync. Each binding declares its own three project states (accept / in-progress / completion) and a list of labels mapped to specific CLIs (`codex`, plus reserved `claude_code` / `gemini_cli` / `opencode`). Issues entering the binding's accept state — with a matching label and assigned to a known agent group member — are automatically dispatched, and results are written back as state transitions and comments. See [Plane Integration Guide](./docs/plane-workflow.md) for setup instructions.
 
 ### User & Access Management
 - JWT access token + refresh token

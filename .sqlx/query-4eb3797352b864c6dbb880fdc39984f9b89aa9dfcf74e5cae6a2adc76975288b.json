@@ -1,15 +1,16 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE plane_bindings SET agent_group_id = $1 WHERE id = $2",
+  "query": "UPDATE agents SET name=$1, user_id=$2 WHERE id=$3",
   "describe": {
     "columns": [],
     "parameters": {
       "Left": [
+        "Text",
         "Text",
         "Text"
       ]
     },
     "nullable": []
   },
-  "hash": "6c69875466b0339885cd19d09a72fc782ab20f545d1e3738b64b4d44e3b574d3"
+  "hash": "4eb3797352b864c6dbb880fdc39984f9b89aa9dfcf74e5cae6a2adc76975288b"
 }

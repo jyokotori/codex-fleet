@@ -279,18 +279,11 @@ export interface EnvVar {
   value: string
 }
 
-export interface VolumeMapping {
-  host_path: string
-  container_path: string
-  mode: 'rw' | 'ro'
-}
-
 export interface DockerConfig {
   id: string
   name: string
   port_mappings: PortMapping[]
   env_vars: EnvVar[]
-  volume_mappings: VolumeMapping[]
   init_script: string
   created_at: string
   updated_at: string
@@ -302,14 +295,12 @@ export const dockerConfigsApi = {
     name: string
     port_mappings?: PortMapping[]
     env_vars?: EnvVar[]
-    volume_mappings?: VolumeMapping[]
     init_script?: string
   }) => request<DockerConfig>('/api/docker-configs', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: {
     name?: string
     port_mappings?: PortMapping[]
     env_vars?: EnvVar[]
-    volume_mappings?: VolumeMapping[]
     init_script?: string
   }) => request<DockerConfig>(`/api/docker-configs/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
@@ -337,6 +328,13 @@ export const codexConfigsApi = {
 }
 
 // Agents
+export interface AgentCliInit {
+  cli_type: string
+  codex_config_id?: string | null
+  agents_md_id?: string | null
+  priority?: number
+}
+
 export interface Agent {
   id: string
   name: string
@@ -347,9 +345,7 @@ export interface Agent {
   git_branch: string
   git_auth_type: string
   git_username?: string
-  cli_type: string
-  codex_config_id?: string
-  agents_md_id?: string
+  cli_inits: AgentCliInit[]
   docker_config_id?: string
   docker_image: string
   docker_container_name?: string
@@ -381,9 +377,7 @@ export const agentsApi = {
     git_auth_type?: string
     git_username?: string
     git_password?: string
-    cli_type: string
-    codex_config_id?: string
-    agents_md_id?: string
+    cli_inits: AgentCliInit[]
     docker_config_id?: string
     docker_image?: string
     use_docker?: boolean
@@ -391,8 +385,7 @@ export const agentsApi = {
   update: (id: string, data: {
     name?: string
     user_id?: string
-    codex_config_id?: string
-    agents_md_id?: string
+    cli_inits?: AgentCliInit[]
   }) =>
     request<Agent>(`/api/agents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string, cleanup = false) =>
@@ -534,6 +527,38 @@ export interface PlaneProject {
   identifier: string
 }
 
+export interface PlaneState {
+  id: string
+  name: string
+  group: string
+}
+
+export interface PlaneLabel {
+  id: string
+  name: string
+  color: string
+}
+
+export interface CliInfo {
+  value: string
+  label: string
+  wip: boolean
+}
+
+export interface PlaneBindingLabel {
+  label_id: string
+  label_name: string
+  cli_type: string
+  priority: number
+}
+
+export interface PlaneBindingLabelInput {
+  label_id: string
+  label_name: string
+  cli_type: string
+  priority: number
+}
+
 export interface PlaneBinding {
   id: string
   workspace_id: string
@@ -542,6 +567,13 @@ export interface PlaneBinding {
   plane_project_identifier: string
   agent_group_id: string
   agent_group_name: string
+  accept_state_id: string
+  accept_state_name: string
+  in_progress_state_id: string
+  in_progress_state_name: string
+  completion_state_id: string
+  completion_state_name: string
+  labels: PlaneBindingLabel[]
   enabled: boolean
   created_at: string
 }
@@ -585,6 +617,10 @@ export const planeApi = {
   // Projects (scoped to workspace)
   listWorkspaceProjects: (workspaceId: string) =>
     request<PlaneProject[]>(`/api/plane/workspaces/${workspaceId}/projects`),
+  listProjectStates: (workspaceId: string, projectId: string) =>
+    request<PlaneState[]>(`/api/plane/workspaces/${workspaceId}/projects/${projectId}/states`),
+  listProjectLabels: (workspaceId: string, projectId: string) =>
+    request<PlaneLabel[]>(`/api/plane/workspaces/${workspaceId}/projects/${projectId}/labels`),
 
   // Bindings (scoped to workspace)
   listWorkspaceBindings: (workspaceId: string) =>
@@ -594,8 +630,24 @@ export const planeApi = {
     plane_project_name: string
     plane_project_identifier: string
     agent_group_id: string
+    accept_state_id: string
+    accept_state_name: string
+    in_progress_state_id: string
+    in_progress_state_name: string
+    completion_state_id: string
+    completion_state_name: string
+    labels: PlaneBindingLabelInput[]
   }) => request<{ id: string }>(`/api/plane/workspaces/${workspaceId}/bindings`, { method: 'POST', body: JSON.stringify(data) }),
-  updateBinding: (id: string, data: { agent_group_id?: string }) =>
+  updateBinding: (id: string, data: {
+    agent_group_id?: string
+    accept_state_id?: string
+    accept_state_name?: string
+    in_progress_state_id?: string
+    in_progress_state_name?: string
+    completion_state_id?: string
+    completion_state_name?: string
+    labels?: PlaneBindingLabelInput[]
+  }) =>
     request<void>(`/api/plane/bindings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteBinding: (id: string) =>
     request<void>(`/api/plane/bindings/${id}`, { method: 'DELETE' }),
@@ -603,4 +655,8 @@ export const planeApi = {
     request<void>(`/api/plane/bindings/${id}/toggle`, { method: 'POST' }),
 
   listTasks: () => request<PlaneTask[]>('/api/plane/tasks'),
+}
+
+export const clisApi = {
+  list: () => request<CliInfo[]>('/api/clis'),
 }

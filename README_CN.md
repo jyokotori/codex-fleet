@@ -117,13 +117,13 @@ docker rm my-codex-env
 把可复用的配置统一存储，随时挂到任意 Agent 上：
 - **Codex 配置** — 把 `config.toml` 和 `auth.json` 组合成一个命名配置组
 - **AGENTS.md** — 可复用的 Agent 指令文件
-- **Docker 配置** — 可复用的 Docker 运行配置（端口、挂载、环境变量、初始化脚本）
+- **Docker 配置** — 可复用的 Docker 运行配置（端口、环境变量、初始化脚本；Agent 始终挂载一个由系统管理的 `/workspace` 命名卷）
 
 ### 通知
 配置 Webhook，任务进度、完成、失败时自动推送通知。
 
 ### Plane 集成
-与 [Plane](https://plane.so) 双向联动。Plane 中 Issue 移到「Todo」后自动派发给 Agent 组中的空闲 Agent，执行结果会回写为 Plane 状态变更和评论。详见 [Plane 集成指南](./docs/plane-integration.md)。
+与 [Plane](https://plane.so) 双向联动。每条 binding 自己声明三个项目状态（accept / in-progress / completion）和一组标签 → CLI 映射（`codex` 当前可用，`claude_code` / `gemini_cli` / `opencode` 已预留）。Issue 进入 binding 的 accept 状态、带匹配标签、并指派给 Agent 组成员后，会自动派发到空闲 Agent；执行结果回写为状态变更和评论。详见 [Plane 集成指南](./docs/plane-workflow.md)。
 
 ### 用户与权限管理
 - JWT 访问令牌 + Refresh Token

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM plane_binding_labels WHERE binding_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2550db9209f259a9accfa4d7c22f5edf89571952b5f0902308fb9889ad45baab"
+}

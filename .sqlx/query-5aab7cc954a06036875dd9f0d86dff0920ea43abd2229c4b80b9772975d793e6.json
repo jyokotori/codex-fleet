@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT label_id, label_name, cli_type, priority\n           FROM plane_binding_labels\n           WHERE binding_id = $1\n           ORDER BY priority ASC, label_name ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "label_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "label_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "cli_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "priority",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5aab7cc954a06036875dd9f0d86dff0920ea43abd2229c4b80b9772975d793e6"
+}

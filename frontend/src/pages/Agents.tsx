@@ -3,8 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
-  agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi, usersApi,
-  type Agent, type Server, type SimpleUser,
+  agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi, usersApi, clisApi,
+  type Agent, type AgentCliInit, type CliInfo, type Server, type SimpleUser,
 } from '../lib/api'
 import { getAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
@@ -22,9 +22,7 @@ interface AgentFormData {
   git_auth_type: string
   git_username: string
   git_password: string
-  cli_type: string
-  codex_config_id: string
-  agents_md_id: string
+  cli_inits: AgentCliInit[]
   docker_config_id: string
   docker_image: string
 }
@@ -32,8 +30,7 @@ interface AgentFormData {
 interface EditFormData {
   name: string
   user_id: string
-  codex_config_id: string
-  agents_md_id: string
+  cli_inits: AgentCliInit[]
 }
 
 const defaultForm: AgentFormData = {
@@ -47,19 +44,16 @@ const defaultForm: AgentFormData = {
   git_auth_type: 'passwordless',
   git_username: '',
   git_password: '',
-  cli_type: 'codex',
-  codex_config_id: '',
-  agents_md_id: '',
+  cli_inits: [{ cli_type: 'codex', codex_config_id: '', agents_md_id: '', priority: 0 }],
   docker_config_id: '',
   docker_image: 'ubuntu:24.04',
 }
 
-const CLI_TYPES = [
-  { value: 'codex', label: 'Codex', wip: false },
-  { value: 'claude_code', label: 'Claude Code', wip: true },
-  { value: 'gemini_cli', label: 'Gemini CLI', wip: true },
-  { value: 'opencode', label: 'OpenCode', wip: true },
-]
+function primaryCli(inits: AgentCliInit[]): string {
+  if (inits.length === 0) return 'codex'
+  const sorted = [...inits].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+  return sorted[0]?.cli_type ?? 'codex'
+}
 
 function UserSelect({ value, onChange, users, t, placeholder, className }: {
   value: string
@@ -144,6 +138,142 @@ function SectionDivider({ label }: { label: string }) {
   )
 }
 
+function CliInitEditor({
+  rows,
+  onChange,
+  clis,
+  codexConfigs,
+  agentsMdConfigs,
+  qc,
+  t,
+}: {
+  rows: AgentCliInit[]
+  onChange: (rows: AgentCliInit[]) => void
+  clis: CliInfo[]
+  codexConfigs: { id: string; name: string }[]
+  agentsMdConfigs: { id: string; name: string }[]
+  qc: ReturnType<typeof useQueryClient>
+  t: ReturnType<typeof useI18n>['t']
+}) {
+  const usedCliTypes = new Set(rows.map(r => r.cli_type))
+  const available = clis.filter(c => !usedCliTypes.has(c.value))
+  const nextPriority = rows.length === 0 ? 0 : Math.max(...rows.map(r => r.priority ?? 0)) + 1
+
+  function addRow(cli_type: string) {
+    onChange([...rows, { cli_type, codex_config_id: '', agents_md_id: '', priority: nextPriority }])
+  }
+  function removeRow(idx: number) {
+    onChange(rows.filter((_, i) => i !== idx))
+  }
+  function updateRow(idx: number, patch: Partial<AgentCliInit>) {
+    onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t.agents.cliConfigSection}</span>
+        {available.length > 0 && (
+          <select
+            className="input py-1 text-xs w-auto"
+            value=""
+            onChange={e => { if (e.target.value) addRow(e.target.value) }}
+          >
+            <option value="">+ Add CLI</option>
+            {available.map(c => (
+              <option key={c.value} value={c.value}>
+                {c.label}{c.wip ? ' (WIP)' : ''}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 px-3 py-4 text-center text-xs text-gray-500 dark:text-gray-400">
+          No CLI selected. Add at least one (non-WIP).
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row, idx) => {
+            const cliInfo = clis.find(c => c.value === row.cli_type)
+            const isCodex = row.cli_type === 'codex'
+            return (
+              <div
+                key={idx}
+                className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2.5 space-y-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    {cliInfo?.label ?? row.cli_type}
+                  </span>
+                  {cliInfo?.wip && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">WIP</span>
+                  )}
+                  <div className="flex-1" />
+                  <label className="text-xs text-gray-500 dark:text-gray-400">
+                    Priority{' '}
+                    <input
+                      type="number"
+                      className="input py-0.5 px-1.5 text-xs w-16 ml-1"
+                      value={row.priority ?? 0}
+                      onChange={e => updateRow(idx, { priority: parseInt(e.target.value, 10) || 0 })}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removeRow(idx)}
+                    className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 text-sm"
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+                {isCodex ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t.agents.codexConfig}</label>
+                      <div className="flex gap-1">
+                        <select
+                          className="input py-1 text-sm flex-1"
+                          value={row.codex_config_id ?? ''}
+                          onChange={e => updateRow(idx, { codex_config_id: e.target.value || null })}
+                        >
+                          <option value="">{t.agents.noConfig}</option>
+                          {codexConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['codex-configs'] })} className="btn-secondary btn-sm px-2"><RefreshCw size={12} /></button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t.agents.agentsMdConfig}</label>
+                      <div className="flex gap-1">
+                        <select
+                          className="input py-1 text-sm flex-1"
+                          value={row.agents_md_id ?? ''}
+                          onChange={e => updateRow(idx, { agents_md_id: e.target.value || null })}
+                        >
+                          <option value="">{t.agents.noConfig}</option>
+                          {agentsMdConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['configs', 'agents_md'] })} className="btn-secondary btn-sm px-2"><RefreshCw size={12} /></button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 italic">
+                    No init config required (placeholder for {cliInfo?.label ?? row.cli_type}).
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Agents() {
   const qc = useQueryClient()
   const { t } = useI18n()
@@ -153,7 +283,7 @@ export default function Agents() {
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<AgentFormData>(defaultForm)
   const [editAgent, setEditAgent] = useState<Agent | null>(null)
-  const [editForm, setEditForm] = useState<EditFormData>({ name: '', user_id: '', codex_config_id: '', agents_md_id: '' })
+  const [editForm, setEditForm] = useState<EditFormData>({ name: '', user_id: '', cli_inits: [] })
   const [dispatchAgent, setDispatchAgent] = useState<Agent | null>(null)
   const [dispatchInput, setDispatchInput] = useState('')
   const [dispatchNotifIds, setDispatchNotifIds] = useState<string[]>([])
@@ -183,6 +313,7 @@ export default function Agents() {
   })
   const { data: dockerConfigs = [] } = useQuery({ queryKey: ['docker-configs'], queryFn: dockerConfigsApi.list })
   const { data: notifConfigs = [] } = useQuery({ queryKey: ['notifications'], queryFn: notificationsApi.list })
+  const { data: clis = [] } = useQuery({ queryKey: ['clis'], queryFn: clisApi.list })
 
   const filteredAgents = agents.filter(agent => {
     if (searchName && !agent.name.toLowerCase().includes(searchName.toLowerCase())) return false
@@ -255,9 +386,12 @@ export default function Agents() {
       git_auth_type: 'none',
       git_username: undefined,
       git_password: undefined,
-      cli_type: data.cli_type,
-      codex_config_id: data.codex_config_id || undefined,
-      agents_md_id: data.agents_md_id || undefined,
+      cli_inits: data.cli_inits.map(ci => ({
+        cli_type: ci.cli_type,
+        codex_config_id: ci.codex_config_id || null,
+        agents_md_id: ci.agents_md_id || null,
+        priority: ci.priority ?? 0,
+      })),
       docker_config_id: data.use_docker ? (data.docker_config_id || undefined) : undefined,
       docker_image: data.use_docker ? data.docker_image.trim() : undefined,
       use_docker: data.use_docker,
@@ -274,8 +408,12 @@ export default function Agents() {
       return agentsApi.update(id, {
         name: data.name || undefined,
         user_id: data.user_id,
-        codex_config_id: data.codex_config_id,
-        agents_md_id: data.agents_md_id,
+        cli_inits: data.cli_inits.map(ci => ({
+          cli_type: ci.cli_type,
+          codex_config_id: ci.codex_config_id || null,
+          agents_md_id: ci.agents_md_id || null,
+          priority: ci.priority ?? 0,
+        })),
       })
     },
     onSuccess: () => {
@@ -362,9 +500,12 @@ export default function Agents() {
       git_auth_type: defaultForm.git_auth_type,
       git_username: '',
       git_password: '',
-      cli_type: agent.cli_type,
-      codex_config_id: agent.codex_config_id ?? '',
-      agents_md_id: agent.agents_md_id ?? '',
+      cli_inits: agent.cli_inits.map(ci => ({
+        cli_type: ci.cli_type,
+        codex_config_id: ci.codex_config_id ?? '',
+        agents_md_id: ci.agents_md_id ?? '',
+        priority: ci.priority ?? 0,
+      })),
       docker_config_id: agent.docker_config_id ?? '',
       docker_image: agent.docker_image || defaultForm.docker_image,
     })
@@ -379,8 +520,12 @@ export default function Agents() {
     setEditForm({
       name: agent.name,
       user_id: agent.user_id ?? '',
-      codex_config_id: agent.codex_config_id ?? '',
-      agents_md_id: agent.agents_md_id ?? '',
+      cli_inits: agent.cli_inits.map(ci => ({
+        cli_type: ci.cli_type,
+        codex_config_id: ci.codex_config_id ?? '',
+        agents_md_id: ci.agents_md_id ?? '',
+        priority: ci.priority ?? 0,
+      })),
     })
   }
 
@@ -553,59 +698,17 @@ export default function Agents() {
                 <UserSelect value={form.user_id} onChange={val => setForm(f => ({ ...f, user_id: val }))} users={users} t={t} />
               </div>
 
-              {/* CLI Type */}
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">{t.agents.cliType}</label>
-                <div className="flex gap-2 flex-wrap">
-                  {CLI_TYPES.map(cli => (
-                    <button
-                      key={cli.value}
-                      type="button"
-                      disabled={cli.wip}
-                      onClick={() => !cli.wip && setForm(f => ({ ...f, cli_type: cli.value }))}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors flex items-center gap-1.5 ${
-                        form.cli_type === cli.value && !cli.wip
-                          ? 'bg-sky-500 text-white border-sky-500 dark:bg-sky-600 dark:border-sky-600'
-                          : cli.wip
-                          ? 'opacity-40 cursor-not-allowed border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-600'
-                          : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-sky-400 dark:hover:border-sky-600'
-                      }`}
-                    >
-                      {cli.label}
-                      {cli.wip && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">WIP</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* CLI Config section */}
+              {/* CLI Inits — multi-row editor */}
               <SectionDivider label={t.agents.cliConfigSection} />
-
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.codexConfig}</label>
-                <div className="flex gap-2">
-                  <select className="input flex-1" value={form.codex_config_id} onChange={e => setForm(f => ({ ...f, codex_config_id: e.target.value }))}>
-                    <option value="">{t.agents.noConfig}</option>
-                    {codexConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <button type="button" title={t.agents.openCodexConfigPage} onClick={() => window.open('/configs/config-files/codex', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
-                  <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['codex-configs'] })} className="btn-secondary btn-sm px-2.5"><RefreshCw size={13} /></button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.agentsMdConfig}</label>
-                <div className="flex gap-2">
-                  <select className="input flex-1" value={form.agents_md_id} onChange={e => setForm(f => ({ ...f, agents_md_id: e.target.value }))}>
-                    <option value="">{t.agents.noConfig}</option>
-                    {agentsMdConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <button type="button" title={t.agents.openAgentsMdPage} onClick={() => window.open('/configs/agents-md', '_blank')} className="btn-secondary btn-sm px-2.5"><ExternalLink size={13} /></button>
-                  <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['configs', 'agents_md'] })} className="btn-secondary btn-sm px-2.5"><RefreshCw size={13} /></button>
-                </div>
-              </div>
+              <CliInitEditor
+                rows={form.cli_inits}
+                onChange={rows => setForm(f => ({ ...f, cli_inits: rows }))}
+                clis={clis}
+                codexConfigs={codexConfigs}
+                agentsMdConfigs={agentsMdConfigs}
+                qc={qc}
+                t={t}
+              />
 
               {/* Skills (WIP) */}
               <div>
@@ -734,30 +837,17 @@ export default function Agents() {
                 <UserSelect value={editForm.user_id} onChange={val => setEditForm(f => ({ ...f, user_id: val }))} users={users} t={t} />
               </div>
 
-              {/* Codex config + AGENTS.md */}
+              {/* CLI Inits */}
               <SectionDivider label={t.agents.cliConfigSection} />
-
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.codexConfig}</label>
-                <div className="flex gap-2">
-                  <select className="input flex-1" value={editForm.codex_config_id} onChange={e => setEditForm(f => ({ ...f, codex_config_id: e.target.value }))}>
-                    <option value="">{t.agents.noConfig}</option>
-                    {codexConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <button type="button" onClick={() => qc.invalidateQueries({ queryKey: ['codex-configs'] })} className="btn-secondary btn-sm px-2.5"><RefreshCw size={13} /></button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.agents.agentsMdConfig}</label>
-                <div className="flex gap-2">
-                  <select className="input flex-1" value={editForm.agents_md_id} onChange={e => setEditForm(f => ({ ...f, agents_md_id: e.target.value }))}>
-                    <option value="">{t.agents.noConfig}</option>
-                    {agentsMdConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <button type="button" onClick={() => qc.invalidateQueries({ queryKey: ['configs', 'agents_md'] })} className="btn-secondary btn-sm px-2.5"><RefreshCw size={13} /></button>
-                </div>
-              </div>
+              <CliInitEditor
+                rows={editForm.cli_inits}
+                onChange={rows => setEditForm(f => ({ ...f, cli_inits: rows }))}
+                clis={clis}
+                codexConfigs={codexConfigs}
+                agentsMdConfigs={agentsMdConfigs}
+                qc={qc}
+                t={t}
+              />
 
               {updateMutation.error && (
                 <div className="text-red-500 dark:text-red-400 text-sm">{String(updateMutation.error.message)}</div>
@@ -799,7 +889,7 @@ export default function Agents() {
                   rows={5}
                   value={dispatchInput}
                   onChange={e => setDispatchInput(e.target.value)}
-                  placeholder={t.agentDetail.taskPlaceholder(dispatchAgent.cli_type)}
+                  placeholder={t.agentDetail.taskPlaceholder(primaryCli(dispatchAgent.cli_inits))}
                 />
               </div>
               {notifConfigs.length > 0 && (
@@ -937,7 +1027,11 @@ function AgentRow({ agent, servers, t, isAdmin, liveStatus, onRuntimeAction, onE
         <div className="flex items-center gap-2">
           <p className="font-medium text-gray-800 dark:text-gray-100">{agent.name}</p>
           <span className={statusMap[displayStatus] ?? 'badge-gray'}>{t.status[displayStatus as keyof typeof t.status] ?? displayStatus}</span>
-          <span className={agent.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>{agent.cli_type}</span>
+          {agent.cli_inits.map(ci => (
+            <span key={ci.cli_type} className={ci.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>
+              {ci.cli_type}
+            </span>
+          ))}
           {agent.is_busy && (
             <span className="badge-yellow">{t.agents.busy}</span>
           )}

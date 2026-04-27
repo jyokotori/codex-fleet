@@ -203,7 +203,11 @@ export default function AgentDetail() {
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-gray-900 dark:text-white">{agent.name}</h1>
                 <span className={statusMap[agent.status] ?? 'badge-gray'}>{statusLabel}</span>
-                <span className={agent.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>{agent.cli_type}</span>
+                {agent.cli_inits.map(ci => (
+                  <span key={ci.cli_type} className={ci.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>
+                    {ci.cli_type}
+                  </span>
+                ))}
                 <span className={agent.use_docker ? 'badge badge-blue' : 'badge badge-gray'}>
                   {agent.use_docker ? t.agents.dockerBadge : t.agents.noDockerBadge}
                 </span>
@@ -383,7 +387,7 @@ export default function AgentDetail() {
                   rows={5}
                   value={taskInput}
                   onChange={e => setTaskInput(e.target.value)}
-                  placeholder={t.agentDetail.taskPlaceholder(agent.cli_type)}
+                  placeholder={t.agentDetail.taskPlaceholder(agent.cli_inits[0]?.cli_type ?? 'codex')}
                 />
               </div>
               {/* Notification configs */}
