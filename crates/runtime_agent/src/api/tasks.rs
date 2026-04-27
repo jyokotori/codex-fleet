@@ -15,13 +15,10 @@ use crate::ssh::terminal::open_exec_channel;
 use crate::infrastructure::plane_client::PlaneClient;
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
 
-/// Check if an agent is currently busy (has active work items or running tasks).
+/// Check if an agent is currently busy (has a running task).
 pub async fn is_agent_busy(db: &sqlx::PgPool, agent_id: &str) -> Result<bool> {
     let busy = sqlx::query_scalar!(
         r#"SELECT EXISTS(
-            SELECT 1 FROM work_items
-            WHERE assigned_agent_id = $1 AND status IN ('agent_in_progress','agent_completed')
-        ) OR EXISTS(
             SELECT 1 FROM tasks WHERE agent_id = $1 AND status = 'agent_in_progress'
         ) AS "busy!""#,
         agent_id
@@ -37,7 +34,6 @@ pub async fn dispatch_task_for_agent(
     agent_id: &str,
     title: &str,
     description: &str,
-    work_item_id: Option<String>,
     notification_ids: Vec<String>,
     user_id: Option<String>,
     username: String,
@@ -95,8 +91,8 @@ pub async fn dispatch_task_for_agent(
     let notification_ids_json =
         serde_json::to_string(&notification_ids).unwrap_or_else(|_| "[]".into());
     sqlx::query!(
-        "INSERT INTO tasks (id, agent_id, title, description, status, work_item_id, task_log, task_dir, notification_ids, user_id, username, created_at, started_at) VALUES ($1, $2, $3, $4, 'agent_in_progress', $5, '', $6, $7, $8, $9, $10, $11)",
-        id, agent_id, title, description, work_item_id, task_dir, notification_ids_json, user_id, username, now, now
+        "INSERT INTO tasks (id, agent_id, title, description, status, task_log, task_dir, notification_ids, user_id, username, created_at, started_at) VALUES ($1, $2, $3, $4, 'agent_in_progress', '', $5, $6, $7, $8, $9, $10)",
+        id, agent_id, title, description, task_dir, notification_ids_json, user_id, username, now, now
     )
     .execute(&state.db)
     .await?;
@@ -136,7 +132,6 @@ pub async fn dispatch_task_for_agent(
     let task_id = id.clone();
     let db = state.db.clone();
     let task_channels = state.task_channels.clone();
-    let work_item_id_clone = work_item_id.clone();
     let task_dir_clone = task_dir.clone();
     let use_docker = agent_info.use_docker;
     let container_name = agent_info.docker_container_name.clone().unwrap_or_default();
@@ -234,22 +229,6 @@ pub async fn dispatch_task_for_agent(
         .execute(&db)
         .await;
 
-        // Sync work_item status with task status
-        if let Some(ref wi_id) = work_item_id_clone {
-            let wi_status = if status == "agent_completed" {
-                "agent_completed"
-            } else {
-                "agent_failed"
-            };
-            let _ = sqlx::query!(
-                "UPDATE work_items SET status = $1, updated_at = NOW() WHERE id = $2 AND status = 'agent_in_progress'",
-                wi_status,
-                wi_id
-            )
-            .execute(&db)
-            .await;
-        }
-
         // ── Plane write-back ──
         // Check if this task is linked to a plane_task; join workspace to get credentials.
         if let Ok(Some(pt_row)) = sqlx::query(
@@ -318,7 +297,7 @@ pub async fn dispatch_task_for_agent(
 
         // Send webhook notifications
         if !notif_ids.is_empty() {
-            let mut payload = serde_json::json!({
+            let payload = serde_json::json!({
                 "event": status,
                 "task": {
                     "id": task_id,
@@ -332,22 +311,6 @@ pub async fn dispatch_task_for_agent(
                     "completed_at": completed_at.map(|t| t.to_string()),
                 }
             });
-            // Attach work_item info if linked
-            if let Some(ref wi_id) = work_item_id_clone.clone() {
-                if let Ok(Some(wi)) = sqlx::query!(
-                    "SELECT id, project_id, title, status, priority, assigned_agent_id FROM work_items WHERE id = $1",
-                    wi_id
-                ).fetch_optional(&db).await {
-                    payload["work_item"] = serde_json::json!({
-                        "id": wi.id,
-                        "project_id": wi.project_id,
-                        "title": wi.title,
-                        "status": wi.status,
-                        "priority": wi.priority,
-                        "assigned_agent_id": wi.assigned_agent_id,
-                    });
-                }
-            }
             shared_kernel::send_task_notification(&db, &notif_ids, status, payload).await;
         }
 
@@ -365,7 +328,6 @@ pub async fn dispatch_task_for_agent(
         title: title.to_string(),
         description: description.to_string(),
         status: "agent_in_progress".into(),
-        work_item_id,
         task_log: String::new(),
         task_dir,
         result_md: String::new(),
@@ -386,7 +348,6 @@ pub struct TaskSummary {
     pub agent_id: String,
     pub title: String,
     pub status: String,
-    pub work_item_id: Option<String>,
     pub task_dir: String,
     pub thread_id: Option<String>,
     pub notification_ids: String,
@@ -405,7 +366,6 @@ pub struct Task {
     pub title: String,
     pub description: String,
     pub status: String,
-    pub work_item_id: Option<String>,
     pub task_log: String,
     pub task_dir: String,
     pub result_md: String,
@@ -494,7 +454,6 @@ pub async fn create_task(
         &agent_id,
         &title,
         &req.description,
-        None,
         notification_ids,
         Some(auth.user_id),
         auth.username,
@@ -696,7 +655,7 @@ pub async fn list_tasks(
         .unwrap_or(0);
 
     let rows = sqlx::query!(
-        "SELECT id, agent_id, title, status, work_item_id, task_dir, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        "SELECT id, agent_id, title, status, task_dir, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
         agent_id, per_page, offset
     )
     .fetch_all(&state.db)
@@ -709,7 +668,6 @@ pub async fn list_tasks(
             agent_id: r.agent_id,
             title: r.title,
             status: r.status,
-            work_item_id: r.work_item_id,
             task_dir: r.task_dir,
             thread_id: r.thread_id,
             notification_ids: r.notification_ids,
@@ -738,15 +696,15 @@ pub async fn abort_task(
     Path(task_id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     // Verify task exists and is in progress
-    let row = sqlx::query_as::<_, (String, String, Option<String>)>(
-        "SELECT status, agent_id, work_item_id FROM tasks WHERE id = $1",
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT status, agent_id FROM tasks WHERE id = $1",
     )
     .bind(&task_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Task {} not found", task_id)))?;
 
-    let (status, _agent_id, work_item_id) = row;
+    let (status, _agent_id) = row;
 
     if status != "agent_in_progress" {
         return Err(AppError::Conflict(format!(
@@ -771,14 +729,6 @@ pub async fn abort_task(
             .bind(&task_id)
             .execute(&state.db)
             .await?;
-
-        // Also sync work_item
-        if let Some(ref wi_id) = work_item_id {
-            let _ = sqlx::query("UPDATE work_items SET status = 'agent_failed', updated_at = NOW() WHERE id = $1 AND status = 'agent_in_progress'")
-                .bind(wi_id)
-                .execute(&state.db)
-                .await;
-        }
     }
 
     Ok(Json(serde_json::json!({
@@ -792,7 +742,7 @@ pub async fn get_task(
     Path(task_id): Path<String>,
 ) -> Result<Json<Task>> {
     let row = sqlx::query!(
-        "SELECT id, agent_id, title, description, status, work_item_id, task_log, task_dir, result_md, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE id = $1",
+        "SELECT id, agent_id, title, description, status, task_log, task_dir, result_md, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE id = $1",
         task_id
     )
     .fetch_optional(&state.db)
@@ -805,7 +755,6 @@ pub async fn get_task(
         title: row.title,
         description: row.description,
         status: row.status,
-        work_item_id: row.work_item_id,
         task_log: row.task_log,
         task_dir: row.task_dir,
         result_md: row.result_md,

@@ -12,7 +12,6 @@ interface NotifFormData {
 
 const EVENT_OPTIONS = [
   'agent_in_progress', 'agent_completed', 'agent_failed',
-  'human_approved', 'human_rejected',
 ]
 
 const defaultForm: NotifFormData = {
@@ -133,7 +132,7 @@ export default function Notifications() {
                   </div>
                   <p className="text-xs text-gray-500 truncate">{config.url}</p>
                   <div className="flex gap-1 mt-1 flex-wrap">
-                    {events.map(ev => <span key={ev} className="badge badge-gray text-xs">{(t.workItems as Record<string, string>)[ev] ?? ev}</span>)}
+                    {events.map(ev => <span key={ev} className="badge badge-gray text-xs">{(t.taskStatus as Record<string, string>)[ev] ?? ev}</span>)}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -216,7 +215,7 @@ export default function Notifications() {
                         }}
                         className="w-4 h-4 rounded"
                       />
-                      <span className="text-sm text-gray-700 dark:text-gray-300">{(t.workItems as Record<string, string>)[event] ?? event}</span>
+                      <span className="text-sm text-gray-700 dark:text-gray-300">{(t.taskStatus as Record<string, string>)[event] ?? event}</span>
                     </label>
                   ))}
                 </div>

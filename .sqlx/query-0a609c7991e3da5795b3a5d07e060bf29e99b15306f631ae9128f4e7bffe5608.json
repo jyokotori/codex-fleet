@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, agent_id, title, status, work_item_id, task_dir, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE agent_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+  "query": "SELECT id, agent_id, title, description, status, task_log, task_dir, result_md, thread_id, notification_ids, user_id, username, created_at, started_at, completed_at FROM tasks WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -20,60 +20,68 @@
       },
       {
         "ordinal": 3,
-        "name": "status",
+        "name": "description",
         "type_info": "Text"
       },
       {
         "ordinal": 4,
-        "name": "work_item_id",
+        "name": "status",
         "type_info": "Text"
       },
       {
         "ordinal": 5,
-        "name": "task_dir",
+        "name": "task_log",
         "type_info": "Text"
       },
       {
         "ordinal": 6,
-        "name": "thread_id",
+        "name": "task_dir",
         "type_info": "Text"
       },
       {
         "ordinal": 7,
-        "name": "notification_ids",
+        "name": "result_md",
         "type_info": "Text"
       },
       {
         "ordinal": 8,
-        "name": "user_id",
+        "name": "thread_id",
         "type_info": "Text"
       },
       {
         "ordinal": 9,
-        "name": "username",
+        "name": "notification_ids",
         "type_info": "Text"
       },
       {
         "ordinal": 10,
+        "name": "user_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 13,
         "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 14,
         "name": "completed_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Int8",
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
@@ -81,7 +89,9 @@
       false,
       false,
       false,
-      true,
+      false,
+      false,
+      false,
       false,
       true,
       false,
@@ -92,5 +102,5 @@
       true
     ]
   },
-  "hash": "4a0dcf880f258456f87aaaa1092276b807632b16078637a77b2c97e7213cf11f"
+  "hash": "0a609c7991e3da5795b3a5d07e060bf29e99b15306f631ae9128f4e7bffe5608"
 }

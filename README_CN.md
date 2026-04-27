@@ -13,11 +13,10 @@
 ## 计划中
 
 1. 支持 skill/MCP 配置（多来源）。
-2. 需求改成linear那种瀑布式可左右拖动的。
-3. 支持更多 CLI，并做成模块化配置。
-4. 增加AI自动跑测试用例的菜单。
-5. 解析 Codex 的结构化 JSON 输出。
-6. 其他体验优化。
+2. 支持更多 CLI，并做成模块化配置。
+3. 增加AI自动跑测试用例的菜单。
+4. 解析 Codex 的结构化 JSON 输出。
+5. 其他体验优化。
 
 > 备注：用 Rust 是因为 Codex 本身用 Rust，也刚好借这个项目学一学。开发速度取决于我的 token 刷新速度（lol）。
 
@@ -107,10 +106,7 @@ docker rm my-codex-env
 - **删除确认** — 删除任意 Agent 前都需要显式确认；实际会删除 `~/.codex-fleet/{agent_id}` 和数据库记录，Docker Agent 还会额外删除容器
 
 ### 任务下发
-手动派发前，Agent 必须处于空闲状态，且同步后的状态必须为 `running`。这条规则对 Docker 和非 Docker Agent 都一样；后端在真正执行前会再同步一次状态。调度器只会把 `waiting` 状态的工作项自动派发给 `running` 且空闲的 Agent。
-
-### 需求管理
-可以创建项目和工作项，把工作项分配给 Agent 或用户，关联 Agent 执行结果，并在需求详情页对 Agent 结果做审核处理。
+手动派发前，Agent 必须处于空闲状态，且同步后的状态必须为 `running`。这条规则对 Docker 和非 Docker Agent 都一样；后端在真正执行前会再同步一次状态。自动派发由 Plane 集成的调度器驱动。
 
 ### 实时日志 & 终端
 - **日志标签** — 实时显示 Agent 会话输出并自动滚动；结构化任务事件会按 Agent 消息、命令执行、文件变更、工具调用、Web 搜索分块展示，Agent 回复支持 Markdown/GFM 渲染，命令输出和 diff 可展开查看
@@ -124,7 +120,7 @@ docker rm my-codex-env
 - **Docker 配置** — 可复用的 Docker 运行配置（端口、挂载、环境变量、初始化脚本）
 
 ### 通知
-配置 Webhook，任务进度、完成、失败、通过或打回时自动推送通知。
+配置 Webhook，任务进度、完成、失败时自动推送通知。
 
 ### Plane 集成
 与 [Plane](https://plane.so) 双向联动。Plane 中 Issue 移到「Todo」后自动派发给 Agent 组中的空闲 Agent，执行结果会回写为 Plane 状态变更和评论。详见 [Plane 集成指南](./docs/plane-integration.md)。

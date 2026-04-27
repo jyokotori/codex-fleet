@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, Tag, X, StopCircle } from 'lucide-react'
-import { agentsApi, serversApi, tasksApi, workItemsApi, notificationsApi, type TaskSummary } from '../lib/api'
+import { ArrowLeft, Bot, Server, GitBranch, Copy, Send, Terminal as TerminalIcon, X, StopCircle } from 'lucide-react'
+import { agentsApi, serversApi, tasksApi, notificationsApi, type TaskSummary } from '../lib/api'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useI18n } from '../hooks/useI18n'
 import Terminal from '../components/Terminal'
@@ -93,15 +93,6 @@ export default function AgentDetail() {
   const tasks = tasksData?.items ?? []
   const totalTasks = tasksData?.total ?? 0
   const totalPages = Math.ceil(totalTasks / taskPerPage)
-
-  const reviewMutation = useMutation({
-    mutationFn: ({ workItemId, status }: { workItemId: string; status: string }) =>
-      workItemsApi.update(workItemId, { status }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tasks', id] })
-      qc.invalidateQueries({ queryKey: ['agents'] })
-    },
-  })
 
   const createTaskMutation = useMutation({
     mutationFn: ({ title, description, notification_ids }: { title: string; description: string; notification_ids?: string[] }) =>
@@ -216,7 +207,7 @@ export default function AgentDetail() {
                 <span className={agent.use_docker ? 'badge badge-blue' : 'badge badge-gray'}>
                   {agent.use_docker ? t.agents.dockerBadge : t.agents.noDockerBadge}
                 </span>
-                {agent.is_busy && <span className="badge-yellow">{t.requirements.busy}</span>}
+                {agent.is_busy && <span className="badge-yellow">{t.agents.busy}</span>}
               </div>
               <div className="flex items-center gap-4 text-xs text-gray-500 mt-0.5">
                 <span className="flex items-center gap-1"><Server size={11} />{server?.name ?? agent.server_id}</span>
@@ -319,12 +310,6 @@ export default function AgentDetail() {
                       t={t}
                       expanded={expandedTaskId === task.id}
                       onToggle={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
-                      onApprove={() => {
-                        if (task.work_item_id) reviewMutation.mutate({ workItemId: task.work_item_id, status: 'human_approved' })
-                      }}
-                      onReject={() => {
-                        if (task.work_item_id) reviewMutation.mutate({ workItemId: task.work_item_id, status: 'human_rejected' })
-                      }}
                       onOpenResumeTerminal={(threadId, cmd, title) => handleResumeRequest(threadId, cmd, title)}
                       onAbort={async () => {
                         try {
@@ -507,14 +492,12 @@ export default function AgentDetail() {
   )
 }
 
-function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, onOpenResumeTerminal, onAbort }: {
+function TaskCard({ task, agentId, t, expanded, onToggle, onOpenResumeTerminal, onAbort }: {
   task: TaskSummary
   agentId: string
   t: ReturnType<typeof useI18n>['t']
   expanded: boolean
   onToggle: () => void
-  onApprove?: () => void
-  onReject?: () => void
   onOpenResumeTerminal?: (threadId: string, command: string, title: string) => void
   onAbort?: () => void
 }) {
@@ -522,12 +505,9 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
   const [aborting, setAborting] = useState(false)
   const statusMap: Record<string, string> = {
     waiting: 'badge-gray', agent_in_progress: 'badge-yellow', agent_completed: 'badge-green',
-    agent_failed: 'badge-red', human_approved: 'badge-green', human_rejected: 'badge-red',
-    cancelled: 'badge-gray', closed: 'badge-gray',
+    agent_failed: 'badge-red', cancelled: 'badge-gray', closed: 'badge-gray',
   }
-  const isFromWorkItem = !!task.work_item_id
-  const showReviewActions = isFromWorkItem && task.status === 'agent_completed'
-  const agentDone = ['agent_completed', 'agent_failed', 'human_approved', 'human_rejected'].includes(task.status)
+  const agentDone = ['agent_completed', 'agent_failed'].includes(task.status)
   const canResume = agentDone && !!task.thread_id
 
   async function handleCopyResumeCommand(e: React.MouseEvent) {
@@ -562,12 +542,6 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
             <p className="text-sm font-medium text-gray-700 dark:text-gray-200 break-words">
               {task.title}
             </p>
-            {isFromWorkItem && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400 flex-shrink-0">
-                <Tag size={9} />
-                {t.agents.fromWorkItem}
-              </span>
-            )}
           </div>
           <p className="text-xs text-gray-500 mt-1">{new Date(task.created_at).toLocaleString()}</p>
           {task.thread_id && (
@@ -607,22 +581,6 @@ function TaskCard({ task, agentId, t, expanded, onToggle, onApprove, onReject, o
                 title={t.agents.openResumeTerminal}
               >
                 <TerminalIcon size={12} />
-              </button>
-            </>
-          )}
-          {showReviewActions && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); onApprove?.() }}
-                className="px-2 py-1 text-xs font-medium rounded border border-green-300 text-green-600 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/20"
-              >
-                {t.requirements.actionApprove}
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); onReject?.() }}
-                className="px-2 py-1 text-xs font-medium rounded border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
-              >
-                {t.requirements.actionReject}
               </button>
             </>
           )}

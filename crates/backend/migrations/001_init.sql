@@ -157,23 +157,12 @@ CREATE TABLE agent_group_members (
     PRIMARY KEY (group_id, agent_id)
 );
 
-CREATE TABLE projects (
-    id TEXT NOT NULL PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-    notification_ids TEXT NOT NULL DEFAULT '[]',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 CREATE TABLE tasks (
     id TEXT NOT NULL PRIMARY KEY,
     agent_id TEXT NOT NULL REFERENCES agents(id),
     title TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'waiting',
-    work_item_id TEXT,
     task_dir TEXT NOT NULL DEFAULT '',
     task_log TEXT NOT NULL DEFAULT '',
     result_md TEXT NOT NULL DEFAULT '',
@@ -184,25 +173,6 @@ CREATE TABLE tasks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ
-);
-
-CREATE TABLE work_items (
-    id TEXT NOT NULL PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'waiting'
-        CHECK (status IN ('backlog','waiting','agent_in_progress','agent_completed','agent_failed',
-                          'human_approved','human_rejected','cancelled')),
-    priority TEXT NOT NULL DEFAULT 'medium'
-        CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
-    assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
-    assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-    assigned_username TEXT NOT NULL DEFAULT '',
-    execution_id TEXT,
-    notification_ids TEXT NOT NULL DEFAULT '[]',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ============================================================
@@ -274,13 +244,6 @@ CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_exp ON refresh_tokens(expires_at);
 CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
-
-CREATE INDEX idx_work_items_project ON work_items(project_id);
-CREATE INDEX idx_work_items_agent ON work_items(assigned_agent_id);
-CREATE INDEX idx_work_items_user ON work_items(assigned_user_id);
-CREATE INDEX idx_work_items_scheduler
-    ON work_items (assigned_agent_id, status, priority, created_at)
-    WHERE status = 'waiting' AND assigned_agent_id IS NOT NULL;
 
 CREATE INDEX idx_plane_tasks_status_created ON plane_tasks(status, created_at);
 CREATE INDEX idx_plane_tasks_workspace_project ON plane_tasks(workspace_id, plane_project_id);

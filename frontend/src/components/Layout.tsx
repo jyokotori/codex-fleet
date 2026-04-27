@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Server, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon, Users, ClipboardList, ChevronDown, Plane, Group } from 'lucide-react'
+import { LayoutDashboard, Server, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon, Users, ChevronDown, Plane, Group } from 'lucide-react'
 import { authApi } from '../lib/api'
 import { clearAuth, getAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
@@ -37,7 +37,6 @@ export default function Layout() {
     end?: boolean
   }> = [
     { to: '/', label: t.nav.dashboard, icon: LayoutDashboard, end: true },
-    { to: '/requirements', label: t.nav.requirements, icon: ClipboardList },
     { to: '/agents', label: t.nav.agents, icon: Bot },
     ...(isAdmin ? [{ to: '/servers', label: t.nav.servers, icon: Server }] : []),
     { to: '/configs', label: t.nav.configs, icon: Settings, end: false },

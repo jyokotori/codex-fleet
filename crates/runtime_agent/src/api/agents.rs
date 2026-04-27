@@ -794,10 +794,10 @@ pub async fn list_agents(
     .fetch_all(&state.db)
     .await?;
 
-    // Build a set of agent IDs that are busy (have active work items)
+    // Build a set of agent IDs that are busy (have a running task)
     let busy_rows = sqlx::query_scalar!(
-        r#"SELECT DISTINCT assigned_agent_id AS "id!" FROM work_items
-           WHERE status IN ('agent_in_progress','agent_completed') AND assigned_agent_id IS NOT NULL"#
+        r#"SELECT DISTINCT agent_id AS "id!" FROM tasks
+           WHERE status = 'agent_in_progress'"#
     )
     .fetch_all(&state.db)
     .await
@@ -1056,8 +1056,8 @@ pub async fn get_agent(
     let id: String = r.get("id");
     let is_busy = sqlx::query_scalar::<_, bool>(
         r#"SELECT EXISTS(
-            SELECT 1 FROM work_items
-            WHERE assigned_agent_id = $1 AND status IN ('agent_in_progress','agent_completed')
+            SELECT 1 FROM tasks
+            WHERE agent_id = $1 AND status = 'agent_in_progress'
         )"#,
     )
     .bind(&id)

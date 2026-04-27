@@ -13,11 +13,10 @@ A web control plane for managing multiple AI coding agents (Codex, etc.). Agents
 ## Planned
 
 1. Support skill/MCP configuration from multiple sources.
-2. Turn the requirements view into a Linear-style waterfall board that can be dragged left and right.
-3. Support more CLI tools and make the configuration model modular.
-4. Add a menu that lets AI automatically run test cases.
-5. Parse structured JSON output from Codex.
-6. Other UX improvements.
+2. Support more CLI tools and make the configuration model modular.
+3. Add a menu that lets AI automatically run test cases.
+4. Parse structured JSON output from Codex.
+5. Other UX improvements.
 
 > Note: Rust is used because Codex itself is built with Rust, and this project is also a way to learn it. Development speed depends on how fast my token refreshes (lol).
 
@@ -107,10 +106,7 @@ Each agent can be configured independently:
 - **Delete confirmation** — deleting any agent requires explicit confirmation; it removes `~/.codex-fleet/{agent_id}` and the database record, and Docker agents also remove the container
 
 ### Task Dispatch
-Before manual dispatch, the agent must be idle and its synced status must be `running`. This rule is the same for both Docker and non-Docker agents, and the backend syncs status again before execution. The scheduler only auto-dispatches `waiting` work items to agents that are both `running` and idle.
-
-### Requirements Management
-Create projects and work items, assign them to agents or users, link them to agent executions, and review agent results from the requirement detail page.
+Before manual dispatch, the agent must be idle and its synced status must be `running`. This rule is the same for both Docker and non-Docker agents, and the backend syncs status again before execution. Automatic dispatch is driven by the Plane integration scheduler.
 
 ### Live Logs & Terminal
 - **Logs tab** — shows real-time output from the agent session and auto-scrolls; structured task events are rendered as separate blocks for agent messages, command executions, file changes, tool calls, and web searches, with Markdown/GFM rendering for agent replies plus expandable command output and diffs
@@ -124,7 +120,7 @@ Store reusable configurations centrally and attach them to any agent at any time
 - **Docker Configs** — reusable Docker runtime configurations (ports, mounts, environment variables, init scripts)
 
 ### Notifications
-Configure webhooks so task progress, completion, failure, approval, or rejection is pushed automatically.
+Configure webhooks so task progress, completion, and failure are pushed automatically.
 
 ### Plane Integration
 Integrate with [Plane](https://plane.so) for bidirectional issue sync. Plane issues moved to "Todo" are automatically dispatched to agents via agent group bindings, and results are written back as state transitions and comments. See [Plane Integration Guide](./docs/plane-integration.md) for setup instructions.

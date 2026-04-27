@@ -2,7 +2,7 @@
 
 ## Overview
 
-Codex Fleet can send webhook notifications when task statuses change. You configure notification endpoints (webhooks), then associate them with tasks or work items. When a status transition occurs, Codex Fleet POSTs a JSON payload to each matching webhook.
+Codex Fleet can send webhook notifications when task statuses change. You configure notification endpoints (webhooks), then associate them with tasks. When a status transition occurs, Codex Fleet POSTs a JSON payload to each matching webhook.
 
 ## Configuration
 
@@ -11,7 +11,7 @@ Codex Fleet can send webhook notifications when task statuses change. You config
 3. Enter a name and webhook URL.
 4. (Optional) Click **+ Add Header** to attach custom HTTP headers (e.g. `Authorization: Bearer ...`).
 5. Select which events should trigger the webhook.
-6. Save. The config is now available for association with tasks and work items.
+6. Save. The config is now available for association with tasks.
 
 ## Associating Notifications
 
@@ -19,24 +19,15 @@ Codex Fleet can send webhook notifications when task statuses change. You config
 
 When dispatching a task from the Agent Detail page, a checkbox list of enabled notification configs appears in the modal. Select the ones you want to receive notifications for that task.
 
-### Work Items
-
-When creating or editing a work item in the Requirements page, select notification configs from the checkbox list. When the scheduler dispatches a task for that work item, the notification config IDs are copied to the task. Notifications fire on task completion, failure, approval, or rejection.
-
 ## Events
 
 Events correspond to unified status values used across the system:
 
 | Event | Description |
 |---|---|
-| `waiting` | Task/work item is waiting to be picked up |
 | `agent_in_progress` | Agent has started working on the task |
 | `agent_completed` | Agent finished the task successfully |
 | `agent_failed` | Agent failed to complete the task |
-| `human_approved` | A human reviewer approved the completed task |
-| `human_rejected` | A human reviewer rejected the completed task |
-| `cancelled` | Task was cancelled |
-| `closed` | Task was closed |
 
 ## Webhook Payload
 
@@ -57,14 +48,6 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
     "username": "string",
     "created_at": "timestamp",
     "completed_at": "timestamp | null"
-  },
-  "work_item": {
-    "id": "uuid",
-    "project_id": "uuid",
-    "title": "string",
-    "status": "<status>",
-    "priority": "low | medium | high | urgent",
-    "assigned_agent_id": "uuid | null"
   }
 }
 ```
@@ -72,8 +55,6 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
 - `event`: The status that triggered the notification.
 - `task`: Always present. Contains task metadata (excludes `task_log` for payload size).
 - `task.result_md`: The agent's result summary in Markdown format. Present when the agent writes a `result.md` file in the task directory upon completion; `null` otherwise.
-- Review events (`human_approved` and `human_rejected`) include the same core `task` metadata as completion events, with `task.status` set to the review result.
-- `work_item`: Present only if the task is linked to a work item.
 
 ### Example Payload
 
@@ -90,14 +71,6 @@ The webhook receives a `POST` request with `Content-Type: application/json`.
     "username": "alice",
     "created_at": "2026-03-09 10:30:00 UTC",
     "completed_at": "2026-03-09 10:45:00 UTC"
-  },
-  "work_item": {
-    "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
-    "project_id": "e5f6a7b8-c9d0-1234-efab-345678901234",
-    "title": "Login feature",
-    "status": "agent_completed",
-    "priority": "high",
-    "assigned_agent_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901"
   }
 }
 ```

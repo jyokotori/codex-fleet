@@ -939,7 +939,7 @@ function AgentRow({ agent, servers, t, isAdmin, liveStatus, onRuntimeAction, onE
           <span className={statusMap[displayStatus] ?? 'badge-gray'}>{t.status[displayStatus as keyof typeof t.status] ?? displayStatus}</span>
           <span className={agent.cli_type === 'codex' ? 'badge badge-indigo' : 'badge badge-blue'}>{agent.cli_type}</span>
           {agent.is_busy && (
-            <span className="badge-yellow">{t.requirements.busy}</span>
+            <span className="badge-yellow">{t.agents.busy}</span>
           )}
           <span className={agent.use_docker ? 'badge badge-blue' : 'badge badge-gray'}>
             {agent.use_docker ? t.agents.dockerBadge : t.agents.noDockerBadge}

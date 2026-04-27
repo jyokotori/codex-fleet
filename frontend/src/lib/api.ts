@@ -425,7 +425,6 @@ export interface TaskSummary {
   agent_id: string
   title: string
   status: string
-  work_item_id?: string
   task_dir: string
   thread_id?: string
   notification_ids: string
@@ -462,33 +461,6 @@ export const tasksApi = {
     request<{ message: string; task_id: string }>(`/api/tasks/${taskId}/abort`, { method: 'POST' }),
 }
 
-// Requirements
-export interface Project {
-  id: string
-  name: string
-  description: string
-  status: string
-  notification_ids: string
-  created_at: string
-  updated_at: string
-}
-
-export interface WorkItem {
-  id: string
-  project_id: string
-  title: string
-  description: string
-  status: string
-  priority: string
-  assigned_agent_id?: string
-  assigned_user_id?: string
-  assigned_username: string
-  execution_id?: string
-  notification_ids: string
-  created_at: string
-  updated_at: string
-}
-
 export interface SimpleUser {
   id: string
   username: string
@@ -498,40 +470,6 @@ export interface SimpleUser {
 
 export const usersApi = {
   list: () => request<SimpleUser[]>('/api/users'),
-}
-
-export const projectsApi = {
-  list: () => request<Project[]>('/api/projects'),
-  create: (data: { name: string; description?: string; notification_ids?: string[] }) =>
-    request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
-  get: (id: string) => request<Project>(`/api/projects/${id}`),
-  update: (id: string, data: { name?: string; description?: string; status?: string; notification_ids?: string[] }) =>
-    request<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  delete: (id: string) =>
-    request<{ message: string }>(`/api/projects/${id}`, { method: 'DELETE' }),
-  listWorkItems: (projectId: string, params?: { status?: string }) => {
-    const qs = new URLSearchParams()
-    if (params?.status) qs.set('status', params.status)
-    const query = qs.toString() ? `?${qs.toString()}` : ''
-    return request<WorkItem[]>(`/api/projects/${projectId}/work-items${query}`)
-  },
-  createWorkItem: (projectId: string, data: {
-    title: string; description?: string; status?: string; priority?: string; assigned_agent_id?: string; assigned_user_id?: string; notification_ids?: string[]
-  }) =>
-    request<WorkItem>(`/api/projects/${projectId}/work-items`, { method: 'POST', body: JSON.stringify(data) }),
-}
-
-export const workItemsApi = {
-  get: (id: string) => request<WorkItem>(`/api/work-items/${id}`),
-  getByExecutionId: (executionId: string) =>
-    request<WorkItem>(`/api/work-items/by-execution/${executionId}`),
-  update: (id: string, data: {
-    title?: string; description?: string; priority?: string; status?: string;
-    assigned_agent_id?: string; assigned_user_id?: string; execution_id?: string; notification_ids?: string[]
-  }) =>
-    request<WorkItem>(`/api/work-items/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  delete: (id: string) =>
-    request<{ message: string }>(`/api/work-items/${id}`, { method: 'DELETE' }),
 }
 
 // Notifications
