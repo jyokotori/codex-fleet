@@ -29,14 +29,11 @@ pub struct UpdateAgentGroupRequest {
     pub agent_ids: Option<Vec<String>>,
 }
 
-pub async fn list_agent_groups(
-    State(state): State<AppContext>,
-) -> Result<Json<Vec<AgentGroup>>> {
-    let rows = sqlx::query!(
-        "SELECT id, name, created_at FROM agent_groups ORDER BY created_at DESC"
-    )
-    .fetch_all(&state.db)
-    .await?;
+pub async fn list_agent_groups(State(state): State<AppContext>) -> Result<Json<Vec<AgentGroup>>> {
+    let rows =
+        sqlx::query!("SELECT id, name, created_at FROM agent_groups ORDER BY created_at DESC")
+            .fetch_all(&state.db)
+            .await?;
 
     let mut groups = Vec::with_capacity(rows.len());
     for r in rows {
@@ -110,13 +107,9 @@ pub async fn update_agent_group(
 
     let name = req.name.unwrap_or(row.name);
 
-    sqlx::query!(
-        "UPDATE agent_groups SET name = $1 WHERE id = $2",
-        name,
-        id
-    )
-    .execute(&state.db)
-    .await?;
+    sqlx::query!("UPDATE agent_groups SET name = $1 WHERE id = $2", name, id)
+        .execute(&state.db)
+        .await?;
 
     let agent_ids = if let Some(ids) = req.agent_ids {
         sqlx::query!("DELETE FROM agent_group_members WHERE group_id = $1", id)

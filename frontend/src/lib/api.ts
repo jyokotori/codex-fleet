@@ -177,6 +177,9 @@ export interface AdminUser {
   id: string
   username: string
   display_name: string
+  email: string
+  mobile: string
+  dingtalk_userid: string
   status: 'active' | 'disabled'
   failed_attempts: number
   locked_until?: string
@@ -184,10 +187,29 @@ export interface AdminUser {
   created_at: string
 }
 
+export interface DingTalkSyncJob {
+  id: string
+  status: 'running' | 'completed' | 'completed_with_errors'
+  processed: number
+  created: number
+  updated: number
+  skipped: number
+  errors: string[]
+  started_at: string
+  completed_at?: string
+}
+
 export const adminUsersApi = {
   list: () => request<AdminUser[]>('/api/admin/users'),
   create: (data: { username: string; display_name: string; password: string; roles?: string[] }) =>
     request<AdminUser>('/api/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+  syncDingTalk: (default_password: string) =>
+    request<DingTalkSyncJob>('/api/admin/dingtalk/users/sync', {
+      method: 'POST',
+      body: JSON.stringify({ default_password }),
+    }),
+  getDingTalkSyncJob: (id: string) =>
+    request<DingTalkSyncJob>(`/api/admin/dingtalk/users/sync/${id}`),
   resetPassword: (id: string, new_password: string) =>
     request<{ message: string }>(`/api/admin/users/${id}/reset-password`, {
       method: 'POST',
@@ -485,7 +507,7 @@ export const notificationsApi = {
     enabled?: boolean
     events_json?: string
   }) => request<NotificationConfig>('/api/notifications', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: string, data: Partial<{ name: string; config_json: string; enabled: boolean; events_json: string }>) =>
+  update: (id: string, data: Partial<{ name: string; type: string; config_json: string; enabled: boolean; events_json: string }>) =>
     request<NotificationConfig>(`/api/notifications/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<{ message: string }>(`/api/notifications/${id}`, { method: 'DELETE' }),

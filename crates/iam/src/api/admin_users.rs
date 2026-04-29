@@ -20,6 +20,8 @@ pub struct AdminUserItem {
     pub username: String,
     pub display_name: String,
     pub email: String,
+    pub mobile: String,
+    pub dingtalk_userid: String,
     pub status: String,
     pub failed_attempts: i32,
     pub locked_until: Option<String>,
@@ -60,7 +62,7 @@ pub fn router() -> Router<AppContext> {
         .route("/users/{id}/unlock", post(unlock_user))
 }
 
-fn require_permission(auth: &AuthContext, permission: &str) -> Result<()> {
+pub(crate) fn require_permission(auth: &AuthContext, permission: &str) -> Result<()> {
     if auth.has_role("admin") || auth.has_permission(permission) {
         return Ok(());
     }
@@ -77,7 +79,7 @@ pub async fn list_users(
     require_permission(&auth, "user:list")?;
 
     let rows = sqlx::query(
-        "SELECT id, username, display_name, email, status, failed_attempts, locked_until, created_at FROM users ORDER BY created_at DESC",
+        "SELECT id, username, display_name, email, mobile, dingtalk_userid, status, failed_attempts, locked_until, created_at FROM users ORDER BY created_at DESC",
     )
     .fetch_all(&state.db)
     .await?;
@@ -105,6 +107,8 @@ pub async fn list_users(
                 username: r.get("username"),
                 display_name: r.get("display_name"),
                 email: r.get("email"),
+                mobile: r.get("mobile"),
+                dingtalk_userid: r.get("dingtalk_userid"),
                 status: r.get("status"),
                 failed_attempts: r.get("failed_attempts"),
                 locked_until: r
@@ -188,6 +192,8 @@ pub async fn create_user(
         username: req.username.trim().to_string(),
         display_name: req.display_name.trim().to_string(),
         email,
+        mobile: String::new(),
+        dingtalk_userid: String::new(),
         status: "active".into(),
         failed_attempts: 0,
         locked_until: None,

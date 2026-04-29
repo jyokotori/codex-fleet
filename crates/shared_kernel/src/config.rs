@@ -6,6 +6,8 @@ pub struct AppConfig {
     pub port: u16,
     pub master_key: String,
     pub database_url: String,
+    pub db_max_connections: u32,
+    pub db_acquire_timeout_secs: u64,
     pub jwt_secret: String,
     pub access_token_minutes: i64,
     pub refresh_token_days: i64,
@@ -16,6 +18,9 @@ pub struct AppConfig {
     pub initial_admin_display_name: String,
     pub external_api_header: String,
     pub external_api_secret: String,
+    pub dingtalk_app_key: String,
+    pub dingtalk_app_secret: String,
+    pub dingtalk_robot_code: String,
 }
 
 impl AppConfig {
@@ -41,6 +46,14 @@ impl AppConfig {
             master_key: env::var("CODEX_MASTER_KEY")
                 .unwrap_or_else(|_| "dev-master-key-change-in-production!".into()),
             database_url,
+            db_max_connections: env::var("DB_MAX_CONNECTIONS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
+            db_acquire_timeout_secs: env::var("DB_ACQUIRE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "dev-jwt-secret-change-in-production".into()),
             access_token_minutes: env::var("ACCESS_TOKEN_MINUTES")
@@ -68,6 +81,9 @@ impl AppConfig {
             external_api_header: env::var("EXTERNAL_API_HEADER")
                 .unwrap_or_else(|_| "X-Agent-Secret".into()),
             external_api_secret: env::var("EXTERNAL_API_SECRET").unwrap_or_default(),
+            dingtalk_app_key: env::var("DINGTALK_APP_KEY").unwrap_or_default(),
+            dingtalk_app_secret: env::var("DINGTALK_APP_SECRET").unwrap_or_default(),
+            dingtalk_robot_code: env::var("DINGTALK_ROBOT_CODE").unwrap_or_default(),
         }
     }
 }

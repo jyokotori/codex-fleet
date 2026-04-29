@@ -1,11 +1,14 @@
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use tracing;
+
+use crate::config::AppConfig;
 
 /// Send notifications for a task status change.
 /// Looks up the given notification config IDs, checks if each is enabled
 /// and subscribed to the event, then POSTs the payload to the webhook URL.
 pub async fn send_task_notification(
     db: &PgPool,
+    app_config: &AppConfig,
     notification_ids: &[String],
     new_status: &str,
     payload: serde_json::Value,
@@ -14,10 +17,12 @@ pub async fn send_task_notification(
         return;
     }
 
-    let configs = match sqlx::query!(
-        "SELECT id, config_json, events_json FROM notification_configs WHERE id = ANY($1) AND enabled = true",
-        notification_ids
+    let configs = match sqlx::query(
+        r#"SELECT id, "type", config_json, events_json
+           FROM notification_configs
+           WHERE id = ANY($1) AND enabled = true"#,
     )
+    .bind(notification_ids.to_vec())
     .fetch_all(db)
     .await
     {
@@ -30,40 +35,268 @@ pub async fn send_task_notification(
 
     let client = reqwest::Client::new();
 
-    for config in configs {
-        let events: Vec<String> = serde_json::from_str(&config.events_json).unwrap_or_default();
+    for row in configs {
+        let config_id: String = row.get("id");
+        let config_type: String = row.get("type");
+        let config_json: String = row.get("config_json");
+        let events_json: String = row.get("events_json");
+
+        let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
         if !events.iter().any(|e| e == new_status) {
             continue;
         }
 
-        let config_data: serde_json::Value = match serde_json::from_str(&config.config_json) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+        match config_type.as_str() {
+            "webhook" => {
+                send_webhook_notification(&client, &config_json, &payload, new_status).await
+            }
+            "dingtalk" => {
+                send_dingtalk_notification(db, app_config, &payload, new_status, &config_id).await
+            }
+            other => tracing::warn!("Unsupported notification type {other} for config {config_id}"),
+        }
+    }
+}
 
-        let url = match config_data.get("url").and_then(|u| u.as_str()) {
-            Some(u) => u.to_string(),
-            None => continue,
-        };
+async fn send_webhook_notification(
+    client: &reqwest::Client,
+    config_json: &str,
+    payload: &serde_json::Value,
+    new_status: &str,
+) {
+    let config_data: serde_json::Value = match serde_json::from_str(config_json) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
 
-        let mut builder = client.post(&url).json(&payload);
+    let url = match config_data.get("url").and_then(|u| u.as_str()) {
+        Some(u) => u.to_string(),
+        None => return,
+    };
 
-        if let Some(headers) = config_data.get("headers").and_then(|h| h.as_object()) {
-            for (k, v) in headers {
-                if let Some(v_str) = v.as_str() {
-                    builder = builder.header(k.as_str(), v_str);
-                }
+    let mut builder = client.post(&url).json(payload);
+
+    if let Some(headers) = config_data.get("headers").and_then(|h| h.as_object()) {
+        for (k, v) in headers {
+            if let Some(v_str) = v.as_str() {
+                builder = builder.header(k.as_str(), v_str);
             }
         }
+    }
 
-        if let Err(e) = builder.send().await {
-            tracing::warn!("Webhook notification to {} failed: {e}", url);
-        } else {
-            tracing::info!(
-                "Webhook notification sent to {} for event {}",
-                url,
-                new_status
+    if let Err(e) = builder.send().await {
+        tracing::warn!("Webhook notification to {} failed: {e}", url);
+    } else {
+        tracing::info!(
+            "Webhook notification sent to {} for event {}",
+            url,
+            new_status
+        );
+    }
+}
+
+async fn send_dingtalk_notification(
+    db: &PgPool,
+    config: &AppConfig,
+    payload: &serde_json::Value,
+    new_status: &str,
+    config_id: &str,
+) {
+    if config.dingtalk_app_key.is_empty()
+        || config.dingtalk_app_secret.is_empty()
+        || config.dingtalk_robot_code.is_empty()
+    {
+        tracing::warn!("DingTalk notification {config_id} skipped: credentials are incomplete");
+        return;
+    }
+
+    let agent_id = match payload
+        .get("task")
+        .and_then(|task| task.get("agent_id"))
+        .and_then(|v| v.as_str())
+    {
+        Some(agent_id) if !agent_id.is_empty() => agent_id,
+        _ => {
+            tracing::warn!(
+                "DingTalk notification {config_id} skipped: payload has no task.agent_id"
             );
+            return;
         }
+    };
+
+    let recipient = match sqlx::query(
+        r#"SELECT a.name AS agent_name, u.dingtalk_userid
+           FROM agents a
+           LEFT JOIN users u ON u.id = a.user_id
+           WHERE a.id = $1"#,
+    )
+    .bind(agent_id)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(Some(row)) => {
+            let dingtalk_userid: Option<String> = row.try_get("dingtalk_userid").ok();
+            let agent_name: String = row
+                .try_get("agent_name")
+                .unwrap_or_else(|_| agent_id.to_string());
+            (agent_name, dingtalk_userid.unwrap_or_default())
+        }
+        Ok(None) => {
+            tracing::warn!("DingTalk notification {config_id} skipped: agent {agent_id} not found");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                "DingTalk notification {config_id} skipped: failed to query recipient: {e}"
+            );
+            return;
+        }
+    };
+
+    let (agent_name, dingtalk_userid) = recipient;
+    if dingtalk_userid.trim().is_empty() {
+        tracing::info!(
+            "DingTalk notification {config_id} skipped: agent {agent_id} has no assigned DingTalk user"
+        );
+        return;
+    }
+
+    let access_token = match get_dingtalk_access_token(config).await {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::warn!("DingTalk notification {config_id} skipped: failed to get token: {e}");
+            return;
+        }
+    };
+
+    let markdown = build_dingtalk_markdown(payload, new_status, &agent_name, agent_id);
+    let title = format!("Codex Fleet {}", display_status(new_status));
+    let msg_param = serde_json::json!({
+        "title": title,
+        "text": markdown,
+    })
+    .to_string();
+
+    let body = serde_json::json!({
+        "robotCode": config.dingtalk_robot_code,
+        "userIds": [dingtalk_userid],
+        "msgKey": "sampleMarkdown",
+        "msgParam": msg_param,
+    });
+
+    let result = reqwest::Client::new()
+        .post("https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend")
+        .header("x-acs-dingtalk-access-token", access_token)
+        .json(&body)
+        .send()
+        .await;
+
+    match result {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!("DingTalk notification {config_id} sent for event {new_status}");
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!("DingTalk notification {config_id} failed: {status} {body}");
+        }
+        Err(e) => tracing::warn!("DingTalk notification {config_id} failed: {e}"),
+    }
+}
+
+async fn get_dingtalk_access_token(config: &AppConfig) -> anyhow::Result<String> {
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post("https://api.dingtalk.com/v1.0/oauth2/accessToken")
+        .json(&serde_json::json!({
+            "appKey": config.dingtalk_app_key,
+            "appSecret": config.dingtalk_app_secret,
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    resp.get("accessToken")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .ok_or_else(|| anyhow::anyhow!("DingTalk accessToken missing in response"))
+}
+
+fn build_dingtalk_markdown(
+    payload: &serde_json::Value,
+    new_status: &str,
+    agent_name: &str,
+    agent_id: &str,
+) -> String {
+    let task = payload.get("task").unwrap_or(&serde_json::Value::Null);
+    let task_id = task.get("id").and_then(|v| v.as_str()).unwrap_or("-");
+    let title = task.get("title").and_then(|v| v.as_str()).unwrap_or("-");
+    let result_md = task.get("result_md").and_then(|v| v.as_str()).unwrap_or("");
+    let summary = truncate_chars(result_md.trim(), 1200);
+
+    let mut lines = vec![
+        format!("### {}", title),
+        format!("- 状态：{}", display_status(new_status)),
+        format!("- 任务 ID：{}", task_id),
+        format!("- Agent：{} ({})", agent_name, agent_id),
+    ];
+
+    if !summary.is_empty() {
+        lines.push(String::new());
+        lines.push("#### 完成结果摘要".to_string());
+        lines.push(summary);
+    }
+
+    lines.join("\n")
+}
+
+fn display_status(status: &str) -> &str {
+    match status {
+        "agent_in_progress" => "执行中",
+        "agent_completed" => "已完成",
+        "agent_failed" => "失败",
+        _ => status,
+    }
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in input.chars().enumerate() {
+        if idx >= max_chars {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncates_by_chars() {
+        assert_eq!(truncate_chars("abcdef", 3), "abc...");
+        assert_eq!(truncate_chars("你好世界", 2), "你好...");
+    }
+
+    #[test]
+    fn dingtalk_markdown_contains_task_context_and_summary() {
+        let payload = serde_json::json!({
+            "task": {
+                "id": "task-1",
+                "agent_id": "agent-1",
+                "title": "Fix build",
+                "result_md": "Build fixed"
+            }
+        });
+        let markdown = build_dingtalk_markdown(&payload, "agent_completed", "Agent A", "agent-1");
+        assert!(markdown.contains("Fix build"));
+        assert!(markdown.contains("已完成"));
+        assert!(markdown.contains("task-1"));
+        assert!(markdown.contains("Agent A (agent-1)"));
+        assert!(markdown.contains("Build fixed"));
     }
 }

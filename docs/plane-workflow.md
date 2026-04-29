@@ -155,7 +155,7 @@ agent_cli_inits (
 流程:
 
 1. 按 `workspace_id` 查 `plane_workspaces`:
-   - 不存在 → 404
+   - 不存在 → 200 + ignore(避免旧 webhook 配置触发 Plane 重试风暴)
    - `enabled=false` → 200 + ignore
    - 取出 `webhook_secret` 用于签名校验
 2. `verify_signature`:`x-plane-signature` 头做 HMAC-SHA256(body, secret) 十六进制比对(secret 为空时跳过校验,开发模式)。**签名错返 401**,其余异常路径全部返 200 避免 Plane 死循环重试。
@@ -229,13 +229,13 @@ idle_agent_id 拿到值:
 
 ### 4.3 派发分支(per-agent agent_lock 保护)
 
-1. **取锁**:`state.agent_lock(agent_id).await.lock().await`(`AppContext.agent_dispatch_locks` 上的 `Mutex`)。
-2. **Plane 复核**:`PlaneClient.get_issue_full()`。
+1. **Plane 复核**:`PlaneClient.get_issue_full()`。
    - 网络错(transient)→ 不动 plane_task,下一 tick 重试。
    - 复核 `state_id == accept_state_id`;否则 plane_tasks.status='cancelled'(不评论 —— 用户已经手动改了)。
    - 复核 `label_ids ∩ binding.label_ids` 非空;否则 'cancelled'。
    - 复核 `assignee_emails` 含 `pt.assignee_email`;否则 'cancelled'。
-3. **CLI 选择**:把 binding_label 按 `priority` 升序排,逐个看其 `cli_type` 是否在该 agent 的 `agent_cli_inits` 中;首命中即用。无命中 → `add_comment("None of the issue's bound labels map to a CLI installed on the assigned agent.")` → completion → 'rejected'。
+2. **CLI 选择**:把 binding_label 按 `priority` 升序排,逐个看其 `cli_type` 是否在选中 agent 的 `agent_cli_inits` 中;首命中即用。无命中 → `add_comment("None of the issue's bound labels map to a CLI installed on the assigned agent.")` → completion → 'rejected'。
+3. **取锁并复核 busy**:`state.agent_lock(agent_id).await.lock().await` 后再次查 `tasks.status='agent_in_progress'`,防止同一 tick 内多条 issue 同时选中同一个 agent。
 4. **再次确认 agent 在线**:`sync_agent_status_with_creds` → `status=='running'`,否则跳过等下一 tick。
 5. **下发**:`dispatch_task_for_agent(state, agent_id, title, description, ...)` 创建 `tasks` 行。**注意:dispatch_task_for_agent 本身不再加锁**,要求调用方持有 `agent_lock`(scheduler 已持有;HTTP 派发路径在 `create_task` handler 内部加锁)。
 6. **成功后**:

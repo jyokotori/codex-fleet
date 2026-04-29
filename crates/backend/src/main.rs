@@ -2,7 +2,7 @@ mod db;
 mod embed;
 
 use axum::{middleware, routing::get, Router};
-use shared_kernel::{AppConfig, AppContext, AgentStatusCache};
+use shared_kernel::{AgentStatusCache, AppConfig, AppContext};
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};

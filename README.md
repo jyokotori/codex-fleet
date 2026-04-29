@@ -56,6 +56,26 @@ cd frontend && npm install && npm run dev
 
 Frontend dev server: **http://localhost:5173** (`/api` and `/ws` are proxied to the backend)
 
+### Environment Configuration
+Current runtime configuration includes the PostgreSQL connection pool:
+
+```bash
+DB_MAX_CONNECTIONS=30
+DB_ACQUIRE_TIMEOUT_SECS=10
+```
+
+`DB_MAX_CONNECTIONS` should stay below PostgreSQL's available `max_connections` after leaving room for admin sessions and other tools. Increase it when many task streams or webhooks run concurrently.
+
+Current DingTalk integration is configured only through environment variables:
+
+```bash
+DINGTALK_APP_KEY=
+DINGTALK_APP_SECRET=
+DINGTALK_ROBOT_CODE=
+```
+
+The DingTalk user sync password is not stored in `.env`. Admins enter the default password in the user management page each time they start a sync job.
+
 ### Building a Custom Agent Docker Image (Recommended)
 
 If you plan to run agents in Docker mode, it is recommended to pre-build a dedicated programming image with all necessary tools installed, rather than using a bare base image each time.
@@ -120,7 +140,10 @@ Store reusable configurations centrally and attach them to any agent at any time
 - **Docker Configs** — reusable Docker runtime configurations (ports, environment variables, init scripts; agents always mount a managed `/workspace` named volume)
 
 ### Notifications
-Configure webhooks so task progress, completion, and failure are pushed automatically.
+Current:
+- Configure webhooks so task progress, completion, and failure are pushed automatically.
+- Configure DingTalk notifications without storing credentials in notification records; DingTalk credentials are read from `.env`.
+- DingTalk task notifications are sent to the DingTalk user ID on the user assigned to the task's Agent. If the Agent has no assigned user, or that user has no `dingtalk_userid`, the notification is skipped.
 
 ### Plane Integration
 Integrate with [Plane](https://plane.so) for bidirectional issue sync. Each binding declares its own three project states (accept / in-progress / completion) and a list of labels mapped to specific CLIs (`codex`, plus reserved `claude_code` / `gemini_cli` / `opencode`). Issues entering the binding's accept state — with a matching label and assigned to a known agent group member — are automatically dispatched, and results are written back as state transitions and comments. See [Plane Integration Guide](./docs/plane-workflow.md) for setup instructions.
@@ -129,6 +152,8 @@ Integrate with [Plane](https://plane.so) for bidirectional issue sync. Each bind
 - JWT access token + refresh token
 - Role-based access control (RBAC) with fine-grained permission codes
 - Admin-only user management: create users, reset passwords, enable/disable, unlock
+- Admin-only DingTalk user sync from the user management page. The sync dialog requires a default password of at least 8 characters for newly created users.
+- DingTalk sync matches users by DingTalk `email` only. A unique email match updates `display_name`, `email`, `mobile`, and `dingtalk_userid`; no match creates a `member` user with `username` derived from the email prefix; empty or duplicate email matches are skipped and reported in the sync result.
 - Self-service for regular users: change their own password
 - Regular users only load and see the agents assigned to them on shared pages; admin-only server inventory is not fetched or shown for non-admin sessions
 

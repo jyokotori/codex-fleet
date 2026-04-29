@@ -31,6 +31,7 @@ pub struct CreateNotificationRequest {
 #[derive(Deserialize)]
 pub struct UpdateNotificationRequest {
     pub name: Option<String>,
+    pub r#type: Option<String>,
     pub config_json: Option<String>,
     pub enabled: Option<bool>,
     pub events_json: Option<String>,
@@ -108,21 +109,30 @@ pub async fn update_notification(
     .ok_or_else(|| AppError::NotFound(format!("Notification {} not found", id)))?;
 
     let name = req.name.unwrap_or(existing.name);
+    let notification_type = req.r#type.unwrap_or(existing.r#type);
     let config_json = req.config_json.unwrap_or(existing.config_json);
     let enabled = req.enabled.unwrap_or(existing.enabled);
     let events_json = req.events_json.unwrap_or(existing.events_json);
 
-    sqlx::query!(
-        "UPDATE notification_configs SET name=$1, config_json=$2, enabled=$3, events_json=$4 WHERE id=$5",
-        name, config_json, enabled, events_json, id
+    serde_json::from_str::<serde_json::Value>(&config_json)
+        .map_err(|e| AppError::BadRequest(format!("Invalid config_json: {}", e)))?;
+
+    sqlx::query(
+        r#"UPDATE notification_configs SET name=$1, "type"=$2, config_json=$3, enabled=$4, events_json=$5 WHERE id=$6"#,
     )
+    .bind(&name)
+    .bind(&notification_type)
+    .bind(&config_json)
+    .bind(enabled)
+    .bind(&events_json)
+    .bind(&id)
     .execute(&state.db)
     .await?;
 
     Ok(Json(NotificationConfig {
         id,
         name,
-        r#type: existing.r#type,
+        r#type: notification_type,
         config_json,
         enabled,
         events_json,

@@ -21,9 +21,16 @@ pub async fn create_pool(config: &AppConfig) -> anyhow::Result<PgPool> {
         connect_opts.get_database().unwrap_or("?"),
     );
 
+    info!(
+        "Postgres pool max_connections={} acquire_timeout={}s",
+        config.db_max_connections, config.db_acquire_timeout_secs
+    );
+
     let pool = PgPoolOptions::new()
-        .max_connections(30)
-        .acquire_timeout(std::time::Duration::from_secs(10))
+        .max_connections(config.db_max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(
+            config.db_acquire_timeout_secs,
+        ))
         .connect_with(connect_opts)
         .await?;
 

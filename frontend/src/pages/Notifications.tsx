@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Edit2, Bell, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Plus, Trash2, Edit2, Bell, ToggleLeft, ToggleRight, X } from 'lucide-react'
 import { notificationsApi, type NotificationConfig } from '../lib/api'
 import { useI18n } from '../hooks/useI18n'
 
 interface HeaderEntry { key: string; value: string }
+type NotificationType = 'webhook' | 'dingtalk'
 
 interface NotifFormData {
-  name: string; type: string; webhook_url: string; headers: HeaderEntry[]; enabled: boolean; events: string[]
+  name: string; type: NotificationType; webhook_url: string; headers: HeaderEntry[]; enabled: boolean; events: string[]
 }
 
 const EVENT_OPTIONS = [
@@ -19,9 +20,11 @@ const defaultForm: NotifFormData = {
   events: ['agent_completed', 'agent_failed'],
 }
 
-function buildConfigJson(url: string, headers: HeaderEntry[]): string {
-  const obj: Record<string, unknown> = { url }
-  const h = headers.filter(h => h.key.trim())
+function buildConfigJson(data: NotifFormData): string {
+  if (data.type === 'dingtalk') return '{}'
+
+  const obj: Record<string, unknown> = { url: data.webhook_url }
+  const h = data.headers.filter(h => h.key.trim())
   if (h.length > 0) {
     obj.headers = Object.fromEntries(h.map(h => [h.key, h.value]))
   }
@@ -41,7 +44,7 @@ export default function Notifications() {
     mutationFn: (data: NotifFormData) =>
       notificationsApi.create({
         name: data.name, type: data.type,
-        config_json: buildConfigJson(data.webhook_url, data.headers),
+        config_json: buildConfigJson(data),
         enabled: data.enabled, events_json: JSON.stringify(data.events),
       }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }); closeModal() },
@@ -50,7 +53,7 @@ export default function Notifications() {
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: NotifFormData }) =>
       notificationsApi.update(id, {
-        name: data.name, config_json: buildConfigJson(data.webhook_url, data.headers),
+        name: data.name, type: data.type, config_json: buildConfigJson(data),
         enabled: data.enabled, events_json: JSON.stringify(data.events),
       }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['notifications'] }); closeModal() },
@@ -79,7 +82,8 @@ export default function Notifications() {
         headers.push({ key, value })
       }
     }
-    setForm({ name: notif.name, type: notif.type, webhook_url: (config.url as string) ?? '', headers, enabled: notif.enabled, events })
+    const type: NotificationType = notif.type === 'dingtalk' ? 'dingtalk' : 'webhook'
+    setForm({ name: notif.name, type, webhook_url: (config.url as string) ?? '', headers, enabled: notif.enabled, events })
     setShowModal(true)
   }
   function closeModal() { setShowModal(false); setEditNotif(null); setForm(defaultForm) }
@@ -130,7 +134,11 @@ export default function Notifications() {
                     <span className="badge badge-blue">{notif.type}</span>
                     {!notif.enabled && <span className="badge badge-gray">{t.common.disabled}</span>}
                   </div>
-                  <p className="text-xs text-gray-500 truncate">{config.url}</p>
+                  {notif.type === 'webhook' ? (
+                    <p className="text-xs text-gray-500 truncate">{config.url}</p>
+                  ) : (
+                    <p className="text-xs text-gray-500 truncate">{t.notifications.dingtalkType}</p>
+                  )}
                   <div className="flex gap-1 mt-1 flex-wrap">
                     {events.map(ev => <span key={ev} className="badge badge-gray text-xs">{(t.taskStatus as Record<string, string>)[ev] ?? ev}</span>)}
                   </div>
@@ -159,48 +167,65 @@ export default function Notifications() {
               <h3 className="font-semibold text-gray-800 dark:text-gray-100">
                 {editNotif ? t.notifications.editNotification : t.notifications.addNotification}
               </h3>
-              <button onClick={closeModal} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">✕</button>
+              <button onClick={closeModal} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" title={t.common.cancel}>
+                <X size={16} />
+              </button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.common.name}</label>
-                <input className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Slack Alerts" required />
+                <input className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder={form.type === 'dingtalk' ? t.notifications.dingtalkType : 'Slack Alerts'} required />
               </div>
               <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.webhookUrl}</label>
-                <input type="url" className="input" value={form.webhook_url} onChange={e => setForm(f => ({ ...f, webhook_url: e.target.value }))} placeholder="https://hooks.slack.com/..." required />
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.notificationType}</label>
+                <select
+                  className="input"
+                  value={form.type}
+                  onChange={e => setForm(f => ({ ...f, type: e.target.value as NotificationType }))}
+                >
+                  <option value="webhook">{t.notifications.webhookType}</option>
+                  <option value="dingtalk">{t.notifications.dingtalkType}</option>
+                </select>
               </div>
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.headers}</label>
-                <div className="space-y-2">
-                  {form.headers.map((h, i) => (
-                    <div key={i} className="flex gap-2 items-center">
-                      <input
-                        className="input flex-1"
-                        value={h.key}
-                        onChange={e => { const headers = [...form.headers]; headers[i] = { ...h, key: e.target.value }; setForm(f => ({ ...f, headers })) }}
-                        placeholder="Header name"
-                      />
-                      <input
-                        className="input flex-1"
-                        value={h.value}
-                        onChange={e => { const headers = [...form.headers]; headers[i] = { ...h, value: e.target.value }; setForm(f => ({ ...f, headers })) }}
-                        placeholder="Value"
-                      />
-                      <button type="button" onClick={() => setForm(f => ({ ...f, headers: f.headers.filter((_, j) => j !== i) }))} className="text-gray-400 hover:text-red-500 p-1">
-                        <Trash2 size={14} />
+              {form.type === 'webhook' && (
+                <>
+                  <div>
+                    <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.webhookUrl}</label>
+                    <input type="url" className="input" value={form.webhook_url} onChange={e => setForm(f => ({ ...f, webhook_url: e.target.value }))} placeholder="https://hooks.slack.com/..." required />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1.5">{t.notifications.headers}</label>
+                    <div className="space-y-2">
+                      {form.headers.map((h, i) => (
+                        <div key={i} className="flex gap-2 items-center">
+                          <input
+                            className="input flex-1"
+                            value={h.key}
+                            onChange={e => { const headers = [...form.headers]; headers[i] = { ...h, key: e.target.value }; setForm(f => ({ ...f, headers })) }}
+                            placeholder="Header name"
+                          />
+                          <input
+                            className="input flex-1"
+                            value={h.value}
+                            onChange={e => { const headers = [...form.headers]; headers[i] = { ...h, value: e.target.value }; setForm(f => ({ ...f, headers })) }}
+                            placeholder="Value"
+                          />
+                          <button type="button" onClick={() => setForm(f => ({ ...f, headers: f.headers.filter((_, j) => j !== i) }))} className="text-gray-400 hover:text-red-500 p-1">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, headers: [...f.headers, { key: '', value: '' }] }))}
+                        className="text-xs text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
+                      >
+                        + {t.notifications.addHeader}
                       </button>
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, headers: [...f.headers, { key: '', value: '' }] }))}
-                    className="text-xs text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
-                  >
-                    + {t.notifications.addHeader}
-                  </button>
-                </div>
-              </div>
+                  </div>
+                </>
+              )}
               <div>
                 <label className="block text-sm text-gray-600 dark:text-gray-400 mb-2">{t.notifications.events}</label>
                 <div className="space-y-2">

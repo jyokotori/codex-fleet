@@ -56,6 +56,26 @@ cd frontend && npm install && npm run dev
 
 前端开发地址：**http://localhost:5173** （`/api` 和 `/ws` 会自动代理到后端）
 
+### 环境变量配置
+当前运行时配置包含 PostgreSQL 连接池：
+
+```bash
+DB_MAX_CONNECTIONS=30
+DB_ACQUIRE_TIMEOUT_SECS=10
+```
+
+`DB_MAX_CONNECTIONS` 应低于 PostgreSQL 可用的 `max_connections`，并给管理连接和其它工具留余量。当任务日志流或 webhook 并发较高时，可以适当调大。
+
+当前钉钉集成只通过环境变量配置：
+
+```bash
+DINGTALK_APP_KEY=
+DINGTALK_APP_SECRET=
+DINGTALK_ROBOT_CODE=
+```
+
+钉钉用户同步使用的新建用户默认密码不会写入 `.env`。管理员每次在用户管理页启动同步任务时，在弹窗中输入该默认密码。
+
 ### 构建专用 Agent Docker 镜像（推荐）
 
 如果使用 Docker 模式运行 Agent，建议提前构建一个预装好开发工具的专用镜像，而不是每次都用裸的基础镜像。
@@ -120,7 +140,10 @@ docker rm my-codex-env
 - **Docker 配置** — 可复用的 Docker 运行配置（端口、环境变量、初始化脚本；Agent 始终挂载一个由系统管理的 `/workspace` 命名卷）
 
 ### 通知
-配置 Webhook，任务进度、完成、失败时自动推送通知。
+当前功能：
+- 配置 Webhook，任务进度、完成、失败时自动推送通知。
+- 配置钉钉通知；通知记录中不保存钉钉凭据，凭据统一从 `.env` 读取。
+- 钉钉任务通知会发送给任务所属 Agent 的关联用户，即该用户的 `dingtalk_userid`。如果 Agent 没有关联用户，或关联用户没有 `dingtalk_userid`，则跳过通知并记录日志。
 
 ### Plane 集成
 与 [Plane](https://plane.so) 双向联动。每条 binding 自己声明三个项目状态（accept / in-progress / completion）和一组标签 → CLI 映射（`codex` 当前可用，`claude_code` / `gemini_cli` / `opencode` 已预留）。Issue 进入 binding 的 accept 状态、带匹配标签、并指派给 Agent 组成员后，会自动派发到空闲 Agent；执行结果回写为状态变更和评论。详见 [Plane 集成指南](./docs/plane-workflow.md)。
@@ -129,6 +152,8 @@ docker rm my-codex-env
 - JWT 访问令牌 + Refresh Token
 - 基于角色的权限控制（RBAC）+ 细粒度权限码
 - 管理员专属用户管理：新增用户、重置密码、启用/禁用、解锁
+- 管理员可在用户管理页同步钉钉用户。同步弹窗要求输入至少 8 个字符的新建用户默认密码。
+- 钉钉同步只按钉钉 `email` 匹配用户。唯一邮箱命中时更新 `display_name`、`email`、`mobile` 和 `dingtalk_userid`；未命中时创建 `member` 用户，`username` 来自邮箱前缀；邮箱为空或命中多个用户时跳过并在同步结果中报告。
 - 普通用户自助能力：修改自己的密码
 - 普通用户在共享页面只会加载并看到分配给自己的 Agent；管理员专属的服务器清单不会在非管理员会话下请求或展示
 

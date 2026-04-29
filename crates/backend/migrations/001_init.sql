@@ -9,6 +9,8 @@ CREATE TABLE users (
     username TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
     email TEXT NOT NULL DEFAULT '',
+    dingtalk_userid TEXT NOT NULL DEFAULT '',
+    mobile TEXT NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
     failed_attempts INTEGER NOT NULL DEFAULT 0,
@@ -265,6 +267,8 @@ CREATE TABLE notification_configs (
 
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_status ON users(status);
+CREATE UNIQUE INDEX users_dingtalk_userid_uq ON users(dingtalk_userid)
+    WHERE dingtalk_userid <> '';
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_exp ON refresh_tokens(expires_at);
 CREATE INDEX idx_audit_logs_action ON audit_logs(action);

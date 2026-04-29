@@ -1285,11 +1285,13 @@ dependencies = [
  "base64",
  "chrono",
  "hmac",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "shared_kernel",
  "sqlx",
+ "tokio",
  "tracing",
  "uuid",
 ]

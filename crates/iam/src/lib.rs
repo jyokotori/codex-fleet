@@ -28,7 +28,12 @@ pub fn protected_router() -> Router<AppContext> {
     Router::new()
         .nest("/api/auth", api::auth::protected_auth_router())
         .nest("/api", api::auth::me_router())
-        .nest("/api/admin", api::admin_users::router())
+        .nest(
+            "/api/admin",
+            Router::new()
+                .merge(api::admin_users::router())
+                .merge(api::dingtalk::router()),
+        )
 }
 
 pub async fn auth_middleware(

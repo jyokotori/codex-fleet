@@ -84,8 +84,8 @@ pub async fn plane_webhook(
                 r.get("enabled"),
             ),
             None => {
-                warn!("Plane webhook: unknown workspace_id={workspace_id}");
-                return StatusCode::NOT_FOUND;
+                warn!("Plane webhook: unknown workspace_id={workspace_id}; ignored");
+                return StatusCode::OK;
             }
         };
 
@@ -117,9 +117,7 @@ pub async fn plane_webhook(
     // For `updated` events `activity.field` is the changed field; for `created`
     // it's null. We accept both — the state_id check below is the real gate.
     if event != "issue" || (action != "created" && action != "updated") {
-        debug!(
-            "Plane webhook [{workspace_id}]: ignoring event/action = '{event}'/'{action}'"
-        );
+        debug!("Plane webhook [{workspace_id}]: ignoring event/action = '{event}'/'{action}'");
         return StatusCode::OK;
     }
 
@@ -131,7 +129,10 @@ pub async fn plane_webhook(
             return StatusCode::OK;
         }
     };
-    let project_id = payload["data"]["project"].as_str().unwrap_or_default().to_string();
+    let project_id = payload["data"]["project"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     if project_id.is_empty() {
         debug!("Plane webhook [{workspace_id}]: missing data.project");
         return StatusCode::OK;
@@ -141,7 +142,11 @@ pub async fn plane_webhook(
     let new_state_id = payload["data"]["state"]
         .as_str()
         .map(|s| s.to_string())
-        .or_else(|| payload["data"]["state"]["id"].as_str().map(|s| s.to_string()))
+        .or_else(|| {
+            payload["data"]["state"]["id"]
+                .as_str()
+                .map(|s| s.to_string())
+        })
         .unwrap_or_default();
 
     // Look up the binding for this project. Must exist + enabled.
@@ -157,9 +162,7 @@ pub async fn plane_webhook(
     {
         Ok(Some(b)) => b,
         Ok(None) => {
-            debug!(
-                "Plane webhook [{workspace_id}]: no enabled binding for project={project_id}"
-            );
+            debug!("Plane webhook [{workspace_id}]: no enabled binding for project={project_id}");
             return StatusCode::OK;
         }
         Err(e) => {
@@ -184,10 +187,7 @@ pub async fn plane_webhook(
     .fetch_all(&state.db)
     .await
     {
-        Ok(rows) => rows
-            .into_iter()
-            .map(|r| r.label_id)
-            .collect::<HashSet<_>>(),
+        Ok(rows) => rows.into_iter().map(|r| r.label_id).collect::<HashSet<_>>(),
         Err(e) => {
             warn!("Plane webhook: db error looking up binding labels: {e}");
             return StatusCode::INTERNAL_SERVER_ERROR;

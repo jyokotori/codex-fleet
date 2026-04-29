@@ -25,7 +25,12 @@ pub fn router() -> Router<AppContext> {
         .route("/api/agents", get(api::agents::list_agents))
         .route("/api/agents/sync-status", post(api::agents::sync_status))
         .route("/api/agents", post(api::agents::create_agent))
-        .route("/api/agents/{id}", get(api::agents::get_agent).put(api::agents::update_agent).delete(api::agents::delete_agent))
+        .route(
+            "/api/agents/{id}",
+            get(api::agents::get_agent)
+                .put(api::agents::update_agent)
+                .delete(api::agents::delete_agent),
+        )
         .route("/api/agents/{id}/start", post(api::agents::start_agent))
         .route("/api/agents/{id}/stop", post(api::agents::stop_agent))
         .route("/api/agents/{id}/restart", post(api::agents::restart_agent))
@@ -52,7 +57,8 @@ pub fn router() -> Router<AppContext> {
         )
         .route(
             "/api/agent-groups/{id}",
-            put(api::agent_groups::update_agent_group).delete(api::agent_groups::delete_agent_group),
+            put(api::agent_groups::update_agent_group)
+                .delete(api::agent_groups::delete_agent_group),
         )
         .route(
             "/api/plane/workspaces",
@@ -91,10 +97,7 @@ pub fn router() -> Router<AppContext> {
             "/api/plane/bindings/{id}/toggle",
             post(api::plane::toggle_plane_binding),
         )
-        .route(
-            "/api/plane/tasks",
-            get(api::plane::list_plane_tasks),
-        )
+        .route("/api/plane/tasks", get(api::plane::list_plane_tasks))
 }
 
 /// Public webhook routes (no auth required — called by external services like Plane).

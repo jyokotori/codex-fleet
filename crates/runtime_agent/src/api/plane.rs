@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
 
-use shared_kernel::{cli_is_runnable, cli_is_supported, AppContext, AppError, CliInfo, Result, SUPPORTED_CLIS};
+use shared_kernel::{
+    cli_is_runnable, cli_is_supported, AppContext, AppError, CliInfo, Result, SUPPORTED_CLIS,
+};
 
 use crate::infrastructure::plane_client::PlaneClient;
 
@@ -32,7 +34,11 @@ async fn load_workspace(db: &sqlx::PgPool, id: &str) -> Result<(String, String, 
     .await?
     .ok_or_else(|| AppError::BadRequest("Plane workspace not found or disabled".into()))?;
 
-    Ok((row.get("base_url"), row.get("workspace_slug"), row.get("api_key")))
+    Ok((
+        row.get("base_url"),
+        row.get("workspace_slug"),
+        row.get("api_key"),
+    ))
 }
 
 fn plane_client_for(base_url: &str, slug: &str, api_key: &str) -> PlaneClient {
@@ -95,9 +101,7 @@ fn parse_workspace_url(s: &str) -> std::result::Result<(String, String), String>
     Ok((base, slug.to_string()))
 }
 
-pub async fn list_workspaces(
-    State(state): State<AppContext>,
-) -> Result<Json<Vec<PlaneWorkspace>>> {
+pub async fn list_workspaces(State(state): State<AppContext>) -> Result<Json<Vec<PlaneWorkspace>>> {
     let rows = sqlx::query(
         r#"SELECT id, name, base_url, workspace_slug, api_key, webhook_secret, enabled,
                   created_at::text AS created_at, updated_at::text AS updated_at
@@ -133,12 +137,17 @@ pub async fn create_workspace(
     State(state): State<AppContext>,
     Json(req): Json<CreateWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>)> {
-    if req.name.trim().is_empty() || req.workspace_url.trim().is_empty() || req.api_key.trim().is_empty() {
-        return Err(AppError::BadRequest("name, workspace_url, api_key are required".into()));
+    if req.name.trim().is_empty()
+        || req.workspace_url.trim().is_empty()
+        || req.api_key.trim().is_empty()
+    {
+        return Err(AppError::BadRequest(
+            "name, workspace_url, api_key are required".into(),
+        ));
     }
 
-    let (base_url, workspace_slug) = parse_workspace_url(&req.workspace_url)
-        .map_err(AppError::BadRequest)?;
+    let (base_url, workspace_slug) =
+        parse_workspace_url(&req.workspace_url).map_err(AppError::BadRequest)?;
 
     let id = Uuid::new_v4().to_string();
 
@@ -411,7 +420,9 @@ async fn validate_binding_payload(
     labels: &[PlaneBindingLabelInput],
 ) -> Result<()> {
     if labels.is_empty() {
-        return Err(AppError::BadRequest("at least one label is required".into()));
+        return Err(AppError::BadRequest(
+            "at least one label is required".into(),
+        ));
     }
     let mut runnable = false;
     let mut seen_label_ids = std::collections::HashSet::new();
@@ -649,7 +660,9 @@ pub async fn update_plane_binding(
         let labels = req
             .labels
             .as_deref()
-            .ok_or_else(|| AppError::BadRequest("labels must be provided when updating states".into()))
+            .ok_or_else(|| {
+                AppError::BadRequest("labels must be provided when updating states".into())
+            })
             .ok();
         // If labels were not in the request, fetch existing for runnable-cli validation only.
         if let Some(labels) = labels {
@@ -671,7 +684,8 @@ pub async fn update_plane_binding(
                 .get_states(&existing.plane_project_id)
                 .await
                 .map_err(|e| AppError::BadRequest(format!("failed to fetch states: {e}")))?;
-            let ids: std::collections::HashSet<&str> = states.values().map(|s| s.as_str()).collect();
+            let ids: std::collections::HashSet<&str> =
+                states.values().map(|s| s.as_str()).collect();
             for sid in [&accept_id, &inprog_id, &comp_id] {
                 if !ids.contains(sid.as_str()) {
                     return Err(AppError::BadRequest(format!(
@@ -686,15 +700,16 @@ pub async fn update_plane_binding(
 
     let mut builder = sqlx::QueryBuilder::new("UPDATE plane_bindings SET ");
     let mut first = true;
-    let push_pair = |b: &mut sqlx::QueryBuilder<sqlx::Postgres>, col: &str, val: &str, first: &mut bool| {
-        if !*first {
-            b.push(", ");
-        }
-        b.push(col);
-        b.push(" = ");
-        b.push_bind(val.to_string());
-        *first = false;
-    };
+    let push_pair =
+        |b: &mut sqlx::QueryBuilder<sqlx::Postgres>, col: &str, val: &str, first: &mut bool| {
+            if !*first {
+                b.push(", ");
+            }
+            b.push(col);
+            b.push(" = ");
+            b.push_bind(val.to_string());
+            *first = false;
+        };
 
     if let Some(v) = &req.agent_group_id {
         push_pair(&mut builder, "agent_group_id", v, &mut first);
@@ -790,9 +805,7 @@ pub struct PlaneTask {
     pub updated_at: String,
 }
 
-pub async fn list_plane_tasks(
-    State(state): State<AppContext>,
-) -> Result<Json<Vec<PlaneTask>>> {
+pub async fn list_plane_tasks(State(state): State<AppContext>) -> Result<Json<Vec<PlaneTask>>> {
     let rows = sqlx::query!(
         r#"SELECT id, workspace_id, plane_issue_id, plane_project_id, title, description, priority,
                   assignee_email, status, agent_id, task_id, created_at, updated_at

@@ -241,9 +241,9 @@ pub async fn update_server(
     let password_encrypted = if let Some(ref pw) = req.password {
         if !pw.is_empty() && save_password {
             let crypto = Crypto::new(&state.config.master_key);
-            let encrypted = crypto.encrypt(pw).map_err(|e| {
-                AppError::Internal(format!("Failed to encrypt password: {}", e))
-            })?;
+            let encrypted = crypto
+                .encrypt(pw)
+                .map_err(|e| AppError::Internal(format!("Failed to encrypt password: {}", e)))?;
             Some(encrypted)
         } else {
             existing.password_encrypted.clone()
@@ -265,30 +265,25 @@ pub async fn update_server(
                     .is_ok();
 
             if !passwordless_ok {
-                let client =
-                    SshClientPool::connect_with_password(&ip, port as u16, &username, pw)
-                        .await
-                        .map_err(|e| {
-                            let msg = e.to_string().to_lowercase();
-                            if msg.contains("authentication")
-                                || msg.contains("permission denied")
-                                || msg.contains("incorrect")
-                            {
-                                AppError::BadRequest(format!(
-                                    "Password authentication failed: {}",
-                                    e
-                                ))
-                            } else {
-                                AppError::Ssh(format!("Cannot connect to server: {}", e))
-                            }
-                        })?;
+                let client = SshClientPool::connect_with_password(&ip, port as u16, &username, pw)
+                    .await
+                    .map_err(|e| {
+                        let msg = e.to_string().to_lowercase();
+                        if msg.contains("authentication")
+                            || msg.contains("permission denied")
+                            || msg.contains("incorrect")
+                        {
+                            AppError::BadRequest(format!("Password authentication failed: {}", e))
+                        } else {
+                            AppError::Ssh(format!("Cannot connect to server: {}", e))
+                        }
+                    })?;
 
                 let pub_key = read_public_key(&key_path).map_err(|e| {
                     AppError::Internal(format!("Cannot read SSH public key: {}", e))
                 })?;
 
-                let encoded =
-                    base64::engine::general_purpose::STANDARD.encode(pub_key.as_bytes());
+                let encoded = base64::engine::general_purpose::STANDARD.encode(pub_key.as_bytes());
                 let install_cmd = format!(
                     "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
                      touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \

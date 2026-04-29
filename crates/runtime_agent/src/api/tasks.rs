@@ -11,8 +11,8 @@ use uuid::Uuid;
 use crate::api::agents::{
     codex_home_prefix, get_agent_with_credentials, sync_agent_status_with_creds, HOST_ENV_SETUP,
 };
-use crate::ssh::terminal::open_exec_channel;
 use crate::infrastructure::plane_client::PlaneClient;
+use crate::ssh::terminal::open_exec_channel;
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
 
 /// Check if an agent is currently busy (has a running task).
@@ -45,7 +45,11 @@ pub async fn dispatch_task_for_agent(
     let _ = sync_agent_status_with_creds(state, agent_id, &creds, &agent_info).await?;
     // Re-fetch status after sync (agent_info.status may be stale)
     let agent_info = {
-        let fresh_status = state.agent_status_cache.get(agent_id).await.unwrap_or(agent_info.status.clone());
+        let fresh_status = state
+            .agent_status_cache
+            .get(agent_id)
+            .await
+            .unwrap_or(agent_info.status.clone());
         crate::api::agents::AgentRow {
             docker_container_name: agent_info.docker_container_name,
             workdir: agent_info.workdir,
@@ -114,7 +118,14 @@ pub async fn dispatch_task_for_agent(
                 "created_at": now.to_string(),
             }
         });
-        shared_kernel::send_task_notification(&state.db, &notification_ids, "agent_in_progress", payload).await;
+        shared_kernel::send_task_notification(
+            &state.db,
+            &state.config,
+            &notification_ids,
+            "agent_in_progress",
+            payload,
+        )
+        .await;
     }
 
     // Create broadcast channel for live streaming
@@ -143,6 +154,7 @@ pub async fn dispatch_task_for_agent(
     let notif_agent_id = agent_id.to_string();
     let notif_user_id = user_id.clone();
     let notif_username = username.clone();
+    let notif_config = state.config.clone();
     let abort_signals = state.task_abort_signals.clone();
     tokio::spawn(async move {
         let result = run_task_exec(
@@ -265,11 +277,12 @@ pub async fn dispatch_task_for_agent(
                 ("failed", "Agent task failed")
             };
 
-            let _ = sqlx::query("UPDATE plane_tasks SET status = $1, updated_at = NOW() WHERE id = $2")
-                .bind(new_status)
-                .bind(&pt_id)
-                .execute(&db)
-                .await;
+            let _ =
+                sqlx::query("UPDATE plane_tasks SET status = $1, updated_at = NOW() WHERE id = $2")
+                    .bind(new_status)
+                    .bind(&pt_id)
+                    .execute(&db)
+                    .await;
 
             if let Some(state_id) = completion_state_id.as_deref() {
                 if let Err(e) = client
@@ -315,7 +328,8 @@ pub async fn dispatch_task_for_agent(
                     "completed_at": completed_at.map(|t| t.to_string()),
                 }
             });
-            shared_kernel::send_task_notification(&db, &notif_ids, status, payload).await;
+            shared_kernel::send_task_notification(&db, &notif_config, &notif_ids, status, payload)
+                .await;
         }
 
         // Clean up broadcast channel and abort signal
@@ -705,13 +719,12 @@ pub async fn abort_task(
     Path(task_id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     // Verify task exists and is in progress
-    let row = sqlx::query_as::<_, (String, String)>(
-        "SELECT status, agent_id FROM tasks WHERE id = $1",
-    )
-    .bind(&task_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("Task {} not found", task_id)))?;
+    let row =
+        sqlx::query_as::<_, (String, String)>("SELECT status, agent_id FROM tasks WHERE id = $1")
+            .bind(&task_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Task {} not found", task_id)))?;
 
     let (status, _agent_id) = row;
 

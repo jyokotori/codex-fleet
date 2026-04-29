@@ -893,7 +893,9 @@ pub async fn list_agents(
                 provision_log: String::new(),
                 provision_steps: serde_json::Value::default(),
                 is_busy,
-                created_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
+                created_at: r
+                    .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                    .to_string(),
             })
         })
         .collect::<Vec<_>>();
@@ -1118,7 +1120,9 @@ pub async fn get_agent(
     .await
     .unwrap_or(false);
 
-    let cli_inits = fetch_agent_cli_inits(&state.db, &id).await.unwrap_or_default();
+    let cli_inits = fetch_agent_cli_inits(&state.db, &id)
+        .await
+        .unwrap_or_default();
 
     let mut agent = Agent {
         id,
@@ -1141,7 +1145,9 @@ pub async fn get_agent(
         provision_log: r.get("provision_log"),
         provision_steps: r.get("provision_steps"),
         is_busy,
-        created_at: r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
+        created_at: r
+            .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            .to_string(),
     };
 
     // Sync status: check cache first, fallback to live probe
@@ -2008,7 +2014,9 @@ pub async fn update_agent(
     .fetch_one(&state.db)
     .await?;
 
-    let cli_inits = fetch_agent_cli_inits(&state.db, &id).await.unwrap_or_default();
+    let cli_inits = fetch_agent_cli_inits(&state.db, &id)
+        .await
+        .unwrap_or_default();
 
     let agent = Agent {
         id: updated.get("id"),
@@ -2031,7 +2039,9 @@ pub async fn update_agent(
         provision_log: updated.get("provision_log"),
         provision_steps: updated.get("provision_steps"),
         is_busy: false,
-        created_at: updated.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_string(),
+        created_at: updated
+            .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            .to_string(),
     };
 
     Ok((StatusCode::OK, Json(serde_json::to_value(agent).unwrap())))
@@ -2074,9 +2084,8 @@ pub async fn delete_agent(
                 let base = if agent_info.use_docker {
                     format!("$HOME/.codex-fleet/{}", id)
                 } else {
-                    agent_base_dir_from_workdir(&agent_info.workdir).unwrap_or_else(|| {
-                        format!("$HOME/.codex-fleet/{}", id)
-                    })
+                    agent_base_dir_from_workdir(&agent_info.workdir)
+                        .unwrap_or_else(|| format!("$HOME/.codex-fleet/{}", id))
                 };
                 tracing::info!(agent_id = %id, base_dir = %base, "Removing agent files");
                 let _ = executor.execute(&format!("rm -rf {}/", base)).await;
@@ -2248,7 +2257,9 @@ pub async fn clone_agent(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Agent {} not found", id)))?;
 
-    let cli_inits = fetch_agent_cli_inits(&state.db, &id).await.unwrap_or_default();
+    let cli_inits = fetch_agent_cli_inits(&state.db, &id)
+        .await
+        .unwrap_or_default();
 
     let new_id = Uuid::new_v4().to_string();
     let name = format!("{} (copy)", row.name);

@@ -1,19 +1,26 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use shared_kernel::AppContext;
 use sqlx::Row;
-use tracing::warn;
+use tokio::sync::{Mutex, Semaphore};
+use tracing::{debug, warn};
 
 use crate::api::agents::{get_agent_with_credentials, sync_agent_status_with_creds};
-use crate::api::tasks::dispatch_task_for_agent;
+use crate::api::tasks::{dispatch_task_for_agent, is_agent_busy};
 use crate::infrastructure::plane_client::PlaneClient;
+
+const PLANE_SCHEDULER_MAX_CONCURRENCY: usize = 8;
 
 pub async fn run_scheduler(state: AppContext) {
     let mut interval = tokio::time::interval(Duration::from_secs(10));
+    let in_flight = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let permits = Arc::new(Semaphore::new(PLANE_SCHEDULER_MAX_CONCURRENCY));
+
     loop {
         interval.tick().await;
-        if let Err(e) = plane_tick(&state).await {
+        if let Err(e) = plane_tick(&state, in_flight.clone(), permits.clone()).await {
             tracing::error!("Plane scheduler tick error: {e}");
         }
     }
@@ -41,41 +48,55 @@ struct PlanePending {
     idle_agent_id: Option<String>,
 }
 
-async fn plane_tick(state: &AppContext) -> anyhow::Result<()> {
+async fn plane_tick(
+    state: &AppContext,
+    in_flight: Arc<Mutex<HashSet<String>>>,
+    permits: Arc<Semaphore>,
+) -> anyhow::Result<()> {
     let rows = sqlx::query(
-        r#"SELECT pt.id AS plane_task_id,
-                  pt.workspace_id, pt.plane_issue_id, pt.plane_project_id, pt.assignee_email,
-                  pw.base_url, pw.workspace_slug, pw.api_key,
-                  pb.id AS binding_id, pb.agent_group_id,
-                  pb.accept_state_id, pb.in_progress_state_id, pb.completion_state_id,
-                  m.matching_count,
-                  i.idle_agent_id
-           FROM plane_tasks pt
-           JOIN plane_workspaces pw
-             ON pw.id = pt.workspace_id AND pw.enabled = TRUE
-           JOIN plane_bindings pb
-             ON pb.workspace_id = pt.workspace_id
-            AND pb.plane_project_id = pt.plane_project_id
-            AND pb.enabled = TRUE
-           LEFT JOIN LATERAL (
-               SELECT COUNT(*)::bigint AS matching_count
-               FROM agents a
-               JOIN agent_group_members agm ON agm.agent_id = a.id AND agm.group_id = pb.agent_group_id
-               JOIN users u ON u.id = a.user_id AND u.email = pt.assignee_email
-           ) m ON TRUE
-           LEFT JOIN LATERAL (
-               SELECT a.id AS idle_agent_id
-               FROM agents a
-               JOIN agent_group_members agm ON agm.agent_id = a.id AND agm.group_id = pb.agent_group_id
-               JOIN users u ON u.id = a.user_id AND u.email = pt.assignee_email
-               WHERE a.status = 'running'
-                 AND NOT EXISTS (
-                     SELECT 1 FROM tasks t WHERE t.agent_id = a.id AND t.status = 'agent_in_progress'
-                 )
-               ORDER BY a.id LIMIT 1
-           ) i ON TRUE
-           WHERE pt.status = 'pending'
-           ORDER BY pt.created_at ASC"#,
+        r#"WITH candidates AS (
+               SELECT pt.id AS plane_task_id,
+                      pt.workspace_id, pt.plane_issue_id, pt.plane_project_id, pt.assignee_email,
+                      pw.base_url, pw.workspace_slug, pw.api_key,
+                      pb.id AS binding_id, pb.agent_group_id,
+                      pb.accept_state_id, pb.in_progress_state_id, pb.completion_state_id,
+                      m.matching_count,
+                      i.idle_agent_id,
+                      pt.created_at
+               FROM plane_tasks pt
+               JOIN plane_workspaces pw
+                 ON pw.id = pt.workspace_id AND pw.enabled = TRUE
+               JOIN plane_bindings pb
+                 ON pb.workspace_id = pt.workspace_id
+                AND pb.plane_project_id = pt.plane_project_id
+                AND pb.enabled = TRUE
+               LEFT JOIN LATERAL (
+                   SELECT COUNT(*)::bigint AS matching_count
+                   FROM agents a
+                   JOIN agent_group_members agm ON agm.agent_id = a.id AND agm.group_id = pb.agent_group_id
+                   JOIN users u ON u.id = a.user_id AND u.email = pt.assignee_email
+               ) m ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT a.id AS idle_agent_id
+                   FROM agents a
+                   JOIN agent_group_members agm ON agm.agent_id = a.id AND agm.group_id = pb.agent_group_id
+                   JOIN users u ON u.id = a.user_id AND u.email = pt.assignee_email
+                   WHERE a.status = 'running'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM tasks t WHERE t.agent_id = a.id AND t.status = 'agent_in_progress'
+                     )
+                   ORDER BY a.id LIMIT 1
+               ) i ON TRUE
+               WHERE pt.status = 'pending'
+           )
+           SELECT plane_task_id, workspace_id, plane_issue_id, plane_project_id, assignee_email,
+                  base_url, workspace_slug, api_key, binding_id, agent_group_id,
+                  accept_state_id, in_progress_state_id, completion_state_id,
+                  matching_count, idle_agent_id
+           FROM candidates
+           WHERE matching_count = 0 OR idle_agent_id IS NOT NULL
+           ORDER BY created_at ASC
+           LIMIT 100"#,
     )
     .fetch_all(&state.db)
     .await?;
@@ -108,11 +129,32 @@ async fn plane_tick(state: &AppContext) -> anyhow::Result<()> {
         .collect();
 
     for p in pending {
+        let permit = match permits.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                debug!("Plane scheduler concurrency limit reached; deferring remaining tasks");
+                break;
+            }
+        };
+
+        let plane_task_id = p.plane_task_id.clone();
+        {
+            let mut guard = in_flight.lock().await;
+            if !guard.insert(plane_task_id.clone()) {
+                debug!("Plane scheduler task {plane_task_id} already in flight; skipping");
+                continue;
+            }
+        }
+
         let state = state.clone();
+        let in_flight = in_flight.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = handle_pending(&state, p).await {
                 warn!("Plane scheduler handle error: {e}");
             }
+            let mut guard = in_flight.lock().await;
+            guard.remove(&plane_task_id);
         });
     }
 
@@ -154,7 +196,11 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
             .add_comment(&p.plane_project_id, &p.plane_issue_id, &comment)
             .await;
         let _ = client
-            .update_issue_state_by_id(&p.plane_project_id, &p.plane_issue_id, &p.completion_state_id)
+            .update_issue_state_by_id(
+                &p.plane_project_id,
+                &p.plane_issue_id,
+                &p.completion_state_id,
+            )
             .await;
         sqlx::query("UPDATE plane_tasks SET status = 'rejected', updated_at = NOW() WHERE id = $1")
             .bind(&p.plane_task_id)
@@ -167,10 +213,6 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
         Some(id) if !id.is_empty() => id.to_string(),
         _ => return Ok(()), // Busy — wait next tick
     };
-
-    // Acquire agent dispatch lock to avoid TOCTOU with concurrent dispatchers.
-    let lock = state.agent_lock(&agent_id).await;
-    let _guard = lock.lock().await;
 
     // Plane recheck — transient errors retry; data mismatches cancel the task.
     let snap = match client
@@ -188,10 +230,12 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
     };
 
     if snap.state_id != p.accept_state_id {
-        sqlx::query("UPDATE plane_tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1")
-            .bind(&p.plane_task_id)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(
+            "UPDATE plane_tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+        )
+        .bind(&p.plane_task_id)
+        .execute(&state.db)
+        .await?;
         return Ok(());
     }
 
@@ -220,10 +264,12 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
         .collect();
 
     if matched_bound.is_empty() {
-        sqlx::query("UPDATE plane_tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1")
-            .bind(&p.plane_task_id)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(
+            "UPDATE plane_tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+        )
+        .bind(&p.plane_task_id)
+        .execute(&state.db)
+        .await?;
         return Ok(());
     }
 
@@ -237,15 +283,17 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
         }
     }
     if !assignee_emails.iter().any(|e| e == &p.assignee_email) {
-        sqlx::query("UPDATE plane_tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1")
-            .bind(&p.plane_task_id)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(
+            "UPDATE plane_tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+        )
+        .bind(&p.plane_task_id)
+        .execute(&state.db)
+        .await?;
         return Ok(());
     }
 
     // Pick a CLI: scan matched bound labels by priority, find first whose cli_type
-    // is in the agent's installed cli_inits.
+    // is in the selected agent's installed cli_inits.
     let agent_clis: std::collections::HashSet<String> = sqlx::query_scalar!(
         "SELECT cli_type FROM agent_cli_inits WHERE agent_id = $1",
         agent_id
@@ -274,13 +322,23 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
                     &p.completion_state_id,
                 )
                 .await;
-            sqlx::query("UPDATE plane_tasks SET status = 'rejected', updated_at = NOW() WHERE id = $1")
-                .bind(&p.plane_task_id)
-                .execute(&state.db)
-                .await?;
+            sqlx::query(
+                "UPDATE plane_tasks SET status = 'rejected', updated_at = NOW() WHERE id = $1",
+            )
+            .bind(&p.plane_task_id)
+            .execute(&state.db)
+            .await?;
             return Ok(());
         }
     };
+
+    // Acquire agent dispatch lock to avoid TOCTOU with concurrent dispatchers.
+    let lock = state.agent_lock(&agent_id).await;
+    let _guard = lock.lock().await;
+
+    if is_agent_busy(&state.db, &agent_id).await? {
+        return Ok(());
+    }
 
     // Verify agent is still running before dispatch
     let (creds, agent_info) = match get_agent_with_credentials(state, &agent_id).await {
@@ -294,10 +352,6 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
     if synced != "running" {
         return Ok(());
     }
-
-    // Dispatch — pass the picked CLI in metadata via tags.
-    let mut meta: HashMap<String, String> = HashMap::new();
-    meta.insert("cli_type".into(), picked_cli.clone());
 
     match dispatch_task_for_agent(
         state,
@@ -334,11 +388,12 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
                 );
             }
 
-            let agent_name = sqlx::query_scalar::<_, String>("SELECT name FROM agents WHERE id = $1")
-                .bind(&agent_id)
-                .fetch_optional(&state.db)
-                .await?
-                .unwrap_or_else(|| agent_id.clone());
+            let agent_name =
+                sqlx::query_scalar::<_, String>("SELECT name FROM agents WHERE id = $1")
+                    .bind(&agent_id)
+                    .fetch_optional(&state.db)
+                    .await?
+                    .unwrap_or_else(|| agent_id.clone());
             let comment = format!(
                 "<p>Dispatched to agent <strong>{}</strong> via <code>{}</code></p>",
                 html_escape::encode_text(&agent_name),
