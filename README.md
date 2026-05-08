@@ -129,7 +129,7 @@ Before manual dispatch, the agent must be idle and its synced status must be `ru
 
 ### Configuration Management
 Store reusable configurations centrally and attach them to any agent at any time:
-- **Codex Configs** — combine `config.toml` and `auth.json` into a named config bundle
+- **Codex Configs** — combine `config.toml` and `auth.json` into a named config bundle. The edit dialog provides a **Save & push to bound agents** action that writes the new content to every running agent referencing this config (Docker agents via `docker exec` into `/root/.codex/...`, non-Docker agents via SSH into `~/.codex-fleet/{id}/agent/...`), so changes take effect without re-provisioning. Empty fields and unset references are skipped (existing remote files are not deleted).
 - **AGENTS.md** — reusable agent instruction files
 - **Docker Configs** — reusable Docker runtime configurations (ports, environment variables, init scripts; agents always mount a managed `/workspace` named volume)
 

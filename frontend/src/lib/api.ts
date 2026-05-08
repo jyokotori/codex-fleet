@@ -372,6 +372,11 @@ export const codexConfigsApi = {
     request<CodexConfig>(`/api/codex-configs/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<{ message: string }>(`/api/codex-configs/${id}`, { method: 'DELETE' }),
+  propagate: (id: string) =>
+    request<{ pushed: string[]; failed: Array<{ agent_id: string; error: string }> }>(
+      `/api/codex-configs/${id}/propagate`,
+      { method: 'POST' },
+    ),
 }
 
 // Agents

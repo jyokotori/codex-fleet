@@ -9,8 +9,9 @@ use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 use crate::api::agents::{
-    codex_home_prefix, get_agent_with_credentials, sync_agent_status_with_creds, HOST_ENV_SETUP,
+    codex_home_prefix, get_agent_with_credentials, sync_agent_status_with_creds,
 };
+use crate::infrastructure::agent_runtime::{AgentRow, HOST_ENV_SETUP};
 use crate::infrastructure::plane_client::PlaneClient;
 use crate::ssh::terminal::open_exec_channel;
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
@@ -50,7 +51,7 @@ pub async fn dispatch_task_for_agent(
             .get(agent_id)
             .await
             .unwrap_or(agent_info.status.clone());
-        crate::api::agents::AgentRow {
+        AgentRow {
             docker_container_name: agent_info.docker_container_name,
             workdir: agent_info.workdir,
             use_docker: agent_info.use_docker,

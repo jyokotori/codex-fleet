@@ -22,6 +22,10 @@ pub fn router() -> Router<AppContext> {
             "/api/servers/{id}/test",
             post(api::servers::test_server_connection),
         )
+        .route(
+            "/api/codex-configs/{id}/propagate",
+            post(api::agents::propagate_codex_config),
+        )
         .route("/api/agents", get(api::agents::list_agents))
         .route("/api/agents/sync-status", post(api::agents::sync_status))
         .route("/api/agents", post(api::agents::create_agent))

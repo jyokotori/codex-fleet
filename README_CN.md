@@ -129,7 +129,7 @@ docker rm my-codex-env
 
 ### 配置管理
 把可复用的配置统一存储，随时挂到任意 Agent 上：
-- **Codex 配置** — 把 `config.toml` 和 `auth.json` 组合成一个命名配置组
+- **Codex 配置** — 把 `config.toml` 和 `auth.json` 组合成一个命名配置组。编辑弹窗提供 **保存并更新已关联 Agent** 操作，会把新内容写到所有引用该配置的运行中 Agent（Docker Agent 通过 `docker exec` 写入 `/root/.codex/...`，非 Docker Agent 通过 SSH 写入 `~/.codex-fleet/{id}/agent/...`），无需重新 provision 即可生效。字段为空或未设置引用时会跳过（不会删除远端旧文件）。
 - **AGENTS.md** — 可复用的 Agent 指令文件
 - **Docker 配置** — 可复用的 Docker 运行配置（端口、环境变量、初始化脚本；Agent 始终挂载一个由系统管理的 `/workspace` 命名卷）
 

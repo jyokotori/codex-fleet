@@ -27,6 +27,7 @@ export default function CodexConfigs() {
   const [editConfig, setEditConfig] = useState<CodexConfig | null>(null)
   const [form, setForm] = useState<CodexConfigFormData>(defaultForm)
   const [loadingTemplate, setLoadingTemplate] = useState<'config_toml' | 'auth_json' | null>(null)
+  const [pushing, setPushing] = useState(false)
 
   const { data: configs = [], isLoading } = useQuery({
     queryKey: ['codex-configs'],
@@ -107,7 +108,34 @@ export default function CodexConfigs() {
     else createMutation.mutate(form)
   }
 
-  const isPending = createMutation.isPending || updateMutation.isPending
+  async function handleSaveAndPush() {
+    if (!editConfig) return
+    setPushing(true)
+    try {
+      await codexConfigsApi.update(editConfig.id, {
+        name: form.name,
+        config_toml: form.config_toml,
+        auth_json: form.auth_json,
+      })
+      const result = await codexConfigsApi.propagate(editConfig.id)
+      qc.invalidateQueries({ queryKey: ['codex-configs'] })
+      const okMsg = t.configs.pushedToAgents.replace('{n}', String(result.pushed.length))
+      const failMsg = result.failed.length
+        ? '\n' +
+          t.configs.pushFailedForAgents.replace('{n}', String(result.failed.length)) +
+          '\n' +
+          result.failed.map(f => `- ${f.agent_id}: ${f.error}`).join('\n')
+        : ''
+      alert(okMsg + failMsg)
+      closeModal()
+    } catch (e) {
+      alert(String((e as Error)?.message || e))
+    } finally {
+      setPushing(false)
+    }
+  }
+
+  const isPending = createMutation.isPending || updateMutation.isPending || pushing
 
   return (
     <div className="p-8">
@@ -293,6 +321,16 @@ export default function CodexConfigs() {
               </div>
               <div className="flex gap-3 justify-end p-6 border-t border-gray-200 dark:border-gray-700">
                 <button type="button" onClick={closeModal} className="btn-secondary">{t.common.cancel}</button>
+                {editConfig && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={isPending}
+                    onClick={handleSaveAndPush}
+                  >
+                    {pushing ? t.common.loading : t.configs.saveAndPushToAgents}
+                  </button>
+                )}
                 <button type="submit" className="btn-primary" disabled={isPending}>
                   {isPending ? t.common.loading : editConfig ? t.common.update : t.common.create}
                 </button>

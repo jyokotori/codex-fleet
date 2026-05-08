@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT config_json FROM third_party_app_configs WHERE provider = $1",
+  "query": "SELECT DISTINCT agent_id FROM agent_cli_inits WHERE codex_config_id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "config_json",
+        "name": "agent_id",
         "type_info": "Text"
       }
     ],
@@ -18,5 +18,5 @@
       false
     ]
   },
-  "hash": "c2ecd233dca86101c5df67d726eed698f9e0913e2b4f6f23b7c6b4974d385f43"
+  "hash": "8058563687639e68a99b577f02493b90b1a4f1eb188f8f6423ac026afce7f8d2"
 }

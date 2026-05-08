@@ -28,3 +28,4 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 shared_kernel = { path = "../shared_kernel" }
+config_center = { path = "../config_center" }
