@@ -97,9 +97,7 @@ pub async fn send_task_notification(
             "webhook" => {
                 send_webhook_notification(&client, &config_json, &payload, new_status).await
             }
-            "dingtalk" => {
-                send_dingtalk_notification(db, &payload, new_status, &config_id).await
-            }
+            "dingtalk" => send_dingtalk_notification(db, &payload, new_status, &config_id).await,
             other => tracing::warn!("Unsupported notification type {other} for config {config_id}"),
         }
     }

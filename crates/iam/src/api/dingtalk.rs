@@ -31,7 +31,9 @@ async fn load_dingtalk_credentials(db: &PgPool) -> Result<DingTalkCredentials> {
     .ok_or_else(|| AppError::BadRequest("DingTalk integration is not configured".into()))?;
 
     if !row.enabled {
-        return Err(AppError::BadRequest("DingTalk integration is disabled".into()));
+        return Err(AppError::BadRequest(
+            "DingTalk integration is disabled".into(),
+        ));
     }
     let parsed: serde_json::Value =
         serde_json::from_str(&row.config_json).unwrap_or(serde_json::json!({}));
@@ -52,7 +54,10 @@ async fn load_dingtalk_credentials(db: &PgPool) -> Result<DingTalkCredentials> {
             "DingTalk app key and secret are not configured".into(),
         ));
     }
-    Ok(DingTalkCredentials { app_key, app_secret })
+    Ok(DingTalkCredentials {
+        app_key,
+        app_secret,
+    })
 }
 
 use crate::application::{audit::write_audit_log, password::hash_password};
