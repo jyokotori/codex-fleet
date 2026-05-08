@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Edit2, Bell, ToggleLeft, ToggleRight, X } from 'lucide-react'
 import { notificationsApi, type NotificationConfig } from '../lib/api'
 import { useI18n } from '../hooks/useI18n'
+import { useIntegrations } from '../lib/integrations'
 
 interface HeaderEntry { key: string; value: string }
 type NotificationType = 'webhook' | 'dingtalk'
@@ -34,6 +35,8 @@ function buildConfigJson(data: NotifFormData): string {
 export default function Notifications() {
   const qc = useQueryClient()
   const { t } = useI18n()
+  const { status: integrations } = useIntegrations()
+  const dingtalkEnabled = integrations.dingtalk.enabled
   const [showModal, setShowModal] = useState(false)
   const [editNotif, setEditNotif] = useState<NotificationConfig | null>(null)
   const [form, setForm] = useState<NotifFormData>(defaultForm)
@@ -184,7 +187,9 @@ export default function Notifications() {
                   onChange={e => setForm(f => ({ ...f, type: e.target.value as NotificationType }))}
                 >
                   <option value="webhook">{t.notifications.webhookType}</option>
-                  <option value="dingtalk">{t.notifications.dingtalkType}</option>
+                  {dingtalkEnabled && (
+                    <option value="dingtalk">{t.notifications.dingtalkType}</option>
+                  )}
                 </select>
               </div>
               {form.type === 'webhook' && (

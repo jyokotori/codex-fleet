@@ -66,15 +66,9 @@ DB_ACQUIRE_TIMEOUT_SECS=10
 
 `DB_MAX_CONNECTIONS` 应低于 PostgreSQL 可用的 `max_connections`，并给管理连接和其它工具留余量。当任务日志流或 webhook 并发较高时，可以适当调大。
 
-当前钉钉集成只通过环境变量配置：
+钉钉凭据 (`app_key`、`app_secret`、`robot_code`) 通过管理员后台 **第三方应用 → 钉钉** 在数据库中维护，不再从 `.env` 读取。在配置并启用之前，用户管理页的"同步钉钉用户"按钮和通知页的"钉钉"通知类型都会被隐藏。
 
-```bash
-DINGTALK_APP_KEY=
-DINGTALK_APP_SECRET=
-DINGTALK_ROBOT_CODE=
-```
-
-钉钉用户同步使用的新建用户默认密码不会写入 `.env`。管理员每次在用户管理页启动同步任务时，在弹窗中输入该默认密码。
+钉钉用户同步使用的新建用户默认密码不会持久化。管理员每次在用户管理页启动同步任务时，在弹窗中输入该默认密码。
 
 ### 构建专用 Agent Docker 镜像（推荐）
 
@@ -142,7 +136,7 @@ docker rm my-codex-env
 ### 通知
 当前功能：
 - 配置 Webhook，任务进度、完成、失败时自动推送通知。
-- 配置钉钉通知；通知记录中不保存钉钉凭据，凭据统一从 `.env` 读取。
+- 配置钉钉通知；通知记录中不保存钉钉凭据，凭据统一在 **第三方应用** 管理（仅管理员可见）。
 - 钉钉任务通知会发送给任务所属 Agent 的关联用户，即该用户的 `dingtalk_userid`。如果 Agent 没有关联用户，或关联用户没有 `dingtalk_userid`，则跳过通知并记录日志。
 
 ### Plane 集成

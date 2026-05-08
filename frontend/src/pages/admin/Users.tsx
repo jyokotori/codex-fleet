@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminUsersApi, type AdminUser, type DingTalkSyncJob } from '../../lib/api'
 import { useI18n } from '../../hooks/useI18n'
+import { useIntegrations } from '../../lib/integrations'
 import { Plus, Search, ChevronLeft, ChevronRight, RefreshCw, X } from 'lucide-react'
 
 const PER_PAGE = 15
@@ -9,6 +10,8 @@ const PER_PAGE = 15
 export default function Users() {
   const { t } = useI18n()
   const queryClient = useQueryClient()
+  const { status: integrations } = useIntegrations()
+  const dingtalkEnabled = integrations.dingtalk.enabled
 
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -162,14 +165,16 @@ export default function Users() {
           <p className="text-gray-500 mt-1">{t.users.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            className="btn-secondary flex items-center gap-2"
-            onClick={() => setShowSyncModal(true)}
-            disabled={syncJob?.status === 'running'}
-          >
-            <RefreshCw size={16} className={syncJob?.status === 'running' ? 'animate-spin' : ''} />
-            {t.users.syncDingTalk}
-          </button>
+          {dingtalkEnabled && (
+            <button
+              className="btn-secondary flex items-center gap-2"
+              onClick={() => setShowSyncModal(true)}
+              disabled={syncJob?.status === 'running'}
+            >
+              <RefreshCw size={16} className={syncJob?.status === 'running' ? 'animate-spin' : ''} />
+              {t.users.syncDingTalk}
+            </button>
+          )}
           <button className="btn-primary flex items-center gap-2" onClick={() => setShowModal(true)}>
             <Plus size={16} />
             {t.users.createUser}
@@ -192,11 +197,14 @@ export default function Users() {
             </span>
           </div>
           {syncJob.errors.length > 0 && (
-            <div className="mt-3 max-h-28 overflow-auto rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-              {syncJob.errors.slice(0, 20).map((msg, idx) => (
-                <p key={`${idx}-${msg}`}>{msg}</p>
-              ))}
-            </div>
+            <>
+              <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{t.users.dingtalkSyncErrorHint}</p>
+              <div className="mt-2 max-h-28 overflow-auto rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+                {syncJob.errors.slice(0, 20).map((msg, idx) => (
+                  <p key={`${idx}-${msg}`}>{msg}</p>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}

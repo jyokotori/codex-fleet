@@ -66,15 +66,9 @@ DB_ACQUIRE_TIMEOUT_SECS=10
 
 `DB_MAX_CONNECTIONS` should stay below PostgreSQL's available `max_connections` after leaving room for admin sessions and other tools. Increase it when many task streams or webhooks run concurrently.
 
-Current DingTalk integration is configured only through environment variables:
+DingTalk credentials (`app_key`, `app_secret`, `robot_code`) are managed in the database via the admin UI: **Third-party Apps → DingTalk**. They are no longer read from `.env`. Until they are saved and the integration is enabled, the DingTalk user sync button and DingTalk notification type are hidden in the UI.
 
-```bash
-DINGTALK_APP_KEY=
-DINGTALK_APP_SECRET=
-DINGTALK_ROBOT_CODE=
-```
-
-The DingTalk user sync password is not stored in `.env`. Admins enter the default password in the user management page each time they start a sync job.
+The DingTalk user sync password is not persisted. Admins enter the default password in the user management page each time they start a sync job.
 
 ### Building a Custom Agent Docker Image (Recommended)
 
@@ -142,7 +136,7 @@ Store reusable configurations centrally and attach them to any agent at any time
 ### Notifications
 Current:
 - Configure webhooks so task progress, completion, and failure are pushed automatically.
-- Configure DingTalk notifications without storing credentials in notification records; DingTalk credentials are read from `.env`.
+- Configure DingTalk notifications without storing credentials in notification records; DingTalk credentials are managed in **Third-party Apps** (admin-only).
 - DingTalk task notifications are sent to the DingTalk user ID on the user assigned to the task's Agent. If the Agent has no assigned user, or that user has no `dingtalk_userid`, the notification is skipped.
 
 ### Plane Integration

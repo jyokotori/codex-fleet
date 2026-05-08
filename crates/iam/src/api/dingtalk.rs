@@ -16,6 +16,45 @@ use uuid::Uuid;
 
 use shared_kernel::{AppContext, AppError, AuthContext, Result};
 
+#[derive(Debug, Clone)]
+struct DingTalkCredentials {
+    app_key: String,
+    app_secret: String,
+}
+
+async fn load_dingtalk_credentials(db: &PgPool) -> Result<DingTalkCredentials> {
+    let row = sqlx::query!(
+        "SELECT config_json, enabled FROM third_party_app_configs WHERE provider = 'dingtalk'"
+    )
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("DingTalk integration is not configured".into()))?;
+
+    if !row.enabled {
+        return Err(AppError::BadRequest("DingTalk integration is disabled".into()));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&row.config_json).unwrap_or(serde_json::json!({}));
+    let app_key = parsed
+        .get("app_key")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let app_secret = parsed
+        .get("app_secret")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if app_key.is_empty() || app_secret.is_empty() {
+        return Err(AppError::BadRequest(
+            "DingTalk app key and secret are not configured".into(),
+        ));
+    }
+    Ok(DingTalkCredentials { app_key, app_secret })
+}
+
 use crate::application::{audit::write_audit_log, password::hash_password};
 
 use super::admin_users::require_permission;
@@ -108,11 +147,7 @@ async fn start_sync(
             "Default password must be at least 8 characters".into(),
         ));
     }
-    if state.config.dingtalk_app_key.is_empty() || state.config.dingtalk_app_secret.is_empty() {
-        return Err(AppError::BadRequest(
-            "DingTalk app key and secret are not configured".into(),
-        ));
-    }
+    let credentials = load_dingtalk_credentials(&state.db).await?;
 
     let job = DingTalkSyncJob {
         id: Uuid::new_v4().to_string(),
@@ -139,7 +174,7 @@ async fn start_sync(
     let job_id = job.id.clone();
     let actor_user_id = auth.user_id.clone();
     tokio::spawn(async move {
-        let counters = run_sync_job(&state, &req.default_password).await;
+        let counters = run_sync_job(&state, &credentials, &req.default_password).await;
         finish_job(&job_id, counters).await;
         write_audit_log(
             &state.db,
@@ -169,15 +204,14 @@ async fn get_sync_job(
     Ok(Json(job))
 }
 
-async fn run_sync_job(state: &AppContext, default_password: &str) -> SyncCounters {
+async fn run_sync_job(
+    state: &AppContext,
+    credentials: &DingTalkCredentials,
+    default_password: &str,
+) -> SyncCounters {
     let mut counters = SyncCounters::default();
 
-    let token = match get_access_token(
-        &state.config.dingtalk_app_key,
-        &state.config.dingtalk_app_secret,
-    )
-    .await
-    {
+    let token = match get_access_token(&credentials.app_key, &credentials.app_secret).await {
         Ok(token) => token,
         Err(e) => {
             counters
@@ -215,16 +249,16 @@ async fn run_sync_job(state: &AppContext, default_password: &str) -> SyncCounter
                 Ok(SyncAction::Updated) => counters.updated += 1,
                 Err(e) => {
                     counters.skipped += 1;
-                    counters
-                        .errors
-                        .push(format!("{}: {}", user.userid, display_sync_error(e)));
+                    let msg = format!("{}: {}", user.userid, display_sync_error(e));
+                    tracing::warn!(target: "dingtalk_sync", "{}", msg);
+                    counters.errors.push(msg);
                 }
             },
             Err(e) => {
                 counters.skipped += 1;
-                counters
-                    .errors
-                    .push(format!("{}: failed to fetch user detail: {e}", userid));
+                let msg = format!("{}: failed to fetch user detail: {e}", userid);
+                tracing::warn!(target: "dingtalk_sync", "{}", msg);
+                counters.errors.push(msg);
             }
         }
 

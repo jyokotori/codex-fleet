@@ -224,6 +224,31 @@ export const adminUsersApi = {
     request<{ message: string }>(`/api/admin/users/${id}/unlock`, { method: 'POST' }),
 }
 
+// Third-party integrations
+export interface IntegrationConfig {
+  provider: string
+  config: Record<string, unknown>
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface IntegrationsStatus {
+  dingtalk: { enabled: boolean }
+}
+
+export const integrationsApi = {
+  status: () => request<IntegrationsStatus>('/api/integrations/status'),
+  list: () => request<IntegrationConfig[]>('/api/admin/integrations'),
+  get: (provider: string) =>
+    request<IntegrationConfig>(`/api/admin/integrations/${provider}`),
+  upsert: (provider: string, data: { config: Record<string, unknown>; enabled: boolean }) =>
+    request<IntegrationConfig>(`/api/admin/integrations/${provider}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+}
+
 // Servers
 export interface Server {
   id: string

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Server, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon, Users, ChevronDown, Plane, Group } from 'lucide-react'
+import { LayoutDashboard, Server, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon, Users, ChevronDown, Plane, Group, Plug } from 'lucide-react'
 import { authApi } from '../lib/api'
 import { clearAuth, getAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
@@ -21,10 +21,13 @@ export default function Layout() {
   const { resolved, setTheme } = useTheme()
   const [langOpen, setLangOpen] = useState(false)
   const langRef = useRef<HTMLDivElement>(null)
+  const [userOpen, setUserOpen] = useState(false)
+  const userRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false)
+      if (userRef.current && !userRef.current.contains(e.target as Node)) setUserOpen(false)
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
@@ -46,6 +49,7 @@ export default function Layout() {
   ]
   if (isAdmin) {
     navItems.push({ to: '/admin/users', label: t.nav.users, icon: Users })
+    navItems.push({ to: '/admin/integrations', label: t.nav.integrations, icon: Plug })
   }
 
   async function handleLogout() {
@@ -130,22 +134,39 @@ export default function Layout() {
             {/* Divider */}
             <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-1" />
 
-            {/* User */}
-            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
-              <div className="w-7 h-7 rounded-full bg-sky-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
-                {user?.display_name?.[0]?.toUpperCase() ?? 'U'}
-              </div>
-              <span className="text-sm font-medium text-gray-800 dark:text-gray-200 max-w-[100px] truncate">{user?.display_name}</span>
+            {/* User dropdown */}
+            <div className="relative" ref={userRef}>
+              <button
+                onClick={() => setUserOpen(!userOpen)}
+                className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                <div className="w-7 h-7 rounded-full bg-sky-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                  {user?.display_name?.[0]?.toUpperCase() ?? 'U'}
+                </div>
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200 max-w-[100px] truncate">{user?.display_name}</span>
+                <ChevronDown size={12} className={`text-gray-400 transition-transform ${userOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {userOpen && (
+                <div className="absolute right-0 top-full mt-1 min-w-[200px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 z-50">
+                  <div className="px-3 py-2">
+                    <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{user?.display_name}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{user?.username}</div>
+                  </div>
+                  <div className="border-t border-gray-100 dark:border-gray-700 my-1" />
+                  <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {t.layout.version} v{__APP_VERSION__}
+                  </div>
+                  <div className="border-t border-gray-100 dark:border-gray-700 my-1" />
+                  <button
+                    onClick={() => { setUserOpen(false); handleLogout() }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                  >
+                    <LogOut size={14} />
+                    {t.auth.signOut}
+                  </button>
+                </div>
+              )}
             </div>
-
-            {/* Logout */}
-            <button
-              onClick={handleLogout}
-              className="p-2 rounded-lg text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              title={t.auth.signOut}
-            >
-              <LogOut size={16} />
-            </button>
           </div>
         </div>
       </header>

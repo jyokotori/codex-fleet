@@ -9,6 +9,8 @@ use axum::{
 };
 use shared_kernel::AppContext;
 
+pub use api::third_party_app_configs::dingtalk_enabled;
+
 pub fn router() -> Router<AppContext> {
     Router::new()
         .route("/api/configs", get(api::configs::list_configs))
@@ -46,5 +48,21 @@ pub fn router() -> Router<AppContext> {
         .route(
             "/api/docker-configs/{id}",
             delete(api::docker_configs::delete_docker_config),
+        )
+        .route(
+            "/api/admin/integrations",
+            get(api::third_party_app_configs::list_integrations),
+        )
+        .route(
+            "/api/admin/integrations/{provider}",
+            get(api::third_party_app_configs::get_integration),
+        )
+        .route(
+            "/api/admin/integrations/{provider}",
+            put(api::third_party_app_configs::upsert_integration),
+        )
+        .route(
+            "/api/integrations/status",
+            get(api::third_party_app_configs::integrations_status),
         )
 }

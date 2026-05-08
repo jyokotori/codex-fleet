@@ -120,7 +120,6 @@ pub async fn dispatch_task_for_agent(
         });
         shared_kernel::send_task_notification(
             &state.db,
-            &state.config,
             &notification_ids,
             "agent_in_progress",
             payload,
@@ -154,7 +153,6 @@ pub async fn dispatch_task_for_agent(
     let notif_agent_id = agent_id.to_string();
     let notif_user_id = user_id.clone();
     let notif_username = username.clone();
-    let notif_config = state.config.clone();
     let abort_signals = state.task_abort_signals.clone();
     tokio::spawn(async move {
         let result = run_task_exec(
@@ -328,8 +326,7 @@ pub async fn dispatch_task_for_agent(
                     "completed_at": completed_at.map(|t| t.to_string()),
                 }
             });
-            shared_kernel::send_task_notification(&db, &notif_config, &notif_ids, status, payload)
-                .await;
+            shared_kernel::send_task_notification(&db, &notif_ids, status, payload).await;
         }
 
         // Clean up broadcast channel and abort signal

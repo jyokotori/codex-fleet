@@ -16,7 +16,9 @@ import Notifications from './pages/Notifications'
 import AgentGroups from './pages/AgentGroups'
 import PlaneIntegration from './pages/PlaneIntegration'
 import Users from './pages/admin/Users'
+import Integrations from './pages/admin/Integrations'
 import Layout from './components/Layout'
+import { IntegrationsProvider } from './lib/integrations'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) {
@@ -50,7 +52,9 @@ export default function App() {
         path="/"
         element={
           <ProtectedRoute>
-            <Layout />
+            <IntegrationsProvider>
+              <Layout />
+            </IntegrationsProvider>
           </ProtectedRoute>
         }
       >
@@ -75,6 +79,14 @@ export default function App() {
           element={(
             <AdminRoute>
               <Users />
+            </AdminRoute>
+          )}
+        />
+        <Route
+          path="admin/integrations"
+          element={(
+            <AdminRoute>
+              <Integrations />
             </AdminRoute>
           )}
         />

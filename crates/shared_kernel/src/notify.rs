@@ -1,14 +1,61 @@
 use sqlx::{PgPool, Row};
 use tracing;
 
-use crate::config::AppConfig;
+#[derive(Clone)]
+struct DingTalkConfig {
+    app_key: String,
+    app_secret: String,
+    robot_code: String,
+}
+
+async fn load_dingtalk_config(db: &PgPool) -> Option<DingTalkConfig> {
+    let row = sqlx::query(
+        "SELECT config_json, enabled FROM third_party_app_configs WHERE provider = 'dingtalk'",
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()?;
+
+    let enabled: bool = row.try_get("enabled").ok()?;
+    if !enabled {
+        return None;
+    }
+    let config_json: String = row.try_get("config_json").ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&config_json).ok()?;
+    let app_key = parsed
+        .get("app_key")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let app_secret = parsed
+        .get("app_secret")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let robot_code = parsed
+        .get("robot_code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if app_key.is_empty() || app_secret.is_empty() || robot_code.is_empty() {
+        return None;
+    }
+    Some(DingTalkConfig {
+        app_key,
+        app_secret,
+        robot_code,
+    })
+}
 
 /// Send notifications for a task status change.
 /// Looks up the given notification config IDs, checks if each is enabled
 /// and subscribed to the event, then POSTs the payload to the webhook URL.
 pub async fn send_task_notification(
     db: &PgPool,
-    app_config: &AppConfig,
     notification_ids: &[String],
     new_status: &str,
     payload: serde_json::Value,
@@ -51,7 +98,7 @@ pub async fn send_task_notification(
                 send_webhook_notification(&client, &config_json, &payload, new_status).await
             }
             "dingtalk" => {
-                send_dingtalk_notification(db, app_config, &payload, new_status, &config_id).await
+                send_dingtalk_notification(db, &payload, new_status, &config_id).await
             }
             other => tracing::warn!("Unsupported notification type {other} for config {config_id}"),
         }
@@ -97,18 +144,19 @@ async fn send_webhook_notification(
 
 async fn send_dingtalk_notification(
     db: &PgPool,
-    config: &AppConfig,
     payload: &serde_json::Value,
     new_status: &str,
     config_id: &str,
 ) {
-    if config.dingtalk_app_key.is_empty()
-        || config.dingtalk_app_secret.is_empty()
-        || config.dingtalk_robot_code.is_empty()
-    {
-        tracing::warn!("DingTalk notification {config_id} skipped: credentials are incomplete");
-        return;
-    }
+    let config = match load_dingtalk_config(db).await {
+        Some(c) => c,
+        None => {
+            tracing::warn!(
+                "DingTalk notification {config_id} skipped: integration disabled or not configured"
+            );
+            return;
+        }
+    };
 
     let agent_id = match payload
         .get("task")
@@ -161,7 +209,7 @@ async fn send_dingtalk_notification(
         return;
     }
 
-    let access_token = match get_dingtalk_access_token(config).await {
+    let access_token = match get_dingtalk_access_token(&config).await {
         Ok(token) => token,
         Err(e) => {
             tracing::warn!("DingTalk notification {config_id} skipped: failed to get token: {e}");
@@ -178,7 +226,7 @@ async fn send_dingtalk_notification(
     .to_string();
 
     let body = serde_json::json!({
-        "robotCode": config.dingtalk_robot_code,
+        "robotCode": config.robot_code,
         "userIds": [dingtalk_userid],
         "msgKey": "sampleMarkdown",
         "msgParam": msg_param,
@@ -204,12 +252,12 @@ async fn send_dingtalk_notification(
     }
 }
 
-async fn get_dingtalk_access_token(config: &AppConfig) -> anyhow::Result<String> {
+async fn get_dingtalk_access_token(config: &DingTalkConfig) -> anyhow::Result<String> {
     let resp: serde_json::Value = reqwest::Client::new()
         .post("https://api.dingtalk.com/v1.0/oauth2/accessToken")
         .json(&serde_json::json!({
-            "appKey": config.dingtalk_app_key,
-            "appSecret": config.dingtalk_app_secret,
+            "appKey": config.app_key,
+            "appSecret": config.app_secret,
         }))
         .send()
         .await?

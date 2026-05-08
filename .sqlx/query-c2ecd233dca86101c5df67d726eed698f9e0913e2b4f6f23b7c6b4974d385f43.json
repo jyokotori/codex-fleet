@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT config_json FROM third_party_app_configs WHERE provider = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "config_json",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c2ecd233dca86101c5df67d726eed698f9e0913e2b4f6f23b7c6b4974d385f43"
+}

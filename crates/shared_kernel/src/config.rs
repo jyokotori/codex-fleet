@@ -18,9 +18,6 @@ pub struct AppConfig {
     pub initial_admin_display_name: String,
     pub external_api_header: String,
     pub external_api_secret: String,
-    pub dingtalk_app_key: String,
-    pub dingtalk_app_secret: String,
-    pub dingtalk_robot_code: String,
 }
 
 impl AppConfig {
@@ -81,9 +78,6 @@ impl AppConfig {
             external_api_header: env::var("EXTERNAL_API_HEADER")
                 .unwrap_or_else(|_| "X-Agent-Secret".into()),
             external_api_secret: env::var("EXTERNAL_API_SECRET").unwrap_or_default(),
-            dingtalk_app_key: env::var("DINGTALK_APP_KEY").unwrap_or_default(),
-            dingtalk_app_secret: env::var("DINGTALK_APP_SECRET").unwrap_or_default(),
-            dingtalk_robot_code: env::var("DINGTALK_ROBOT_CODE").unwrap_or_default(),
         }
     }
 }

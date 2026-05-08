@@ -59,6 +59,7 @@ export const translations = {
       plane: 'Plane',
       agentGroups: 'Agent Groups',
       users: 'Users',
+      integrations: 'Third-party Apps',
     },
 
     // Dashboard
@@ -372,6 +373,7 @@ export const translations = {
       dingtalkSyncStarting: 'Starting...',
       dingtalkSyncStatus: 'DingTalk sync',
       dingtalkSyncStats: 'Processed {processed}, created {created}, updated {updated}, skipped {skipped}',
+      dingtalkSyncErrorHint: 'Skipped entries are usually DingTalk users without an email address. Add their email in the DingTalk admin console and re-sync.',
       dingtalkJobStatus: {
         running: 'running',
         completed: 'completed',
@@ -444,6 +446,27 @@ export const translations = {
       selectAgents: 'Select agents',
       noGroups: 'No agent groups created',
     },
+
+    integrations: {
+      title: 'Third-party Apps',
+      subtitle: 'Configure external integrations for the platform',
+      enabled: 'Enabled',
+      save: 'Save',
+      saved: 'Saved',
+      providers: {
+        dingtalk: 'DingTalk',
+      },
+      dingtalk: {
+        description: 'Connect a DingTalk app for user sync and notifications.',
+        appKey: 'App Key',
+        appSecret: 'App Secret',
+        robotCode: 'Robot Code',
+      },
+    },
+
+    layout: {
+      version: 'Version',
+    },
   },
 
   zh: {
@@ -501,6 +524,7 @@ export const translations = {
       plane: 'Plane',
       agentGroups: 'Agent 分组',
       users: '用户',
+      integrations: '第三方应用',
     },
 
     dashboard: {
@@ -807,6 +831,7 @@ export const translations = {
       dingtalkSyncStarting: '启动中...',
       dingtalkSyncStatus: '钉钉同步',
       dingtalkSyncStats: '已处理 {processed}，新建 {created}，更新 {updated}，跳过 {skipped}',
+      dingtalkSyncErrorHint: '被跳过的通常是钉钉里未填写邮箱的用户。请去钉钉管理后台补全邮箱后重新同步。',
       dingtalkJobStatus: {
         running: '运行中',
         completed: '已完成',
@@ -876,6 +901,27 @@ export const translations = {
       members: '成员',
       selectAgents: '选择 Agent',
       noGroups: '暂无分组',
+    },
+
+    integrations: {
+      title: '第三方应用',
+      subtitle: '配置平台的外部应用集成',
+      enabled: '启用',
+      save: '保存',
+      saved: '已保存',
+      providers: {
+        dingtalk: '钉钉',
+      },
+      dingtalk: {
+        description: '连接钉钉应用, 用于通讯录同步和消息通知.',
+        appKey: 'App Key',
+        appSecret: 'App Secret',
+        robotCode: 'Robot Code',
+      },
+    },
+
+    layout: {
+      version: '版本',
     },
   },
 } as const
