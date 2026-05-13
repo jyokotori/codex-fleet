@@ -59,7 +59,7 @@ export const translations = {
       plane: 'Plane',
       agentGroups: 'Agent Groups',
       users: 'Users',
-      integrations: 'Third-party Apps',
+      integrations: 'Configuration',
     },
 
     // Dashboard
@@ -451,11 +451,15 @@ export const translations = {
     },
 
     integrations: {
-      title: 'Third-party Apps',
-      subtitle: 'Configure external integrations for the platform',
+      title: 'Configuration',
+      subtitle: 'Platform-level configuration and integrations',
       enabled: 'Enabled',
       save: 'Save',
       saved: 'Saved',
+      tabs: {
+        dingtalk: 'DingTalk',
+        apiToken: 'API Access Token',
+      },
       providers: {
         dingtalk: 'DingTalk',
       },
@@ -464,6 +468,26 @@ export const translations = {
         appKey: 'App Key',
         appSecret: 'App Secret',
         robotCode: 'Robot Code',
+      },
+      apiToken: {
+        title: 'Access Token',
+        description:
+          'Your system access token, used for API authentication. Keep it safe and do not share with others.',
+        tokenLabel: 'Token',
+        previewLabel: 'Active token',
+        hint: 'Use this token to authenticate API requests as your user.',
+        usage: 'Send it as `Authorization: Bearer <token>`. Requests are processed as your user and inherit your roles and permissions.',
+        oneTimeNotice:
+          'Copy this token now — for security, the full value will not be shown again. You can regenerate it at any time.',
+        hiddenNotice:
+          'For security, the full token is only displayed once when it is generated. Regenerate to obtain a new token.',
+        copy: 'Copy',
+        copied: 'Copied',
+        regenerate: 'Regenerate',
+        regenerateConfirm:
+          'Regenerating will immediately invalidate the existing token. Continue?',
+        empty: 'No token has been generated yet.',
+        generate: 'Generate token',
       },
     },
 
@@ -527,7 +551,7 @@ export const translations = {
       plane: 'Plane',
       agentGroups: 'Agent 分组',
       users: '用户',
-      integrations: '第三方应用',
+      integrations: '配置',
     },
 
     dashboard: {
@@ -910,11 +934,15 @@ export const translations = {
     },
 
     integrations: {
-      title: '第三方应用',
-      subtitle: '配置平台的外部应用集成',
+      title: '配置',
+      subtitle: '平台级配置与第三方集成',
       enabled: '启用',
       save: '保存',
       saved: '已保存',
+      tabs: {
+        dingtalk: '钉钉',
+        apiToken: 'API 访问令牌',
+      },
       providers: {
         dingtalk: '钉钉',
       },
@@ -923,6 +951,23 @@ export const translations = {
         appKey: 'App Key',
         appSecret: 'App Secret',
         robotCode: 'Robot Code',
+      },
+      apiToken: {
+        title: '访问令牌',
+        description: '您的系统访问令牌, 用于 API 认证。请妥善保管, 不要与他人分享。',
+        tokenLabel: '令牌',
+        previewLabel: '当前令牌',
+        hint: '使用此令牌以您的用户身份进行 API 身份验证。',
+        usage: '通过 `Authorization: Bearer <token>` 头部使用。请求将以您的用户身份处理, 沿用您的角色与权限。',
+        oneTimeNotice:
+          '请立即复制此令牌——出于安全考虑, 完整值不会再次显示。您可以随时重新生成。',
+        hiddenNotice: '出于安全考虑, 完整令牌仅在生成时显示一次。如需获取新令牌请重新生成。',
+        copy: '复制',
+        copied: '已复制',
+        regenerate: '重新生成',
+        regenerateConfirm: '重新生成将立即让现有令牌失效, 确认继续吗?',
+        empty: '尚未生成令牌。',
+        generate: '生成令牌',
       },
     },
 

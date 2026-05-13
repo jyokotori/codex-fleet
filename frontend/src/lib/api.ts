@@ -249,6 +249,22 @@ export const integrationsApi = {
     }),
 }
 
+// Per-user API access token
+//
+// `token` is returned exactly once on regenerate; subsequent GETs only
+// return `preview` (e.g. `L5isGj…aDeo`) and `has_token`.
+export interface ApiTokenStatus {
+  token: string | null
+  preview: string | null
+  has_token: boolean
+}
+
+export const apiTokenApi = {
+  get: () => request<ApiTokenStatus>('/api/me/api-token'),
+  regenerate: () =>
+    request<ApiTokenStatus>('/api/me/api-token/regenerate', { method: 'POST' }),
+}
+
 // Servers
 export interface Server {
   id: string

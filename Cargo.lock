@@ -1285,6 +1285,7 @@ dependencies = [
  "base64",
  "chrono",
  "hmac",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",

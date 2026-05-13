@@ -66,12 +66,6 @@ async fn main() -> anyhow::Result<()> {
         iam::auth_middleware,
     ));
 
-    // External API routes (header-secret auth)
-    let external_api = iam::external_router().layer(middleware::from_fn_with_state(
-        state.clone(),
-        iam::external_api_auth,
-    ));
-
     // Static file fallback for SPA
     let static_route = Router::new().fallback(embed::static_handler);
 
@@ -82,7 +76,6 @@ async fn main() -> anyhow::Result<()> {
         .merge(public_routes)
         .merge(runtime_agent::webhook_router())
         .merge(protected_api)
-        .merge(external_api)
         .merge(ws_routes)
         .merge(static_route)
         .layer(TraceLayer::new_for_http())

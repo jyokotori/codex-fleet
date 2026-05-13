@@ -75,12 +75,17 @@ pub async fn dispatch_task_for_agent(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
 
+    if title.trim().is_empty() {
+        return Err(AppError::BadRequest("Task title cannot be empty".into()));
+    }
+    let prompt = build_codex_prompt(title, description);
+
     let task_dir = task_dir_path(agent_info.use_docker, &agent_info.workdir, &id, &now);
     let env_prefix = codex_home_prefix(agent_info.use_docker, &agent_info.workdir);
     let cli_cmd =
         format!(
         "mkdir -p '{}' && {}codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
-        task_dir, env_prefix, task_dir, shell_quote(description)
+        task_dir, env_prefix, task_dir, shell_quote(&prompt)
     );
 
     // Wrap with docker exec if needed
@@ -446,19 +451,30 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Combine task title and description into the prompt sent to codex.
+/// Either field may be empty; if both are empty, returns an empty string.
+fn build_codex_prompt(title: &str, description: &str) -> String {
+    let title = title.trim();
+    let description = description.trim();
+    match (title.is_empty(), description.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => description.to_string(),
+        (false, true) => title.to_string(),
+        (false, false) => format!("# {}\n\n{}", title, description),
+    }
+}
+
 pub async fn create_task(
     State(state): State<AppContext>,
     Extension(auth): Extension<AuthContext>,
     Path(agent_id): Path<String>,
     Json(req): Json<CreateTaskRequest>,
 ) -> Result<Json<Task>> {
-    if req.description.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "Task description cannot be empty".into(),
-        ));
+    let title = req.title.unwrap_or_default();
+    if title.trim().is_empty() {
+        return Err(AppError::BadRequest("Task title cannot be empty".into()));
     }
 
-    let title = req.title.unwrap_or_default();
     let notification_ids = req.notification_ids.unwrap_or_default();
 
     // Acquire per-agent dispatch lock so busy-check + INSERT is atomic

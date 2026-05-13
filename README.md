@@ -66,9 +66,11 @@ DB_ACQUIRE_TIMEOUT_SECS=10
 
 `DB_MAX_CONNECTIONS` should stay below PostgreSQL's available `max_connections` after leaving room for admin sessions and other tools. Increase it when many task streams or webhooks run concurrently.
 
-DingTalk credentials (`app_key`, `app_secret`, `robot_code`) are managed in the database via the admin UI: **Third-party Apps → DingTalk**. They are no longer read from `.env`. Until they are saved and the integration is enabled, the DingTalk user sync button and DingTalk notification type are hidden in the UI.
+DingTalk credentials (`app_key`, `app_secret`, `robot_code`) are managed in the database via the admin UI: **Configuration → DingTalk**. They are no longer read from `.env`. Until they are saved and the integration is enabled, the DingTalk user sync button and DingTalk notification type are hidden in the UI.
 
 The DingTalk user sync password is not persisted. Admins enter the default password in the user management page each time they start a sync job.
+
+Per-user API access tokens are managed under **Configuration → API Access Token**. Each user can generate (or regenerate) a single token and use it as `Authorization: Bearer <token>` to call any system API. Requests authenticated with the token are processed as that user and inherit their roles and permissions. Regenerating immediately revokes the previous token.
 
 ### Building a Custom Agent Docker Image (Recommended)
 
@@ -136,7 +138,7 @@ Store reusable configurations centrally and attach them to any agent at any time
 ### Notifications
 Current:
 - Configure webhooks so task progress, completion, and failure are pushed automatically.
-- Configure DingTalk notifications without storing credentials in notification records; DingTalk credentials are managed in **Third-party Apps** (admin-only).
+- Configure DingTalk notifications without storing credentials in notification records; DingTalk credentials are managed in **Configuration** (admin-only).
 - DingTalk task notifications are sent to the DingTalk user ID on the user assigned to the task's Agent. If the Agent has no assigned user, or that user has no `dingtalk_userid`, the notification is skipped.
 
 ### Plane Integration

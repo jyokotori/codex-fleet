@@ -453,6 +453,7 @@ export default function Agents() {
     onSuccess: (task) => {
       qc.invalidateQueries({ queryKey: ['agents'] })
       setDispatchAgent(null)
+      setDispatchTitle('')
       setDispatchInput('')
       setDispatchNotifIds([])
       // Navigate to agent detail with the new task expanded
@@ -922,9 +923,9 @@ export default function Agents() {
               <div className="flex gap-3 justify-end pt-2">
                 <button onClick={() => { setDispatchAgent(null); setDispatchNotifIds([]) }} className="btn-secondary">{t.common.cancel}</button>
                 <button
-                  onClick={() => { if (dispatchInput.trim()) dispatchMutation.mutate({ agentId: dispatchAgent.id, title: dispatchTitle.trim(), desc: dispatchInput.trim(), notifIds: dispatchNotifIds.length > 0 ? dispatchNotifIds : undefined }) }}
+                  onClick={() => { if (dispatchTitle.trim()) dispatchMutation.mutate({ agentId: dispatchAgent.id, title: dispatchTitle.trim(), desc: dispatchInput.trim(), notifIds: dispatchNotifIds.length > 0 ? dispatchNotifIds : undefined }) }}
                   className="btn-primary flex items-center gap-2"
-                  disabled={dispatchMutation.isPending || !dispatchInput.trim()}
+                  disabled={dispatchMutation.isPending || !dispatchTitle.trim()}
                 >
                   <Send size={14} />{dispatchMutation.isPending ? t.agents.dispatching : t.agents.dispatchTask}
                 </button>

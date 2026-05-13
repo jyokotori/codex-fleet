@@ -421,9 +421,9 @@ export default function AgentDetail() {
               <div className="flex gap-3 justify-end pt-2">
                 <button onClick={() => { setShowTaskModal(false); setSelectedNotifIds([]) }} className="btn-secondary">{t.common.cancel}</button>
                 <button
-                  onClick={() => { if (taskInput.trim()) createTaskMutation.mutate({ title: taskTitleInput.trim(), description: taskInput.trim(), notification_ids: selectedNotifIds.length > 0 ? selectedNotifIds : undefined }) }}
+                  onClick={() => { if (taskTitleInput.trim()) createTaskMutation.mutate({ title: taskTitleInput.trim(), description: taskInput.trim(), notification_ids: selectedNotifIds.length > 0 ? selectedNotifIds : undefined }) }}
                   className="btn-primary flex items-center gap-2"
-                  disabled={createTaskMutation.isPending || !taskInput.trim()}
+                  disabled={createTaskMutation.isPending || !taskTitleInput.trim()}
                 >
                   <Send size={14} />{t.common.send}
                 </button>
