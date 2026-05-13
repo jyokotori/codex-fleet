@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { ChevronDown, ChevronRight, FileText, Bot, Wrench, Plug, Container } from 'lucide-react'
 import { useI18n } from '../../hooks/useI18n'
+import { getAuth } from '../../lib/auth'
 
 const WIP_BADGE = (
   <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">
@@ -13,8 +14,12 @@ export default function ConfigsLayout() {
   const { t } = useI18n()
   const location = useLocation()
   const [configFilesOpen, setConfigFilesOpen] = useState(true)
+  const [integrationsOpen, setIntegrationsOpen] = useState(true)
+
+  const isAdmin = getAuth()?.user?.roles?.includes('admin') ?? false
 
   const isConfigFiles = location.pathname.includes('/configs/config-files')
+  const isIntegrations = location.pathname.includes('/configs/integrations')
 
   const configFileItems = [
     { key: 'codex', label: t.configs.codex, to: '/configs/config-files/codex', wip: false },
@@ -28,6 +33,11 @@ export default function ConfigsLayout() {
     { label: t.configs.docker, to: '/configs/docker', icon: Container, wip: false },
     { label: t.configs.skills, to: '/configs/skills', icon: Wrench, wip: true },
     { label: t.configs.mcp, to: '/configs/mcp', icon: Plug, wip: true },
+  ]
+
+  const integrationItems = [
+    { key: 'dingtalk', label: t.configs.dingtalk, to: '/configs/integrations/dingtalk' },
+    { key: 'api-token', label: t.configs.apiToken, to: '/configs/integrations/api-token' },
   ]
 
   return (
@@ -97,6 +107,47 @@ export default function ConfigsLayout() {
             {item.wip && WIP_BADGE}
           </NavLink>
         ))}
+
+        {/* Integrations section (admin-only, collapsible) */}
+        {isAdmin && (
+          <>
+            <div className="h-px bg-gray-100 dark:bg-gray-800 mx-3 my-1" />
+            <div>
+              <button
+                onClick={() => setIntegrationsOpen(v => !v)}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg mx-1 transition-colors ${
+                  isIntegrations
+                    ? 'text-sky-600 dark:text-sky-400'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                }`}
+                style={{ width: 'calc(100% - 8px)' }}
+              >
+                <Plug size={15} />
+                <span className="flex-1 text-left">{t.configs.integrationsGroup}</span>
+                {integrationsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              </button>
+              {integrationsOpen && (
+                <div className="ml-2 mt-0.5 flex flex-col gap-0.5">
+                  {integrationItems.map(item => (
+                    <NavLink
+                      key={item.key}
+                      to={item.to}
+                      className={({ isActive }) =>
+                        `flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg mx-1 transition-colors ${
+                          isActive
+                            ? 'bg-sky-50 text-sky-600 font-medium dark:bg-sky-600/20 dark:text-sky-300'
+                            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-200'
+                        }`
+                      }
+                    >
+                      <span className="flex-1">{item.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </aside>
 
       {/* Content */}

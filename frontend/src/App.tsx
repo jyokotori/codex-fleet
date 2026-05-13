@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard'
 import Servers from './pages/Servers'
 import Agents from './pages/Agents'
 import AgentDetail from './pages/AgentDetail'
+import AgentsLayout from './pages/agents/AgentsLayout'
 import ConfigsLayout from './pages/configs/ConfigsLayout'
 import CodexConfigs from './pages/configs/CodexConfigs'
 import AgentsMd from './pages/configs/AgentsMd'
@@ -16,7 +17,8 @@ import Notifications from './pages/Notifications'
 import AgentGroups from './pages/AgentGroups'
 import PlaneIntegration from './pages/PlaneIntegration'
 import Users from './pages/admin/Users'
-import Integrations from './pages/admin/Integrations'
+import IntegrationDingTalk from './pages/admin/IntegrationDingTalk'
+import IntegrationApiToken from './pages/admin/IntegrationApiToken'
 import Layout from './components/Layout'
 import { IntegrationsProvider } from './lib/integrations'
 
@@ -59,8 +61,11 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="servers" element={<AdminRoute><Servers /></AdminRoute>} />
-        <Route path="agents" element={<Agents />} />
+        <Route path="agents" element={<AgentsLayout />}>
+          <Route index element={<Agents />} />
+          <Route path="groups" element={<AgentGroups />} />
+          <Route path="servers" element={<AdminRoute><Servers /></AdminRoute>} />
+        </Route>
         <Route path="agents/:id" element={<AgentDetail />} />
         <Route path="configs" element={<ConfigsLayout />}>
           <Route index element={<Navigate to="config-files/codex" replace />} />
@@ -70,23 +75,22 @@ export default function App() {
           <Route path="docker" element={<DockerConfigs />} />
           <Route path="skills" element={<WIPSection />} />
           <Route path="mcp" element={<WIPSection />} />
+          <Route
+            path="integrations/dingtalk"
+            element={<AdminRoute><IntegrationDingTalk /></AdminRoute>}
+          />
+          <Route
+            path="integrations/api-token"
+            element={<AdminRoute><IntegrationApiToken /></AdminRoute>}
+          />
         </Route>
         <Route path="notifications" element={<Notifications />} />
-        <Route path="agent-groups" element={<AgentGroups />} />
         <Route path="plane" element={<PlaneIntegration />} />
         <Route
           path="admin/users"
           element={(
             <AdminRoute>
               <Users />
-            </AdminRoute>
-          )}
-        />
-        <Route
-          path="admin/integrations"
-          element={(
-            <AdminRoute>
-              <Integrations />
             </AdminRoute>
           )}
         />

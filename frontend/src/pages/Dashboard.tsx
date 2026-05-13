@@ -89,7 +89,7 @@ export default function Dashboard() {
           <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-gray-800 dark:text-gray-100">{t.dashboard.recentServers}</h2>
-              <Link to="/servers" className="text-sky-500 text-sm hover:underline">{t.dashboard.viewAll}</Link>
+              <Link to="/agents/servers" className="text-sky-500 text-sm hover:underline">{t.dashboard.viewAll}</Link>
             </div>
             {servers.length === 0 ? (
               <p className="text-gray-500 text-sm py-4 text-center">{t.dashboard.noServers}</p>

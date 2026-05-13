@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Server, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon, Users, ChevronDown, Plane, Group, Plug } from 'lucide-react'
+import { LayoutDashboard, Bot, Settings, Bell, LogOut, Zap, Languages, Sun, Moon, Users, ChevronDown, Plane } from 'lucide-react'
 import { authApi } from '../lib/api'
 import { clearAuth, getAuth } from '../lib/auth'
 import { useI18n } from '../hooks/useI18n'
@@ -41,15 +41,12 @@ export default function Layout() {
   }> = [
     { to: '/', label: t.nav.dashboard, icon: LayoutDashboard, end: true },
     { to: '/agents', label: t.nav.agents, icon: Bot },
-    ...(isAdmin ? [{ to: '/servers', label: t.nav.servers, icon: Server }] : []),
-    { to: '/configs', label: t.nav.configs, icon: Settings, end: false },
-    { to: '/notifications', label: t.nav.notifications, icon: Bell },
-    { to: '/agent-groups', label: t.nav.agentGroups, icon: Group },
     { to: '/plane', label: t.nav.plane, icon: Plane },
+    { to: '/notifications', label: t.nav.notifications, icon: Bell },
+    { to: '/configs', label: t.nav.configs, icon: Settings, end: false },
   ]
   if (isAdmin) {
     navItems.push({ to: '/admin/users', label: t.nav.users, icon: Users })
-    navItems.push({ to: '/admin/integrations', label: t.nav.integrations, icon: Plug })
   }
 
   async function handleLogout() {

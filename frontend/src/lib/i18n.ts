@@ -59,7 +59,6 @@ export const translations = {
       plane: 'Plane',
       agentGroups: 'Agent Groups',
       users: 'Users',
-      integrations: 'Configuration',
     },
 
     // Dashboard
@@ -320,6 +319,10 @@ export const translations = {
       initScript: 'Init Script',
       initScriptHint: 'Shell script executed before the agent starts (optional)',
       copyConfig: 'Copy',
+      // Integrations group (folded into sidebar)
+      integrationsGroup: 'Integrations',
+      dingtalk: 'DingTalk',
+      apiToken: 'API Token',
     },
 
     taskStatus: {
@@ -551,7 +554,6 @@ export const translations = {
       plane: 'Plane',
       agentGroups: 'Agent 分组',
       users: '用户',
-      integrations: '配置',
     },
 
     dashboard: {
@@ -806,6 +808,10 @@ export const translations = {
       initScript: '初始化脚本',
       initScriptHint: '在 Agent 启动前执行的 Shell 脚本（可选）',
       copyConfig: '复制',
+      // Integrations group (folded into sidebar)
+      integrationsGroup: '集成',
+      dingtalk: '钉钉',
+      apiToken: 'API Token',
     },
 
     taskStatus: {
