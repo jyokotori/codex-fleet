@@ -280,3 +280,65 @@ CREATE UNIQUE INDEX plane_tasks_active_uq ON plane_tasks(workspace_id, plane_iss
     WHERE status IN ('pending','dispatched');
 CREATE INDEX idx_plane_binding_labels_binding ON plane_binding_labels(binding_id);
 CREATE INDEX idx_agent_cli_inits_agent ON agent_cli_inits(agent_id);
+
+-- ============================================================
+-- Scheduler task indexes (formerly migration 002)
+-- ============================================================
+CREATE INDEX idx_tasks_agent_in_progress
+    ON tasks(agent_id)
+    WHERE status = 'agent_in_progress';
+
+-- ============================================================
+-- Third-party app configs (formerly migration 003)
+-- ============================================================
+CREATE TABLE third_party_app_configs (
+    provider     TEXT PRIMARY KEY,
+    config_json  TEXT NOT NULL DEFAULT '{}',
+    enabled      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO third_party_app_configs(provider, config_json, enabled)
+VALUES ('dingtalk', '{}', FALSE)
+ON CONFLICT (provider) DO NOTHING;
+
+-- ============================================================
+-- API access tokens (formerly migration 004)
+-- ============================================================
+CREATE TABLE api_access_tokens (
+    user_id       TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    token_hash    TEXT NOT NULL UNIQUE,
+    token_preview TEXT NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_api_access_tokens_hash ON api_access_tokens(token_hash);
+
+-- ============================================================
+-- Plane binding notifications (formerly migration 005)
+-- ============================================================
+ALTER TABLE plane_bindings
+    ADD COLUMN notification_ids TEXT NOT NULL DEFAULT '[]';
+
+-- ============================================================
+-- Claude Code CLI configs (formerly migration 006)
+-- ============================================================
+CREATE TABLE claude_configs (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    anthropic_base_url TEXT NOT NULL DEFAULT 'https://api.anthropic.com',
+    anthropic_auth_token TEXT NOT NULL DEFAULT '',
+    anthropic_model TEXT NOT NULL DEFAULT 'claude-opus-4-7[1m]',
+    default_opus_model TEXT NOT NULL DEFAULT '',
+    default_sonnet_model TEXT NOT NULL DEFAULT '',
+    default_haiku_model TEXT NOT NULL DEFAULT '',
+    subagent_model TEXT NOT NULL DEFAULT '',
+    effort_level TEXT NOT NULL DEFAULT 'xhigh',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE agent_cli_inits
+    ADD COLUMN claude_config_id TEXT REFERENCES claude_configs(id);

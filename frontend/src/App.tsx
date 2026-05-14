@@ -10,6 +10,7 @@ import AgentDetail from './pages/AgentDetail'
 import AgentsLayout from './pages/agents/AgentsLayout'
 import ConfigsLayout from './pages/configs/ConfigsLayout'
 import CodexConfigs from './pages/configs/CodexConfigs'
+import ClaudeConfigs from './pages/configs/ClaudeConfigs'
 import AgentsMd from './pages/configs/AgentsMd'
 import DockerConfigs from './pages/configs/DockerConfigs'
 import WIPSection from './pages/configs/WIPSection'
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="configs" element={<ConfigsLayout />}>
           <Route index element={<Navigate to="config-files/codex" replace />} />
           <Route path="config-files/codex" element={<CodexConfigs />} />
+          <Route path="config-files/claude-code" element={<ClaudeConfigs />} />
           <Route path="config-files/:type" element={<WIPSection />} />
           <Route path="agents-md" element={<AgentsMd />} />
           <Route path="docker" element={<DockerConfigs />} />

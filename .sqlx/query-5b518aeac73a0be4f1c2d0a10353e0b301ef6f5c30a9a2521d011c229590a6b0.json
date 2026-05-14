@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE claude_configs SET name=$1, anthropic_base_url=$2, anthropic_auth_token=$3,\n            anthropic_model=$4, default_opus_model=$5, default_sonnet_model=$6,\n            default_haiku_model=$7, subagent_model=$8, effort_level=$9, updated_at=$10\n         WHERE id=$11",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5b518aeac73a0be4f1c2d0a10353e0b301ef6f5c30a9a2521d011c229590a6b0"
+}

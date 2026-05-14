@@ -106,7 +106,7 @@ Then select `my-codex-image:latest` as the Docker image when creating an agent.
 Add remote servers and test SSH connectivity with one click. Supports passwordless SSH, password authentication, and SSH keys. Once added, all agents on that server automatically use that connection.
 
 ### Agent Management
-When creating an agent, choose a remote server, select the CLI tool (currently Codex only), and optionally enable Docker. Git setup in the create dialog is currently shown as WIP for both Docker and non-Docker modes.
+When creating an agent, choose a remote server, pick a CLI tool (Codex or Claude Code), and optionally enable Docker. Git setup in the create dialog is currently shown as WIP for both Docker and non-Docker modes.
 Provisioning always creates two directories on the server:
 - `~/.codex-fleet/{agent_id}/agent`: stores agent configuration
 - `~/.codex-fleet/{agent_id}/workspace`: project working directory
@@ -114,6 +114,7 @@ If Docker is enabled, these two directories are mounted into the container as `/
 
 Each agent can be configured independently:
 - **Codex Config** — bind a `config.toml` + `auth.json` bundle so the agent starts with credentials and settings ready
+- **Claude Config** — bind a set of Anthropic env vars (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, plus optional default/subagent models and effort level). Provisioning writes `claude.env` on the agent host and (non-Docker only) splices a marker-wrapped `source` line into the host's `~/.bashrc` so you can SSH in and run `claude` manually with the same env
 - **AGENTS.md** — inject a shared project instruction file into the agent workspace
 - **Docker Config** — customize port mappings, environment variables, volume mounts, and init scripts
 - **Runtime controls** — Docker agents show a single action button in the list view that changes with container state (`Stop`, `Start`, or `Restart`); `Stop` and `Restart` require confirmation, while `Start` runs immediately. Non-Docker agents do not expose Start/Stop/Restart buttons. The agent detail header keeps only `Dispatch Task` and `Copy command`
@@ -132,6 +133,7 @@ Before manual dispatch, the agent must be idle and its synced status must be `ru
 ### Configuration Management
 Store reusable configurations centrally and attach them to any agent at any time:
 - **Codex Configs** — combine `config.toml` and `auth.json` into a named config bundle. The edit dialog provides a **Save & push to bound agents** action that writes the new content to every running agent referencing this config (Docker agents via `docker exec` into `/root/.codex/...`, non-Docker agents via SSH into `~/.codex-fleet/{id}/agent/...`), so changes take effect without re-provisioning. Empty fields and unset references are skipped (existing remote files are not deleted).
+- **Claude Configs** — manage Anthropic credentials and model preferences as discrete env-var inputs (Core: base URL / auth token / model; More: default Opus/Sonnet/Haiku, subagent model, effort level). `IS_SANDBOX=1` is always exported so `--dangerously-skip-permissions` works. Tokens are masked in API responses; updating an agent's bound Claude config syncs `claude.env` (and the `~/.bashrc` source line, non-Docker) to the live agent.
 - **AGENTS.md** — reusable agent instruction files
 - **Docker Configs** — reusable Docker runtime configurations (ports, environment variables, init scripts; agents always mount a managed `/workspace` named volume)
 
@@ -142,7 +144,7 @@ Current:
 - DingTalk task notifications are sent to the DingTalk user ID on the user assigned to the task's Agent. If the Agent has no assigned user, or that user has no `dingtalk_userid`, the notification is skipped.
 
 ### Plane Integration
-Integrate with [Plane](https://plane.so) for bidirectional issue sync. Each binding declares its own three project states (accept / in-progress / completion) and a list of labels mapped to specific CLIs (`codex`, plus reserved `claude_code` / `gemini_cli` / `opencode`). Issues entering the binding's accept state — with a matching label and assigned to a known agent group member — are automatically dispatched, and results are written back as state transitions and comments. Each binding can also opt into one or more notification configs (e.g. DingTalk), so Plane-dispatched tasks fire the same `agent_in_progress` / `agent_completed` / `agent_failed` events as user-created tasks. See [Plane Integration Guide](./docs/plane-workflow.md) for setup instructions.
+Integrate with [Plane](https://plane.so) for bidirectional issue sync. Each binding declares its own three project states (accept / in-progress / completion) and a list of labels mapped to specific CLIs (`codex` and `claude_code`; `gemini_cli` / `opencode` are reserved). Issues entering the binding's accept state — with a matching label and assigned to a known agent group member — are automatically dispatched to the agent using the picked CLI (the scheduler honours the label-to-CLI mapping when invoking the underlying command), and results are written back as state transitions and comments. Each binding can also opt into one or more notification configs (e.g. DingTalk), so Plane-dispatched tasks fire the same `agent_in_progress` / `agent_completed` / `agent_failed` events as user-created tasks. See [Plane Integration Guide](./docs/plane-workflow.md) for setup instructions.
 
 ### User & Access Management
 - JWT access token + refresh token

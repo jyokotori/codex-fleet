@@ -395,10 +395,50 @@ export const codexConfigsApi = {
     ),
 }
 
+// Claude Configs
+export interface ClaudeConfig {
+  id: string
+  name: string
+  anthropic_base_url: string
+  /** Always returned masked (`********`); send back unchanged to leave it as-is. */
+  anthropic_auth_token: string
+  anthropic_model: string
+  default_opus_model: string
+  default_sonnet_model: string
+  default_haiku_model: string
+  subagent_model: string
+  effort_level: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ClaudeConfigInput {
+  name?: string
+  anthropic_base_url?: string
+  anthropic_auth_token?: string
+  anthropic_model?: string
+  default_opus_model?: string
+  default_sonnet_model?: string
+  default_haiku_model?: string
+  subagent_model?: string
+  effort_level?: string
+}
+
+export const claudeConfigsApi = {
+  list: () => request<ClaudeConfig[]>('/api/claude-configs'),
+  create: (data: ClaudeConfigInput & { name: string }) =>
+    request<ClaudeConfig>('/api/claude-configs', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: ClaudeConfigInput) =>
+    request<ClaudeConfig>(`/api/claude-configs/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<{ message: string }>(`/api/claude-configs/${id}`, { method: 'DELETE' }),
+}
+
 // Agents
 export interface AgentCliInit {
   cli_type: string
   codex_config_id?: string | null
+  claude_config_id?: string | null
   agents_md_id?: string | null
   priority?: number
 }

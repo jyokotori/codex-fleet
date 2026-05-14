@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agent_cli_inits\n               (id, agent_id, cli_type, codex_config_id, claude_config_id,\n                agents_md_id, priority)\n               VALUES ($1, $2, $3, $4, $5, $6, $7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "de1332bf42c2b3a258c8f273eabf0a43d0cdfbb63447e85be93f8a26c3304edb"
+}

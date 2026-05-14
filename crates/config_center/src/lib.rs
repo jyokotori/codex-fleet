@@ -34,6 +34,22 @@ pub fn router() -> Router<AppContext> {
             delete(api::codex_configs::delete_codex_config),
         )
         .route(
+            "/api/claude-configs",
+            get(api::claude_configs::list_claude_configs),
+        )
+        .route(
+            "/api/claude-configs",
+            post(api::claude_configs::create_claude_config),
+        )
+        .route(
+            "/api/claude-configs/{id}",
+            put(api::claude_configs::update_claude_config),
+        )
+        .route(
+            "/api/claude-configs/{id}",
+            delete(api::claude_configs::delete_claude_config),
+        )
+        .route(
             "/api/docker-configs",
             get(api::docker_configs::list_docker_configs),
         )

@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, anthropic_base_url, anthropic_auth_token, anthropic_model,\n                default_opus_model, default_sonnet_model, default_haiku_model,\n                subagent_model, effort_level, created_at, updated_at\n         FROM claude_configs ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "anthropic_base_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "anthropic_auth_token",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "anthropic_model",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "default_opus_model",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "default_sonnet_model",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "default_haiku_model",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "subagent_model",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "effort_level",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "21f5bfb2e2858b20e0da94ad82c716c6018055ae65ededd8ab87b2f8298dcfb1"
+}

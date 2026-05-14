@@ -379,6 +379,7 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
         p.notification_ids.clone(),
         None,
         String::new(),
+        &picked_cli,
     )
     .await
     {

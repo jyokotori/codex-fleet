@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Play, Square, RotateCcw, Bot, ExternalLink, RefreshCw, Send, Copy, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
-  agentsApi, serversApi, codexConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi, usersApi, clisApi,
+  agentsApi, serversApi, codexConfigsApi, claudeConfigsApi, configsApi, dockerConfigsApi, tasksApi, notificationsApi, usersApi, clisApi,
   type Agent, type AgentCliInit, type CliInfo, type Server, type SimpleUser,
 } from '../lib/api'
 import { getAuth } from '../lib/auth'
@@ -44,7 +44,7 @@ const defaultForm: AgentFormData = {
   git_auth_type: 'passwordless',
   git_username: '',
   git_password: '',
-  cli_inits: [{ cli_type: 'codex', codex_config_id: '', agents_md_id: '', priority: 0 }],
+  cli_inits: [{ cli_type: 'codex', codex_config_id: '', claude_config_id: '', agents_md_id: '', priority: 0 }],
   docker_config_id: '',
   docker_image: 'ubuntu:24.04',
 }
@@ -143,6 +143,7 @@ function CliInitEditor({
   onChange,
   clis,
   codexConfigs,
+  claudeConfigs,
   agentsMdConfigs,
   qc,
   t,
@@ -151,6 +152,7 @@ function CliInitEditor({
   onChange: (rows: AgentCliInit[]) => void
   clis: CliInfo[]
   codexConfigs: { id: string; name: string }[]
+  claudeConfigs: { id: string; name: string }[]
   agentsMdConfigs: { id: string; name: string }[]
   qc: ReturnType<typeof useQueryClient>
   t: ReturnType<typeof useI18n>['t']
@@ -160,7 +162,14 @@ function CliInitEditor({
   const nextPriority = rows.length === 0 ? 0 : Math.max(...rows.map(r => r.priority ?? 0)) + 1
 
   function addRow(cli_type: string) {
-    onChange([...rows, { cli_type, codex_config_id: '', agents_md_id: '', priority: nextPriority }])
+    const base: AgentCliInit = {
+      cli_type,
+      codex_config_id: '',
+      claude_config_id: '',
+      agents_md_id: '',
+      priority: nextPriority,
+    }
+    onChange([...rows, base])
   }
   function removeRow(idx: number) {
     onChange(rows.filter((_, i) => i !== idx))
@@ -198,6 +207,7 @@ function CliInitEditor({
           {rows.map((row, idx) => {
             const cliInfo = clis.find(c => c.value === row.cli_type)
             const isCodex = row.cli_type === 'codex'
+            const isClaude = row.cli_type === 'claude_code'
             return (
               <div
                 key={idx}
@@ -260,6 +270,25 @@ function CliInitEditor({
                       </div>
                     </div>
                   </div>
+                ) : isClaude ? (
+                  <div>
+                    <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Claude config</label>
+                    <div className="flex gap-1">
+                      <select
+                        className="input py-1 text-sm flex-1"
+                        value={row.claude_config_id ?? ''}
+                        onChange={e => updateRow(idx, { claude_config_id: e.target.value || null })}
+                        required
+                      >
+                        <option value="">{t.agents.noConfig}</option>
+                        {claudeConfigs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      <button type="button" title={t.agents.refreshList} onClick={() => qc.invalidateQueries({ queryKey: ['claude-configs'] })} className="btn-secondary btn-sm px-2"><RefreshCw size={12} /></button>
+                    </div>
+                    <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
+                      Env vars will be persisted to the agent host's <code>~/.bashrc</code> so you can SSH in and run <code>claude</code> manually.
+                    </p>
+                  </div>
                 ) : (
                   <p className="text-xs text-gray-400 dark:text-gray-500 italic">
                     No init config required (placeholder for {cliInfo?.label ?? row.cli_type}).
@@ -307,6 +336,7 @@ export default function Agents() {
   const visibleServers = isAdmin ? servers : []
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: usersApi.list })
   const { data: codexConfigs = [] } = useQuery({ queryKey: ['codex-configs'], queryFn: codexConfigsApi.list })
+  const { data: claudeConfigs = [] } = useQuery({ queryKey: ['claude-configs'], queryFn: claudeConfigsApi.list })
   const { data: agentsMdConfigs = [] } = useQuery({
     queryKey: ['configs', 'agents_md'],
     queryFn: () => configsApi.list({ category: 'agents_md' }),
@@ -389,6 +419,7 @@ export default function Agents() {
       cli_inits: data.cli_inits.map(ci => ({
         cli_type: ci.cli_type,
         codex_config_id: ci.codex_config_id || null,
+        claude_config_id: ci.claude_config_id || null,
         agents_md_id: ci.agents_md_id || null,
         priority: ci.priority ?? 0,
       })),
@@ -411,6 +442,7 @@ export default function Agents() {
         cli_inits: data.cli_inits.map(ci => ({
           cli_type: ci.cli_type,
           codex_config_id: ci.codex_config_id || null,
+          claude_config_id: ci.claude_config_id || null,
           agents_md_id: ci.agents_md_id || null,
           priority: ci.priority ?? 0,
         })),
@@ -504,6 +536,7 @@ export default function Agents() {
       cli_inits: agent.cli_inits.map(ci => ({
         cli_type: ci.cli_type,
         codex_config_id: ci.codex_config_id ?? '',
+        claude_config_id: ci.claude_config_id ?? '',
         agents_md_id: ci.agents_md_id ?? '',
         priority: ci.priority ?? 0,
       })),
@@ -524,6 +557,7 @@ export default function Agents() {
       cli_inits: agent.cli_inits.map(ci => ({
         cli_type: ci.cli_type,
         codex_config_id: ci.codex_config_id ?? '',
+        claude_config_id: ci.claude_config_id ?? '',
         agents_md_id: ci.agents_md_id ?? '',
         priority: ci.priority ?? 0,
       })),
@@ -706,6 +740,7 @@ export default function Agents() {
                 onChange={rows => setForm(f => ({ ...f, cli_inits: rows }))}
                 clis={clis}
                 codexConfigs={codexConfigs}
+                claudeConfigs={claudeConfigs}
                 agentsMdConfigs={agentsMdConfigs}
                 qc={qc}
                 t={t}
@@ -845,6 +880,7 @@ export default function Agents() {
                 onChange={rows => setEditForm(f => ({ ...f, cli_inits: rows }))}
                 clis={clis}
                 codexConfigs={codexConfigs}
+                claudeConfigs={claudeConfigs}
                 agentsMdConfigs={agentsMdConfigs}
                 qc={qc}
                 t={t}

@@ -10,7 +10,7 @@ pub const SUPPORTED_CLIS: &[CliInfo] = &[
     CliInfo {
         value: "claude_code",
         label: "Claude Code",
-        wip: true,
+        wip: false,
     },
     CliInfo {
         value: "gemini_cli",

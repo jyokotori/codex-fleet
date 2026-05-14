@@ -29,7 +29,7 @@ pub(crate) async fn fetch_agent_cli_inits(
     agent_id: &str,
 ) -> std::result::Result<Vec<AgentCliInit>, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT cli_type, codex_config_id, agents_md_id, priority
+        r#"SELECT cli_type, codex_config_id, claude_config_id, agents_md_id, priority
            FROM agent_cli_inits WHERE agent_id = $1
            ORDER BY priority ASC"#,
         agent_id
@@ -41,6 +41,7 @@ pub(crate) async fn fetch_agent_cli_inits(
         .map(|r| AgentCliInit {
             cli_type: r.cli_type,
             codex_config_id: r.codex_config_id,
+            claude_config_id: r.claude_config_id,
             agents_md_id: r.agents_md_id,
             priority: r.priority,
         })
@@ -91,6 +92,107 @@ fn resume_terminal_input_command(use_docker: bool, workdir: &str, thread_id: &st
         "{}codex resume {}",
         codex_home_prefix(use_docker, workdir),
         thread_id
+    )
+}
+
+/// Build a shell-quoted `export VAR='VAL'` line, escaping single quotes.
+fn shell_export_line(var: &str, val: &str) -> String {
+    // POSIX single-quote escape: ' -> '\''
+    let escaped = val.replace('\'', "'\\''");
+    format!("export {}='{}'\n", var, escaped)
+}
+
+/// Render the contents of the remote `claude.env` file. Always pins
+/// `IS_SANDBOX=1` (required for `--dangerously-skip-permissions`). Optional
+/// env vars are emitted only when non-empty.
+pub fn render_claude_env_body(
+    content: &config_center::application::claude_configs::ClaudeConfigContent,
+) -> String {
+    let mut out = String::new();
+    out.push_str("# Managed by codex-fleet — do not edit by hand.\n");
+    out.push_str(&shell_export_line("IS_SANDBOX", "1"));
+    out.push_str(&shell_export_line(
+        "ANTHROPIC_BASE_URL",
+        &content.anthropic_base_url,
+    ));
+    out.push_str(&shell_export_line(
+        "ANTHROPIC_AUTH_TOKEN",
+        &content.anthropic_auth_token,
+    ));
+    out.push_str(&shell_export_line(
+        "ANTHROPIC_MODEL",
+        &content.anthropic_model,
+    ));
+    if !content.default_opus_model.is_empty() {
+        out.push_str(&shell_export_line(
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            &content.default_opus_model,
+        ));
+    }
+    if !content.default_sonnet_model.is_empty() {
+        out.push_str(&shell_export_line(
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            &content.default_sonnet_model,
+        ));
+    }
+    if !content.default_haiku_model.is_empty() {
+        out.push_str(&shell_export_line(
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            &content.default_haiku_model,
+        ));
+    }
+    if !content.subagent_model.is_empty() {
+        out.push_str(&shell_export_line(
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            &content.subagent_model,
+        ));
+    }
+    if !content.effort_level.is_empty() {
+        out.push_str(&shell_export_line(
+            "CLAUDE_CODE_EFFORT_LEVEL",
+            &content.effort_level,
+        ));
+    }
+    out
+}
+
+const CLAUDE_BASHRC_START_PREFIX: &str = "# >>> codex-fleet claude env (";
+const CLAUDE_BASHRC_END_PREFIX: &str = "# <<< codex-fleet claude env (";
+
+/// Build a shell snippet that idempotently splices a marker-wrapped block
+/// into the remote `~/.bashrc` to source the agent's `claude.env` for
+/// interactive shells. Existing blocks for the same agent_id are removed first.
+pub(crate) fn bashrc_splice_command(agent_id: &str, base_dir: &str) -> String {
+    let start = format!("{}{}) >>>", CLAUDE_BASHRC_START_PREFIX, agent_id);
+    let end = format!("{}{}) <<<", CLAUDE_BASHRC_END_PREFIX, agent_id);
+    let source_line = format!(
+        "[ -f {b}/agent/claude.env ] && . {b}/agent/claude.env",
+        b = base_dir
+    );
+    // sed -e to delete any prior block by marker, then append the fresh block.
+    // `\` is escaped twice for the outer Rust string -> shell delivery.
+    format!(
+        "touch ~/.bashrc && \
+         sed -i.bak '/^{start_escaped}$/,/^{end_escaped}$/d' ~/.bashrc && \
+         printf '\\n%s\\n%s\\n%s\\n' '{start}' '{source}' '{end}' >> ~/.bashrc",
+        start = start,
+        end = end,
+        source = source_line,
+        // For sed regex, special chars in our markers are just ()<>>< — '(' and ')'
+        // are literal in BRE so no need to escape; same for `<` and `>`.
+        start_escaped = start,
+        end_escaped = end,
+    )
+}
+
+/// Build a shell snippet that strips any previously-spliced marker block.
+fn bashrc_remove_command(agent_id: &str) -> String {
+    let start = format!("{}{}) >>>", CLAUDE_BASHRC_START_PREFIX, agent_id);
+    let end = format!("{}{}) <<<", CLAUDE_BASHRC_END_PREFIX, agent_id);
+    format!(
+        "[ -f ~/.bashrc ] && sed -i.bak '/^{start}$/,/^{end}$/d' ~/.bashrc || true",
+        start = start,
+        end = end,
     )
 }
 
@@ -148,6 +250,7 @@ mod tests {
 pub struct AgentCliInit {
     pub cli_type: String,
     pub codex_config_id: Option<String>,
+    pub claude_config_id: Option<String>,
     pub agents_md_id: Option<String>,
     #[serde(default)]
     pub priority: i32,
@@ -805,7 +908,8 @@ pub async fn list_agents(
 
     // Batch-fetch cli_inits for all agents
     let cli_init_rows = sqlx::query!(
-        r#"SELECT agent_id, cli_type, codex_config_id, agents_md_id, priority
+        r#"SELECT agent_id, cli_type, codex_config_id, claude_config_id,
+                  agents_md_id, priority
            FROM agent_cli_inits
            ORDER BY priority ASC"#,
     )
@@ -821,6 +925,7 @@ pub async fn list_agents(
             .push(AgentCliInit {
                 cli_type: r.cli_type,
                 codex_config_id: r.codex_config_id,
+                claude_config_id: r.claude_config_id,
                 agents_md_id: r.agents_md_id,
                 priority: r.priority,
             });
@@ -1175,6 +1280,13 @@ pub async fn create_agent(
                 c.cli_type
             )));
         }
+        if c.cli_type == "claude_code"
+            && c.claude_config_id.as_deref().unwrap_or("").is_empty()
+        {
+            return Err(AppError::BadRequest(
+                "claude_code cli_init requires claude_config_id".into(),
+            ));
+        }
         if shared_kernel::cli_is_runnable(&c.cli_type) {
             runnable = true;
         }
@@ -1251,9 +1363,12 @@ pub async fn create_agent(
     for c in &req.cli_inits {
         let cid = Uuid::new_v4().to_string();
         sqlx::query!(
-            r#"INSERT INTO agent_cli_inits (id, agent_id, cli_type, codex_config_id, agents_md_id, priority)
-               VALUES ($1, $2, $3, $4, $5, $6)"#,
-            cid, id, c.cli_type, c.codex_config_id, c.agents_md_id, c.priority,
+            r#"INSERT INTO agent_cli_inits
+               (id, agent_id, cli_type, codex_config_id, claude_config_id,
+                agents_md_id, priority)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+            cid, id, c.cli_type, c.codex_config_id, c.claude_config_id,
+            c.agents_md_id, c.priority,
         )
         .execute(&mut *tx)
         .await?;
@@ -1416,10 +1531,14 @@ async fn provision_agent(
     let workspace_dir = format!("{}/workspace", base_dir);
 
     // Pick the first codex init (if any) for legacy single-CLI provisioning.
-    // Other CLIs are tracked but their config files aren't materialised yet.
     let codex_init = cli_inits.iter().find(|c| c.cli_type == "codex");
     let codex_config_id = codex_init.and_then(|c| c.codex_config_id.as_deref());
     let agents_md_id = codex_init.and_then(|c| c.agents_md_id.as_deref());
+    // Claude init (parallel to codex): writes a claude.env file. On non-docker
+    // agents we also splice a `source` line into the remote ~/.bashrc so the
+    // user can SSH in and run `claude` interactively with the same env.
+    let claude_init = cli_inits.iter().find(|c| c.cli_type == "claude_code");
+    let claude_config_id = claude_init.and_then(|c| c.claude_config_id.as_deref());
 
     // Persist the host-side workspace path for both docker and non-docker agents.
     let _ = sqlx::query("UPDATE agents SET workdir = $1 WHERE id = $2")
@@ -1526,6 +1645,65 @@ async fn provision_agent(
                         )
                         .await;
                     }
+                }
+            }
+        }
+    }
+
+    // Write Claude env file + (optionally) splice ~/.bashrc.
+    if let Some(cid) = claude_config_id {
+        if let Ok(Some(content)) =
+            config_center::application::claude_configs::get_claude_config_content(db, cid).await
+        {
+            let env_body = render_claude_env_body(&content);
+            emit(db, agent_id, tx, ev_substep(1, "Writing claude.env")).await;
+            let b64 = BASE64.encode(env_body.as_bytes());
+            let cmd = format!("echo '{}' | base64 -d > {}/agent/claude.env", b64, base_dir);
+            let display = format!("Writing ~/.codex-fleet/{}/agent/claude.env", agent_id);
+            match stream_cmd(handle, &cmd, &display, db, agent_id, tx, 1).await {
+                Ok(0) => {}
+                Ok(code) => {
+                    emit(
+                        db,
+                        agent_id,
+                        tx,
+                        ev_warn(1, &format!("claude.env write failed (exit {})", code)),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    emit(
+                        db,
+                        agent_id,
+                        tx,
+                        ev_warn(1, &format!("claude.env write failed: {}", e)),
+                    )
+                    .await;
+                }
+            }
+
+            // Splice a sourcing line into ~/.bashrc so the user can SSH in and
+            // run `claude` interactively with the same env. Skip in docker mode —
+            // the host bashrc doesn't affect commands run inside the container.
+            if !use_docker {
+                emit(
+                    db,
+                    agent_id,
+                    tx,
+                    ev_substep(1, "Updating ~/.bashrc with claude env"),
+                )
+                .await;
+                let bashrc_cmd = bashrc_splice_command(agent_id, &base_dir);
+                let display = "Splicing claude env into ~/.bashrc".to_string();
+                if let Err(e) = stream_cmd(handle, &bashrc_cmd, &display, db, agent_id, tx, 1).await
+                {
+                    emit(
+                        db,
+                        agent_id,
+                        tx,
+                        ev_warn(1, &format!("~/.bashrc splice failed: {}", e)),
+                    )
+                    .await;
                 }
             }
         }
@@ -1927,6 +2105,13 @@ pub async fn update_agent(
                     c.cli_type
                 )));
             }
+            if c.cli_type == "claude_code"
+                && c.claude_config_id.as_deref().unwrap_or("").is_empty()
+            {
+                return Err(AppError::BadRequest(
+                    "claude_code cli_init requires claude_config_id".into(),
+                ));
+            }
             if shared_kernel::cli_is_runnable(&c.cli_type) {
                 runnable = true;
             }
@@ -1955,9 +2140,12 @@ pub async fn update_agent(
         for c in inits {
             let cid = Uuid::new_v4().to_string();
             sqlx::query!(
-                r#"INSERT INTO agent_cli_inits (id, agent_id, cli_type, codex_config_id, agents_md_id, priority)
-                   VALUES ($1, $2, $3, $4, $5, $6)"#,
-                cid, id, c.cli_type, c.codex_config_id, c.agents_md_id, c.priority,
+                r#"INSERT INTO agent_cli_inits
+                   (id, agent_id, cli_type, codex_config_id, claude_config_id,
+                    agents_md_id, priority)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+                cid, id, c.cli_type, c.codex_config_id, c.claude_config_id,
+                c.agents_md_id, c.priority,
             )
             .execute(&mut *tx)
             .await?;
@@ -2060,6 +2248,12 @@ pub async fn delete_agent(
                 };
                 tracing::info!(agent_id = %id, base_dir = %base, "Removing agent files");
                 let _ = executor.execute(&format!("rm -rf {}/", base)).await;
+                // Strip any Claude env block we may have spliced into ~/.bashrc
+                // during provisioning (non-docker only — docker mode never touches
+                // the host bashrc).
+                if !agent_info.use_docker {
+                    let _ = executor.execute(&bashrc_remove_command(&id)).await;
+                }
             }
             Err(e) => {
                 tracing::error!(agent_id = %id, error = %e, "Server unreachable during agent cleanup");
@@ -2259,9 +2453,12 @@ pub async fn clone_agent(
     for c in &cli_inits {
         let cid = Uuid::new_v4().to_string();
         sqlx::query!(
-            r#"INSERT INTO agent_cli_inits (id, agent_id, cli_type, codex_config_id, agents_md_id, priority)
-               VALUES ($1, $2, $3, $4, $5, $6)"#,
-            cid, new_id, c.cli_type, c.codex_config_id, c.agents_md_id, c.priority,
+            r#"INSERT INTO agent_cli_inits
+               (id, agent_id, cli_type, codex_config_id, claude_config_id,
+                agents_md_id, priority)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+            cid, new_id, c.cli_type, c.codex_config_id, c.claude_config_id,
+            c.agents_md_id, c.priority,
         )
         .execute(&mut *tx)
         .await?;

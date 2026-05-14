@@ -23,7 +23,7 @@ export default function ConfigsLayout() {
 
   const configFileItems = [
     { key: 'codex', label: t.configs.codex, to: '/configs/config-files/codex', wip: false },
-    { key: 'claude-code', label: t.configs.claudeCode, to: '/configs/config-files/claude-code', wip: true },
+    { key: 'claude-code', label: t.configs.claudeCode, to: '/configs/config-files/claude-code', wip: false },
     { key: 'gemini-cli', label: t.configs.geminiCli, to: '/configs/config-files/gemini-cli', wip: true },
     { key: 'opencode', label: t.configs.opencode, to: '/configs/config-files/opencode', wip: true },
   ]

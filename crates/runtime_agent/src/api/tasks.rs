@@ -31,6 +31,7 @@ pub async fn is_agent_busy(db: &sqlx::PgPool, agent_id: &str) -> Result<bool> {
 
 /// Core task dispatch logic shared by the HTTP handler and the scheduler.
 ///
+/// `cli_type` selects which CLI runs the prompt (e.g. `codex`, `claude_code`).
 /// Callers must hold `state.agent_lock(agent_id)` to keep the busy-check
 /// atomic with respect to other dispatchers.
 pub async fn dispatch_task_for_agent(
@@ -41,6 +42,7 @@ pub async fn dispatch_task_for_agent(
     notification_ids: Vec<String>,
     user_id: Option<String>,
     username: String,
+    cli_type: &str,
 ) -> Result<Task> {
     let (creds, agent_info) = get_agent_with_credentials(state, agent_id).await?;
     let _ = sync_agent_status_with_creds(state, agent_id, &creds, &agent_info).await?;
@@ -81,12 +83,13 @@ pub async fn dispatch_task_for_agent(
     let prompt = build_codex_prompt(title, description);
 
     let task_dir = task_dir_path(agent_info.use_docker, &agent_info.workdir, &id, &now);
-    let env_prefix = codex_home_prefix(agent_info.use_docker, &agent_info.workdir);
-    let cli_cmd =
-        format!(
-        "mkdir -p '{}' && {}codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
-        task_dir, env_prefix, task_dir, shell_quote(&prompt)
-    );
+    let cli_cmd = build_cli_command(
+        cli_type,
+        agent_info.use_docker,
+        &agent_info.workdir,
+        &task_dir,
+        &prompt,
+    )?;
 
     // Wrap with docker exec if needed
     let full_cmd = if agent_info.use_docker {
@@ -160,6 +163,7 @@ pub async fn dispatch_task_for_agent(
     let notif_user_id = user_id.clone();
     let notif_username = username.clone();
     let abort_signals = state.task_abort_signals.clone();
+    let cli_type_owned = cli_type.to_string();
     tokio::spawn(async move {
         let result = run_task_exec(
             &creds.ip,
@@ -199,17 +203,24 @@ pub async fn dispatch_task_for_agent(
             }
         };
 
-        // Try to read result.md from task_dir if it exists
+        // Read the run's final text result. Codex writes `result.md` directly
+        // via `codex exec -o`. Claude streams JSONL; we cat the .jsonl and
+        // extract the last `result` event's `.result` field.
         let result_md = if !task_dir_clone.is_empty() && status == "agent_completed" {
+            let result_file = if cli_type_owned == "claude_code" {
+                "result.jsonl"
+            } else {
+                "result.md"
+            };
             let cat_cmd = if use_docker {
                 format!(
-                    "docker exec {} cat {}/result.md",
-                    container_name, task_dir_clone
+                    "docker exec {} cat {}/{}",
+                    container_name, task_dir_clone, result_file
                 )
             } else {
-                format!("cat {}/result.md", task_dir_clone)
+                format!("cat {}/{}", task_dir_clone, result_file)
             };
-            tracing::debug!("Reading result.md for task {}: {}", task_id, cat_cmd);
+            tracing::debug!("Reading {} for task {}: {}", result_file, task_id, cat_cmd);
             match read_remote_file(
                 &creds.ip,
                 creds.port,
@@ -222,15 +233,25 @@ pub async fn dispatch_task_for_agent(
             .await
             {
                 Ok(content) => {
+                    let extracted = if cli_type_owned == "claude_code" {
+                        extract_claude_result(&content)
+                    } else {
+                        content
+                    };
                     tracing::info!(
-                        "Read result.md for task {} ({} bytes)",
+                        "Read {} for task {} ({} bytes)",
+                        result_file,
                         task_id,
-                        content.len()
+                        extracted.len()
                     );
-                    content
+                    extracted
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to read result.md for task {}: {e}", task_id);
+                    tracing::warn!(
+                        "Failed to read {} for task {}: {e}",
+                        result_file,
+                        task_id
+                    );
                     String::new()
                 }
             }
@@ -451,6 +472,69 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Build the inner shell command that runs the chosen CLI inside the task_dir.
+/// The caller wraps this with `docker exec ... sh -lc ...` or the HOST_ENV_SETUP
+/// preamble, depending on `use_docker`.
+fn build_cli_command(
+    cli_type: &str,
+    use_docker: bool,
+    workdir: &str,
+    task_dir: &str,
+    prompt: &str,
+) -> Result<String> {
+    match cli_type {
+        "codex" => {
+            let env_prefix = codex_home_prefix(use_docker, workdir);
+            Ok(format!(
+                "mkdir -p '{}' && {}codex exec --yolo -s danger-full-access --json -o '{}/result.md' {}",
+                task_dir, env_prefix, task_dir, shell_quote(prompt)
+            ))
+        }
+        "claude_code" => {
+            let env_file = if use_docker {
+                "/agent/claude.env".to_string()
+            } else {
+                let base = workdir.trim_end_matches("/workspace");
+                format!("{}/agent/claude.env", base)
+            };
+            Ok(format!(
+                "mkdir -p '{td}' && . {env} && claude -p {prompt} \
+                 --output-format stream-json --verbose --dangerously-skip-permissions \
+                 | tee '{td}/result.jsonl'",
+                td = task_dir,
+                env = env_file,
+                prompt = shell_quote(prompt),
+            ))
+        }
+        other => Err(AppError::BadRequest(format!(
+            "Unsupported cli_type: {}",
+            other
+        ))),
+    }
+}
+
+/// Pull the assistant's final text out of a Claude `stream-json` transcript.
+/// Looks for the last `{"type":"result","subtype":"success",...}` event and
+/// returns its `.result` field; falls back to the raw transcript if none.
+fn extract_claude_result(jsonl: &str) -> String {
+    let mut last: Option<String> = None;
+    for line in jsonl.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|x| x.as_str()) == Some("result") {
+            if let Some(text) = v.get("result").and_then(|x| x.as_str()) {
+                last = Some(text.to_string());
+            }
+        }
+    }
+    last.unwrap_or_else(|| jsonl.to_string())
+}
+
 /// Combine task title and description into the prompt sent to codex.
 /// Either field may be empty; if both are empty, returns an empty string.
 fn build_codex_prompt(title: &str, description: &str) -> String {
@@ -486,6 +570,9 @@ pub async fn create_task(
         return Err(AppError::Conflict("Agent is busy".into()));
     }
 
+    // Pick the agent's primary runnable CLI (lowest priority value first).
+    let cli_type = pick_agent_primary_cli(&state.db, &agent_id).await?;
+
     let task = dispatch_task_for_agent(
         &state,
         &agent_id,
@@ -494,9 +581,29 @@ pub async fn create_task(
         notification_ids,
         Some(auth.user_id),
         auth.username,
+        &cli_type,
     )
     .await?;
     Ok(Json(task))
+}
+
+async fn pick_agent_primary_cli(db: &sqlx::PgPool, agent_id: &str) -> Result<String> {
+    let row = sqlx::query!(
+        r#"SELECT cli_type FROM agent_cli_inits
+           WHERE agent_id = $1
+           ORDER BY priority ASC LIMIT 1"#,
+        agent_id
+    )
+    .fetch_optional(db)
+    .await?;
+    let cli_type = row.map(|r| r.cli_type).unwrap_or_else(|| "codex".to_string());
+    if !shared_kernel::cli_is_runnable(&cli_type) {
+        return Err(AppError::Conflict(format!(
+            "Agent's primary CLI '{}' is not runnable",
+            cli_type
+        )));
+    }
+    Ok(cli_type)
 }
 
 /// Flush accumulated db_buf to DB in a single UPDATE, then clear it.
@@ -610,20 +717,30 @@ async fn run_task_exec(
                     let line_bytes = byte_buf.drain(..=newline_pos).collect::<Vec<_>>();
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
 
-                    // Try to parse thread_id from first JSONL line
+                    // Try to parse thread_id / session_id from first JSONL line.
+                    // - Codex emits {"type":"thread.started","thread_id":"..."}.
+                    // - Claude emits {"type":"system","subtype":"init","session_id":"..."}.
                     if !first_line_parsed {
                         first_line_parsed = true;
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if json.get("type").and_then(|v| v.as_str()) == Some("thread.started") {
-                                if let Some(tid) = json.get("thread_id").and_then(|v| v.as_str()) {
-                                    let _ = sqlx::query!(
-                                        "UPDATE tasks SET thread_id = $1 WHERE id = $2",
-                                        tid,
-                                        task_id
-                                    )
-                                    .execute(db)
-                                    .await;
-                                }
+                            let kind = json.get("type").and_then(|v| v.as_str());
+                            let id_value = if kind == Some("thread.started") {
+                                json.get("thread_id").and_then(|v| v.as_str())
+                            } else if kind == Some("system")
+                                && json.get("subtype").and_then(|v| v.as_str()) == Some("init")
+                            {
+                                json.get("session_id").and_then(|v| v.as_str())
+                            } else {
+                                None
+                            };
+                            if let Some(tid) = id_value {
+                                let _ = sqlx::query!(
+                                    "UPDATE tasks SET thread_id = $1 WHERE id = $2",
+                                    tid,
+                                    task_id
+                                )
+                                .execute(db)
+                                .await;
                             }
                         }
                     }

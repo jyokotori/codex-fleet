@@ -106,7 +106,7 @@ docker rm my-codex-env
 添加远程服务器，一键测试 SSH 连通性。支持免密 SSH、密码认证、SSH Key。添加好之后，该服务器上的所有 Agent 都自动走这套连接。
 
 ### Agent 管理
-创建 Agent 时，选择一台远程服务器，选好 CLI 工具（目前仅支持 Codex），并按需启用 Docker。新建弹窗里的 Git 配置当前显示为 WIP，Docker 和非 Docker 两种模式都暂不开放。
+创建 Agent 时，选择一台远程服务器，选好 CLI 工具（已支持 Codex 与 Claude Code），并按需启用 Docker。新建弹窗里的 Git 配置当前显示为 WIP，Docker 和非 Docker 两种模式都暂不开放。
 初始化时会先在服务器上固定创建两类目录：
 - `~/.codex-fleet/{agent_id}/agent`：存放 Agent 配置
 - `~/.codex-fleet/{agent_id}/workspace`：项目工作目录
@@ -114,6 +114,7 @@ docker rm my-codex-env
 
 每个 Agent 可以单独配置：
 - **Codex Config** — 绑定一组 `config.toml` + `auth.json`，让 Agent 启动就有认证信息和配置
+- **Claude Config** — 绑定一组 Anthropic 环境变量（`ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`，以及可选的默认/子代理模型和 effort 等级）。Provisioning 时会在 Agent 主机上写入 `claude.env`，并（仅非 Docker）把一段带 marker 的 `source` 语句拼接到宿主机 `~/.bashrc`，方便你 SSH 上去手动用 `claude` 时直接复用同一份环境
 - **AGENTS.md** — 把共享的项目说明文件注入 Agent 工作区
 - **Docker 配置** — 自定义端口映射、环境变量、目录挂载、初始化脚本
 - **运行时控制** — Docker Agent 在列表页只显示一个随容器状态变化的动作按钮（`停止`、`启动` 或 `重启`）；其中 `停止` 和 `重启` 需要二次确认，`启动` 直接执行。非 Docker Agent 不提供 Start/Stop/Restart 按钮。Agent 详情页头部只保留 `派发任务` 和 `复制命令`
@@ -132,6 +133,7 @@ docker rm my-codex-env
 ### 配置管理
 把可复用的配置统一存储，随时挂到任意 Agent 上：
 - **Codex 配置** — 把 `config.toml` 和 `auth.json` 组合成一个命名配置组。编辑弹窗提供 **保存并更新已关联 Agent** 操作，会把新内容写到所有引用该配置的运行中 Agent（Docker Agent 通过 `docker exec` 写入 `/root/.codex/...`，非 Docker Agent 通过 SSH 写入 `~/.codex-fleet/{id}/agent/...`），无需重新 provision 即可生效。字段为空或未设置引用时会跳过（不会删除远端旧文件）。
+- **Claude 配置** — 以单条环境变量输入框管理 Anthropic 凭据和模型偏好（核心：Base URL / Auth Token / Model；更多：默认 Opus/Sonnet/Haiku、子代理模型、effort 等级）。`IS_SANDBOX=1` 始终导出，以便 `--dangerously-skip-permissions` 可用。Token 在 API 响应里会被打码；更新 Agent 绑定的 Claude 配置后会把 `claude.env`（以及非 Docker 模式下的 `~/.bashrc` source 行）同步到对应的 Agent。
 - **AGENTS.md** — 可复用的 Agent 指令文件
 - **Docker 配置** — 可复用的 Docker 运行配置（端口、环境变量、初始化脚本；Agent 始终挂载一个由系统管理的 `/workspace` 命名卷）
 
@@ -142,7 +144,7 @@ docker rm my-codex-env
 - 钉钉任务通知会发送给任务所属 Agent 的关联用户，即该用户的 `dingtalk_userid`。如果 Agent 没有关联用户，或关联用户没有 `dingtalk_userid`，则跳过通知并记录日志。
 
 ### Plane 集成
-与 [Plane](https://plane.so) 双向联动。每条 binding 自己声明三个项目状态（accept / in-progress / completion）和一组标签 → CLI 映射（`codex` 当前可用，`claude_code` / `gemini_cli` / `opencode` 已预留）。Issue 进入 binding 的 accept 状态、带匹配标签、并指派给 Agent 组成员后，会自动派发到空闲 Agent；执行结果回写为状态变更和评论。每条 binding 还可关联一组通知配置（例如钉钉），使 Plane 派发的任务在 `agent_in_progress` / `agent_completed` / `agent_failed` 事件上和前端创建的任务走同样的通知通路。详见 [Plane 集成指南](./docs/plane-workflow.md)。
+与 [Plane](https://plane.so) 双向联动。每条 binding 自己声明三个项目状态（accept / in-progress / completion）和一组标签 → CLI 映射（`codex` 与 `claude_code` 当前均可用；`gemini_cli` / `opencode` 已预留）。Issue 进入 binding 的 accept 状态、带匹配标签、并指派给 Agent 组成员后，会自动派发到空闲 Agent，调度器会按标签所选的 CLI 实际拉起对应命令；执行结果回写为状态变更和评论。每条 binding 还可关联一组通知配置（例如钉钉），使 Plane 派发的任务在 `agent_in_progress` / `agent_completed` / `agent_failed` 事件上和前端创建的任务走同样的通知通路。详见 [Plane 集成指南](./docs/plane-workflow.md)。
 
 ### 用户与权限管理
 - JWT 访问令牌 + Refresh Token
