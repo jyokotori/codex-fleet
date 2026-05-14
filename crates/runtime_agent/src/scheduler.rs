@@ -227,7 +227,17 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
         .get_issue_full(&p.plane_project_id, &p.plane_issue_id)
         .await
     {
-        Ok(s) => s,
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            // Issue was deleted on Plane side — stop retrying.
+            sqlx::query(
+                "UPDATE plane_tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+            )
+            .bind(&p.plane_task_id)
+            .execute(&state.db)
+            .await?;
+            return Ok(());
+        }
         Err(e) => {
             warn!(
                 "Plane scheduler: get_issue_full failed for {}: {e}; retrying next tick",

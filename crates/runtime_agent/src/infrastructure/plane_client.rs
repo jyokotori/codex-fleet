@@ -215,11 +215,14 @@ impl PlaneClient {
 
     /// One-shot fetch returning the relevant issue fields. Plane stores
     /// `state` as an id, `labels` as id list, `assignees` as user_id list.
+    ///
+    /// Returns `Ok(None)` when Plane responds with 404 (issue deleted), so callers
+    /// can distinguish "gone" from transient network/API errors.
     pub async fn get_issue_full(
         &self,
         project_id: &str,
         issue_id: &str,
-    ) -> anyhow::Result<IssueSnapshot> {
+    ) -> anyhow::Result<Option<IssueSnapshot>> {
         let url = format!(
             "{}/api/v1/workspaces/{}/projects/{}/issues/{}/",
             self.base_url, self.workspace_slug, project_id, issue_id
@@ -230,6 +233,10 @@ impl PlaneClient {
             .header("x-api-key", &self.api_key)
             .send()
             .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let resp = resp.error_for_status()?;
         let body: serde_json::Value = resp.json().await?;
         let title = body["name"].as_str().unwrap_or_default().to_string();
         let description = body["description_stripped"]
@@ -253,13 +260,13 @@ impl PlaneClient {
                     .collect()
             })
             .unwrap_or_default();
-        Ok(IssueSnapshot {
+        Ok(Some(IssueSnapshot {
             title,
             description,
             state_id,
             label_ids,
             assignee_user_ids,
-        })
+        }))
     }
 
     /// Update issue state directly by state_id. Rename-safe (we hold the id).
