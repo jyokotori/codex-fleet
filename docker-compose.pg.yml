@@ -1,10 +1,13 @@
 services:
   postgres:
     image: pgvector/pgvector:pg17
+    container_name: codex-fleet-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-codexfleet}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-codexfleet}
       POSTGRES_DB: ${POSTGRES_DB:-codexfleet}
+    ports:
+      - "5437:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -14,22 +17,7 @@ services:
       retries: 10
     restart: unless-stopped
 
-  app:
-    build: .
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-    ports:
-      - "${PORT:-3000}:${PORT:-3000}"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - app_ssh:/root/.ssh
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
   postgres_data:
-  app_ssh:
+    external: true
+    name: codex-fleet_postgres_data
