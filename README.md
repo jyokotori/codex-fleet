@@ -142,7 +142,7 @@ Current:
 - DingTalk task notifications are sent to the DingTalk user ID on the user assigned to the task's Agent. If the Agent has no assigned user, or that user has no `dingtalk_userid`, the notification is skipped.
 
 ### Plane Integration
-Integrate with [Plane](https://plane.so) for bidirectional issue sync. Each binding declares its own three project states (accept / in-progress / completion) and a list of labels mapped to specific CLIs (`codex`, plus reserved `claude_code` / `gemini_cli` / `opencode`). Issues entering the binding's accept state — with a matching label and assigned to a known agent group member — are automatically dispatched, and results are written back as state transitions and comments. See [Plane Integration Guide](./docs/plane-workflow.md) for setup instructions.
+Integrate with [Plane](https://plane.so) for bidirectional issue sync. Each binding declares its own three project states (accept / in-progress / completion) and a list of labels mapped to specific CLIs (`codex`, plus reserved `claude_code` / `gemini_cli` / `opencode`). Issues entering the binding's accept state — with a matching label and assigned to a known agent group member — are automatically dispatched, and results are written back as state transitions and comments. Each binding can also opt into one or more notification configs (e.g. DingTalk), so Plane-dispatched tasks fire the same `agent_in_progress` / `agent_completed` / `agent_failed` events as user-created tasks. See [Plane Integration Guide](./docs/plane-workflow.md) for setup instructions.
 
 ### User & Access Management
 - JWT access token + refresh token

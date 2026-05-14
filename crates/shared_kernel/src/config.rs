@@ -23,13 +23,15 @@ impl AppConfig {
         let pg_user = env::var("POSTGRES_USER").unwrap_or_else(|_| "codexfleet".into());
         let pg_password = env::var("POSTGRES_PASSWORD").unwrap_or_else(|_| "codexfleet".into());
         let pg_host = env::var("POSTGRES_HOST").unwrap_or_else(|_| "localhost".into());
+        let pg_port = env::var("POSTGRES_PORT").unwrap_or_else(|_| "5432".into());
         let pg_db = env::var("POSTGRES_DB").unwrap_or_else(|_| "codexfleet".into());
 
         let database_url = format!(
-            "postgres://{}:{}@{}:5432/{}",
+            "postgres://{}:{}@{}:{}/{}",
             encode(&pg_user),
             encode(&pg_password),
             pg_host,
+            pg_port,
             pg_db,
         );
 

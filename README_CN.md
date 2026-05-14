@@ -142,7 +142,7 @@ docker rm my-codex-env
 - 钉钉任务通知会发送给任务所属 Agent 的关联用户，即该用户的 `dingtalk_userid`。如果 Agent 没有关联用户，或关联用户没有 `dingtalk_userid`，则跳过通知并记录日志。
 
 ### Plane 集成
-与 [Plane](https://plane.so) 双向联动。每条 binding 自己声明三个项目状态（accept / in-progress / completion）和一组标签 → CLI 映射（`codex` 当前可用，`claude_code` / `gemini_cli` / `opencode` 已预留）。Issue 进入 binding 的 accept 状态、带匹配标签、并指派给 Agent 组成员后，会自动派发到空闲 Agent；执行结果回写为状态变更和评论。详见 [Plane 集成指南](./docs/plane-workflow.md)。
+与 [Plane](https://plane.so) 双向联动。每条 binding 自己声明三个项目状态（accept / in-progress / completion）和一组标签 → CLI 映射（`codex` 当前可用，`claude_code` / `gemini_cli` / `opencode` 已预留）。Issue 进入 binding 的 accept 状态、带匹配标签、并指派给 Agent 组成员后，会自动派发到空闲 Agent；执行结果回写为状态变更和评论。每条 binding 还可关联一组通知配置（例如钉钉），使 Plane 派发的任务在 `agent_in_progress` / `agent_completed` / `agent_failed` 事件上和前端创建的任务走同样的通知通路。详见 [Plane 集成指南](./docs/plane-workflow.md)。
 
 ### 用户与权限管理
 - JWT 访问令牌 + Refresh Token

@@ -642,6 +642,7 @@ export interface PlaneBinding {
   completion_state_id: string
   completion_state_name: string
   labels: PlaneBindingLabel[]
+  notification_ids: string[]
   enabled: boolean
   created_at: string
 }
@@ -705,6 +706,7 @@ export const planeApi = {
     completion_state_id: string
     completion_state_name: string
     labels: PlaneBindingLabelInput[]
+    notification_ids?: string[]
   }) => request<{ id: string }>(`/api/plane/workspaces/${workspaceId}/bindings`, { method: 'POST', body: JSON.stringify(data) }),
   updateBinding: (id: string, data: {
     agent_group_id?: string
@@ -715,6 +717,7 @@ export const planeApi = {
     completion_state_id?: string
     completion_state_name?: string
     labels?: PlaneBindingLabelInput[]
+    notification_ids?: string[]
   }) =>
     request<void>(`/api/plane/bindings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteBinding: (id: string) =>

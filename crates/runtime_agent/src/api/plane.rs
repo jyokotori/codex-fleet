@@ -368,6 +368,7 @@ pub struct PlaneBinding {
     pub completion_state_id: String,
     pub completion_state_name: String,
     pub labels: Vec<PlaneBindingLabel>,
+    pub notification_ids: Vec<String>,
     pub enabled: bool,
     pub created_at: String,
 }
@@ -395,6 +396,8 @@ pub struct CreatePlaneBindingRequest {
     pub completion_state_id: String,
     pub completion_state_name: String,
     pub labels: Vec<PlaneBindingLabelInput>,
+    #[serde(default)]
+    pub notification_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -408,6 +411,8 @@ pub struct UpdatePlaneBindingRequest {
     pub completion_state_name: Option<String>,
     /// When provided, completely replaces existing labels.
     pub labels: Option<Vec<PlaneBindingLabelInput>>,
+    /// When provided, completely replaces existing notification ids.
+    pub notification_ids: Option<Vec<String>>,
 }
 
 async fn validate_binding_payload(
@@ -488,6 +493,37 @@ async fn validate_binding_payload(
     Ok(())
 }
 
+/// Dedupe `ids` preserving first-seen order and verify every ID exists in
+/// `notification_configs`. Returns the cleaned list.
+async fn validate_notification_ids(
+    db: &sqlx::PgPool,
+    ids: &[String],
+) -> Result<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped: Vec<String> = Vec::with_capacity(ids.len());
+    for id in ids {
+        if seen.insert(id.clone()) {
+            deduped.push(id.clone());
+        }
+    }
+    if deduped.is_empty() {
+        return Ok(deduped);
+    }
+    let found: Vec<String> =
+        sqlx::query_scalar!("SELECT id FROM notification_configs WHERE id = ANY($1)", &deduped)
+            .fetch_all(db)
+            .await?;
+    let found_set: std::collections::HashSet<&String> = found.iter().collect();
+    for id in &deduped {
+        if !found_set.contains(id) {
+            return Err(AppError::BadRequest(format!(
+                "unknown notification config id: {id}"
+            )));
+        }
+    }
+    Ok(deduped)
+}
+
 async fn fetch_binding_labels(
     db: &sqlx::PgPool,
     binding_id: &str,
@@ -522,6 +558,7 @@ pub async fn list_workspace_bindings(
                   pb.accept_state_id, pb.accept_state_name,
                   pb.in_progress_state_id, pb.in_progress_state_name,
                   pb.completion_state_id, pb.completion_state_name,
+                  pb.notification_ids,
                   pb.enabled, pb.created_at::text AS created_at
            FROM plane_bindings pb
            LEFT JOIN agent_groups ag ON ag.id = pb.agent_group_id
@@ -536,6 +573,9 @@ pub async fn list_workspace_bindings(
     for r in &rows {
         let id: String = r.get("id");
         let labels = fetch_binding_labels(&state.db, &id).await?;
+        let notif_json: String = r.try_get("notification_ids").unwrap_or_else(|_| "[]".into());
+        let notification_ids: Vec<String> =
+            serde_json::from_str(&notif_json).unwrap_or_default();
         bindings.push(PlaneBinding {
             id: id.clone(),
             workspace_id: r.get("workspace_id"),
@@ -551,6 +591,7 @@ pub async fn list_workspace_bindings(
             completion_state_id: r.get("completion_state_id"),
             completion_state_name: r.get("completion_state_name"),
             labels,
+            notification_ids,
             enabled: r.get("enabled"),
             created_at: r.get("created_at"),
         });
@@ -574,6 +615,7 @@ pub async fn create_workspace_binding(
         &req.labels,
     )
     .await?;
+    let notification_ids = validate_notification_ids(&state.db, &req.notification_ids).await?;
 
     let id = Uuid::new_v4().to_string();
     let mut tx = state.db.begin().await?;
@@ -584,8 +626,9 @@ pub async fn create_workspace_binding(
               agent_group_id,
               accept_state_id, accept_state_name,
               in_progress_state_id, in_progress_state_name,
-              completion_state_id, completion_state_name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#,
+              completion_state_id, completion_state_name,
+              notification_ids)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#,
         id,
         workspace_id,
         req.plane_project_id,
@@ -598,6 +641,7 @@ pub async fn create_workspace_binding(
         req.in_progress_state_name,
         req.completion_state_id,
         req.completion_state_name,
+        serde_json::to_string(&notification_ids).unwrap_or_else(|_| "[]".into()),
     )
     .execute(&mut *tx)
     .await?;
@@ -731,6 +775,11 @@ pub async fn update_plane_binding(
     }
     if let Some(v) = &req.completion_state_name {
         push_pair(&mut builder, "completion_state_name", v, &mut first);
+    }
+    if let Some(ids) = &req.notification_ids {
+        let cleaned = validate_notification_ids(&state.db, ids).await?;
+        let json = serde_json::to_string(&cleaned).unwrap_or_else(|_| "[]".into());
+        push_pair(&mut builder, "notification_ids", &json, &mut first);
     }
 
     if !first {

@@ -5,6 +5,7 @@ import {
   planeApi,
   agentGroupsApi,
   clisApi,
+  notificationsApi,
   type PlaneWorkspace,
   type PlaneBinding,
   type PlaneBindingLabelInput,
@@ -115,7 +116,7 @@ export default function PlaneIntegration() {
                   onEdit={() => setWsModal({ mode: 'edit', ws })}
                   onToggle={() => toggleWorkspaceMut.mutate(ws.id)}
                   onDelete={() => {
-                    if (confirm(`Delete workspace "${ws.name}" and all its bindings?`)) {
+                    if (confirm(t.plane.deleteWorkspaceConfirm(ws.name))) {
                       deleteWorkspaceMut.mutate(ws.id)
                     }
                   }}
@@ -138,10 +139,10 @@ export default function PlaneIntegration() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b dark:border-gray-700">
-                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">Title</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">Assignee</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">Status</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">Time</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">{t.plane.taskTitle}</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">{t.plane.taskAssignee}</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">{t.plane.taskStatus}</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">{t.plane.taskTime}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -222,6 +223,11 @@ function WorkspaceCard({
     queryFn: () => planeApi.listWorkspaceBindings(workspace.id),
     enabled: expanded,
   })
+  const { data: notifConfigs = [] } = useQuery({
+    queryKey: ['notifications'],
+    queryFn: notificationsApi.list,
+    enabled: expanded,
+  })
 
   const toggleBindingMut = useMutation({
     mutationFn: (id: string) => planeApi.toggleBinding(id),
@@ -269,10 +275,10 @@ function WorkspaceCard({
             <ToggleLeft size={20} className="text-gray-400" />
           )}
         </button>
-        <button onClick={onEdit} className="p-1.5 text-gray-500 hover:text-sky-600" title="Edit">
+        <button onClick={onEdit} className="p-1.5 text-gray-500 hover:text-sky-600" title={t.common.edit}>
           <Pencil size={16} />
         </button>
-        <button onClick={onDelete} className="p-1.5 text-gray-500 hover:text-red-600" title="Delete">
+        <button onClick={onDelete} className="p-1.5 text-gray-500 hover:text-red-600" title={t.common.delete}>
           <Trash2 size={16} />
         </button>
       </div>
@@ -289,7 +295,7 @@ function WorkspaceCard({
                 <code className="flex-1 px-2 py-1 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded text-xs truncate dark:text-gray-200">
                   {webhookUrl}
                 </code>
-                <button onClick={copyWebhook} className="p-1.5 text-gray-500 hover:text-sky-600" title="Copy">
+                <button onClick={copyWebhook} className="p-1.5 text-gray-500 hover:text-sky-600" title={t.common.copy}>
                   <Copy size={14} />
                 </button>
               </div>
@@ -346,22 +352,39 @@ function WorkspaceCard({
                             ))}
                           </div>
                         )}
+                        {b.notification_ids.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {b.notification_ids.map(nid => {
+                              const n = notifConfigs.find(x => x.id === nid)
+                              return (
+                                <span
+                                  key={nid}
+                                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300"
+                                  title={n ? `${n.name} (${n.type})` : nid}
+                                >
+                                  <span>🔔</span>
+                                  <span>{n ? n.name : nid.slice(0, 8)}</span>
+                                </span>
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => toggleBindingMut.mutate(b.id)} title={b.enabled ? 'Disable' : 'Enable'}>
+                        <button onClick={() => toggleBindingMut.mutate(b.id)} title={b.enabled ? t.plane.disable : t.plane.enable}>
                           {b.enabled ? (
                             <ToggleRight size={20} className="text-green-500" />
                           ) : (
                             <ToggleLeft size={20} className="text-gray-400" />
                           )}
                         </button>
-                        <button onClick={() => onEditBinding(b)} className="p-1 text-gray-500 hover:text-sky-600" title="Edit">
+                        <button onClick={() => onEditBinding(b)} className="p-1 text-gray-500 hover:text-sky-600" title={t.common.edit}>
                           <Pencil size={14} />
                         </button>
                         <button
-                          onClick={() => { if (confirm('Delete binding?')) deleteBindingMut.mutate(b.id) }}
+                          onClick={() => { if (confirm(t.plane.deleteBindingConfirm)) deleteBindingMut.mutate(b.id) }}
                           className="p-1 text-gray-500 hover:text-red-600"
-                          title="Delete"
+                          title={t.common.delete}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -539,6 +562,7 @@ function BindingModal({
   const [labelRows, setLabelRows] = useState<LabelRow[]>(
     binding?.labels.map(l => ({ label_id: l.label_id, cli_type: l.cli_type, priority: l.priority })) ?? []
   )
+  const [notificationIds, setNotificationIds] = useState<string[]>(binding?.notification_ids ?? [])
   const [error, setError] = useState<string | null>(null)
 
   const { data: projects = [], isError: projectsError } = useQuery({
@@ -547,6 +571,7 @@ function BindingModal({
   })
   const { data: groups = [] } = useQuery({ queryKey: ['agent-groups'], queryFn: agentGroupsApi.list })
   const { data: clis = [] } = useQuery({ queryKey: ['clis'], queryFn: clisApi.list })
+  const { data: notifConfigs = [] } = useQuery({ queryKey: ['notifications'], queryFn: notificationsApi.list })
 
   const { data: states = [], isLoading: statesLoading } = useQuery({
     queryKey: ['plane-states', workspace.id, projectId],
@@ -590,15 +615,15 @@ function BindingModal({
     mutationFn: async () => {
       setError(null)
       const project = projects.find(p => p.id === projectId)
-      if (!project) throw new Error('Select a project')
+      if (!project) throw new Error(t.plane.errSelectProject)
       const accept = states.find(s => s.id === acceptStateId)
       const inProgress = states.find(s => s.id === inProgressStateId)
       const completion = states.find(s => s.id === completionStateId)
-      if (!accept || !inProgress || !completion) throw new Error('Select all three states')
+      if (!accept || !inProgress || !completion) throw new Error(t.plane.errSelectStates)
 
       const labelInputs: PlaneBindingLabelInput[] = labelRows.map(r => {
         const lb = labels.find(l => l.id === r.label_id)
-        if (!lb) throw new Error(`Unknown label ${r.label_id}`)
+        if (!lb) throw new Error(t.plane.errUnknownLabel(r.label_id))
         return {
           label_id: lb.id,
           label_name: lb.name,
@@ -607,18 +632,18 @@ function BindingModal({
         }
       })
 
-      if (labelInputs.length === 0) throw new Error('At least one label is required')
+      if (labelInputs.length === 0) throw new Error(t.plane.errAtLeastOneLabel)
       const seenIds = new Set<string>()
       const seenPri = new Set<number>()
       for (const li of labelInputs) {
-        if (seenIds.has(li.label_id)) throw new Error(`Duplicate label: ${li.label_name}`)
-        if (seenPri.has(li.priority)) throw new Error(`Duplicate priority: ${li.priority}`)
+        if (seenIds.has(li.label_id)) throw new Error(t.plane.errDuplicateLabel(li.label_name))
+        if (seenPri.has(li.priority)) throw new Error(t.plane.errDuplicatePriority(li.priority))
         seenIds.add(li.label_id)
         seenPri.add(li.priority)
       }
       const runnableCli = clis.find(c => !c.wip)?.value ?? 'codex'
       if (!labelInputs.some(li => clis.find(c => c.value === li.cli_type && !c.wip))) {
-        throw new Error(`At least one label must use a runnable CLI (e.g. ${runnableCli})`)
+        throw new Error(t.plane.errRunnableCli(runnableCli))
       }
 
       if (isEdit && binding) {
@@ -631,6 +656,7 @@ function BindingModal({
           completion_state_id: completion.id,
           completion_state_name: completion.name,
           labels: labelInputs,
+          notification_ids: notificationIds,
         })
       }
       return planeApi.createBinding(workspace.id, {
@@ -645,6 +671,7 @@ function BindingModal({
         completion_state_id: completion.id,
         completion_state_name: completion.name,
         labels: labelInputs,
+        notification_ids: notificationIds,
       })
     },
     onSuccess: onSaved,
@@ -665,7 +692,7 @@ function BindingModal({
         onClick={e => e.stopPropagation()}
       >
         <h2 className="text-lg font-bold mb-1 dark:text-white">
-          {isEdit ? 'Edit binding' : t.plane.addBinding}
+          {isEdit ? t.plane.editBinding : t.plane.addBinding}
         </h2>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{workspace.name}</p>
         {projectsError && (
@@ -703,38 +730,38 @@ function BindingModal({
           {projectId && (
             <>
               <div>
-                <label className="block text-sm font-medium mb-2 dark:text-gray-300">States</label>
+                <label className="block text-sm font-medium mb-2 dark:text-gray-300">{t.plane.states}</label>
                 {statesLoading ? (
-                  <p className="text-xs text-gray-500">Loading states…</p>
+                  <p className="text-xs text-gray-500">{t.plane.statesLoading}</p>
                 ) : (
                   <div className="grid grid-cols-3 gap-2">
-                    <Field label="Accept (entry)">
+                    <Field label={t.plane.stateAccept}>
                       <select
                         value={acceptStateId}
                         onChange={e => setAcceptStateId(e.target.value)}
                         className="w-full px-2 py-1.5 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                       >
-                        <option value="">— select —</option>
+                        <option value="">{t.plane.stateSelectPlaceholder}</option>
                         {states.map(s => <option key={s.id} value={s.id}>{stateOption(s)}</option>)}
                       </select>
                     </Field>
-                    <Field label="In progress">
+                    <Field label={t.plane.stateInProgress}>
                       <select
                         value={inProgressStateId}
                         onChange={e => setInProgressStateId(e.target.value)}
                         className="w-full px-2 py-1.5 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                       >
-                        <option value="">— select —</option>
+                        <option value="">{t.plane.stateSelectPlaceholder}</option>
                         {states.map(s => <option key={s.id} value={s.id}>{stateOption(s)}</option>)}
                       </select>
                     </Field>
-                    <Field label="Completion">
+                    <Field label={t.plane.stateCompletion}>
                       <select
                         value={completionStateId}
                         onChange={e => setCompletionStateId(e.target.value)}
                         className="w-full px-2 py-1.5 text-sm border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                       >
-                        <option value="">— select —</option>
+                        <option value="">{t.plane.stateSelectPlaceholder}</option>
                         {states.map(s => <option key={s.id} value={s.id}>{stateOption(s)}</option>)}
                       </select>
                     </Field>
@@ -744,25 +771,25 @@ function BindingModal({
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium dark:text-gray-300">Labels → CLI</label>
+                  <label className="block text-sm font-medium dark:text-gray-300">{t.plane.labelsToCli}</label>
                   <button
                     type="button"
                     onClick={addLabelRow}
                     disabled={labelsLoading || labels.length === 0 || usedLabelIds.size >= labels.length}
                     className="text-xs text-sky-600 dark:text-sky-400 hover:underline disabled:opacity-50"
                   >
-                    + Add label
+                    {t.plane.addLabel}
                   </button>
                 </div>
                 {labelsLoading ? (
-                  <p className="text-xs text-gray-500">Loading labels…</p>
+                  <p className="text-xs text-gray-500">{t.plane.labelsLoading}</p>
                 ) : labels.length === 0 ? (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    No labels in this project. Create a label in Plane first.
+                    {t.plane.labelsEmpty}
                   </p>
                 ) : labelRows.length === 0 ? (
                   <p className="text-xs text-gray-500 dark:text-gray-400 italic">
-                    Add at least one label, with a non-WIP CLI.
+                    {t.plane.labelsHint}
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -786,7 +813,7 @@ function BindingModal({
                             onChange={e => updateLabelRow(idx, { label_id: e.target.value })}
                             className="flex-1 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                           >
-                            <option value="">— label —</option>
+                            <option value="">{t.plane.labelSelectPlaceholder}</option>
                             {labels.map(l => (
                               <option key={l.id} value={l.id} disabled={otherIds.has(l.id)}>
                                 {l.name}
@@ -809,7 +836,7 @@ function BindingModal({
                             value={row.priority}
                             onChange={e => updateLabelRow(idx, { priority: parseInt(e.target.value, 10) || 0 })}
                             className="w-16 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                            title="Priority (lower = higher priority on conflict)"
+                            title={t.plane.labelPriorityTitle}
                           />
                           <button
                             type="button"
@@ -821,6 +848,35 @@ function BindingModal({
                         </div>
                       )
                     })}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2 dark:text-gray-300">{t.plane.notifications}</label>
+                {notifConfigs.length === 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                    {t.plane.noNotifications}
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {notifConfigs.map(n => (
+                      <label key={n.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={notificationIds.includes(n.id)}
+                          onChange={e => {
+                            if (e.target.checked) setNotificationIds(prev => [...prev, n.id])
+                            else setNotificationIds(prev => prev.filter(x => x !== n.id))
+                          }}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className={`text-sm ${n.enabled ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>
+                          {n.name}
+                          <span className="ml-1 text-xs text-gray-400">({n.type})</span>
+                          {!n.enabled && <span className="ml-1 text-xs">({t.common.disabled})</span>}
+                        </span>
+                      </label>
+                    ))}
                   </div>
                 )}
               </div>

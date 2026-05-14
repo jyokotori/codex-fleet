@@ -46,6 +46,7 @@ struct PlanePending {
     completion_state_id: String,
     matching_count: i64,
     idle_agent_id: Option<String>,
+    notification_ids: Vec<String>,
 }
 
 async fn plane_tick(
@@ -60,6 +61,7 @@ async fn plane_tick(
                       pw.base_url, pw.workspace_slug, pw.api_key,
                       pb.id AS binding_id, pb.agent_group_id,
                       pb.accept_state_id, pb.in_progress_state_id, pb.completion_state_id,
+                      pb.notification_ids,
                       m.matching_count,
                       i.idle_agent_id,
                       pt.created_at
@@ -92,6 +94,7 @@ async fn plane_tick(
            SELECT plane_task_id, workspace_id, plane_issue_id, plane_project_id, assignee_email,
                   base_url, workspace_slug, api_key, binding_id, agent_group_id,
                   accept_state_id, in_progress_state_id, completion_state_id,
+                  notification_ids,
                   matching_count, idle_agent_id
            FROM candidates
            WHERE matching_count = 0 OR idle_agent_id IS NOT NULL
@@ -125,6 +128,11 @@ async fn plane_tick(
             completion_state_id: r.get("completion_state_id"),
             matching_count: r.try_get::<i64, _>("matching_count").unwrap_or(0),
             idle_agent_id: r.try_get("idle_agent_id").ok(),
+            notification_ids: r
+                .try_get::<String, _>("notification_ids")
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default(),
         })
         .collect();
 
@@ -358,7 +366,7 @@ async fn handle_pending(state: &AppContext, p: PlanePending) -> anyhow::Result<(
         &agent_id,
         &snap.title,
         &snap.description,
-        vec![],
+        p.notification_ids.clone(),
         None,
         String::new(),
     )
