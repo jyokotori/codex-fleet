@@ -162,13 +162,13 @@ const CLAUDE_BASHRC_END_PREFIX: &str = "# <<< codex-fleet claude env (";
 /// Build a shell snippet that idempotently splices a marker-wrapped block
 /// into the remote `~/.bashrc` to source the agent's `claude.env` for
 /// interactive shells. Existing blocks for the same agent_id are removed first.
-pub(crate) fn bashrc_splice_command(agent_id: &str, base_dir: &str) -> String {
+/// `env_path` is the absolute path to `claude.env` as visible in the shell that
+/// will execute the resulting snippet (host path for non-docker, in-container
+/// path for docker).
+pub(crate) fn bashrc_splice_command(agent_id: &str, env_path: &str) -> String {
     let start = format!("{}{}) >>>", CLAUDE_BASHRC_START_PREFIX, agent_id);
     let end = format!("{}{}) <<<", CLAUDE_BASHRC_END_PREFIX, agent_id);
-    let source_line = format!(
-        "[ -f {b}/agent/claude.env ] && . {b}/agent/claude.env",
-        b = base_dir
-    );
+    let source_line = format!("[ -f {p} ] && . {p}", p = env_path);
     // sed -e to delete any prior block by marker, then append the fresh block.
     // `\` is escaped twice for the outer Rust string -> shell delivery.
     format!(
@@ -1683,8 +1683,9 @@ async fn provision_agent(
             }
 
             // Splice a sourcing line into ~/.bashrc so the user can SSH in and
-            // run `claude` interactively with the same env. Skip in docker mode —
-            // the host bashrc doesn't affect commands run inside the container.
+            // run `claude` interactively with the same env. For docker mode this
+            // is deferred to step 2 (after the container is running) and targets
+            // the container's bashrc + the in-container env path.
             if !use_docker {
                 emit(
                     db,
@@ -1693,7 +1694,8 @@ async fn provision_agent(
                     ev_substep(1, "Updating ~/.bashrc with claude env"),
                 )
                 .await;
-                let bashrc_cmd = bashrc_splice_command(agent_id, &base_dir);
+                let env_path = format!("{}/agent/claude.env", base_dir);
+                let bashrc_cmd = bashrc_splice_command(agent_id, &env_path);
                 let display = "Splicing claude env into ~/.bashrc".to_string();
                 if let Err(e) = stream_cmd(handle, &bashrc_cmd, &display, db, agent_id, tx, 1).await
                 {
@@ -1877,6 +1879,31 @@ async fn provision_agent(
             )
             .execute(db)
             .await;
+        }
+
+        // Splice claude env into the container's ~/.bashrc so an interactive
+        // `docker exec -it ... bash` picks up the same ANTHROPIC_* vars used by
+        // the agent runtime. Skipped when no claude_config_id was configured.
+        if claude_config_id.is_some() {
+            emit(
+                db,
+                agent_id,
+                tx,
+                ev_substep(2, "Updating container ~/.bashrc with claude env"),
+            )
+            .await;
+            let inner = bashrc_splice_command(agent_id, "/agent/claude.env");
+            let cmd = target_shell_command(true, container_name, &inner);
+            let display = "Splicing claude env into container ~/.bashrc".to_string();
+            if let Err(e) = stream_cmd(handle, &cmd, &display, db, agent_id, tx, 2).await {
+                emit(
+                    db,
+                    agent_id,
+                    tx,
+                    ev_warn(2, &format!("container ~/.bashrc splice failed: {}", e)),
+                )
+                .await;
+            }
         }
 
         // Run init_script if configured
